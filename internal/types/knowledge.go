@@ -31,6 +31,7 @@ const (
 	ChannelNotion           = "notion"            // Notion
 	ChannelYuque            = "yuque"             // Yuque (语雀)
 	ChannelRSS              = "rss"               // RSS / Atom feed
+	ChannelWeComWeDrive     = "wecom_wedrive"     // Enterprise WeChat Microdisk
 )
 
 // Knowledge parse status constants

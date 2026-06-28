@@ -405,6 +405,25 @@ const connectorDefs = computed<ConnectorDef[]>(() => [
       { key: 'auth_headers', labelKey: 'datasource.field.authHeaders', placeholder: '', optional: true, hintKey: 'datasource.field.authHeadersHint', fieldType: 'custom_headers' },
     ],
   },
+  {
+    type: 'wecom_wedrive',
+    available: true,
+    docUrl: 'https://developer.work.weixin.qq.com/document/path/93657',
+    permissionDocUrl: 'https://developer.work.weixin.qq.com/document/path/93655',
+    permissionPageUrl: 'https://work.weixin.qq.com/wework_admin/frame#wedrive',
+    requiredPermissions: [
+      'wedrive.file_list',
+      'wedrive.space_info',
+      'wedrive.file_info',
+      'wedrive.file_download',
+      'wedrive.get_file_permission',
+    ],
+    fields: [
+      { key: 'corp_id', labelKey: 'datasource.field.corpId', placeholder: 'wwxxxxxxxxxxxxxxxx' },
+      { key: 'secret', labelKey: 'datasource.field.wecomSecret', placeholder: '', secret: true },
+      { key: 'userid', labelKey: 'datasource.field.wecomUserId', placeholder: 'zhangsan', hintKey: 'datasource.field.wecomUserIdHint' },
+    ],
+  },
 ])
 
 
@@ -452,9 +471,7 @@ watch(visible, async (v) => {
       config: {
         credentials: {},
         resource_ids: editConfig.resource_ids || [],
-        settings: props.dataSource.type === 'rss'
-          ? hydrateRssFeedUrlsFromConfig(editConfig)
-          : (editConfig.settings || {}),
+        settings: hydrateSettingsFromConfig(props.dataSource.type, editConfig),
       },
       sync_schedule: props.dataSource.sync_schedule,
       sync_mode: props.dataSource.sync_mode,
@@ -511,26 +528,44 @@ watch(
   },
 )
 
+watch(
+  () => form.value.config.settings.space_ids,
+  () => {
+    if (form.value.type === 'wecom_wedrive' && needsConnectionTest()) {
+      testResult.value = ''
+      testErrorMsg.value = ''
+    }
+  },
+)
+
 function selectType(def: ConnectorDef) {
   if (!def.available) return
   form.value.type = def.type
   form.value.name = t(`datasource.connector.${def.type}`)
   form.value.config.credentials = {}
+  form.value.config.resource_ids = []
+  form.value.config.settings = {}
+  if (def.type === 'wecom_wedrive') {
+    form.value.sync_schedule = ''
+  } else if (!form.value.sync_schedule) {
+    form.value.sync_schedule = '0 0 */6 * * *'
+  }
   rssAuthHeaders.value = []
   step.value = 1
 }
 
 // --- Test connection (stateless, no DB write) ---
-async function testConnection() {
+async function testConnection(): Promise<boolean> {
   syncRssAuthHeadersToCredentials()
-  if (!validateRssFeedUrls()) return
+  if (!validateRssFeedUrls()) return false
+  if (!validateWeComWeDriveSpaceIds()) return false
   if (!isEdit.value || !credentialsConfigured.value || replaceCredentialsMode.value) {
     const fields = currentDef.value?.fields || []
     for (const f of fields) {
       if (f.optional || f.fieldType === 'custom_headers') continue
       if (!form.value.config.credentials[f.key]) {
         MessagePlugin.warning(`${t(f.labelKey)} ${t('datasource.isRequired')}`)
-        return
+        return false
       }
     }
   }
@@ -551,16 +586,25 @@ async function testConnection() {
         // validate-credentials is credentials-only; feed URLs live in settings.
         creds.feed_urls = form.value.config.settings.feed_urls
       }
+      if (form.value.type === 'wecom_wedrive') {
+        // validate-credentials is credentials-only. If the admin has already
+        // typed known space IDs, include them so connection test can verify
+        // Microdisk reachability without persisting anything.
+        creds.space_ids = form.value.config.settings.space_ids
+      }
       await validateCredentials(form.value.type, creds)
     }
     testResult.value = 'success'
     MessagePlugin.success(t('datasource.testSuccess'))
+    return true
   } catch (e: any) {
     testResult.value = 'error'
     testErrorMsg.value = e?.message || e?.error || ''
     MessagePlugin.error(t('datasource.testFailed'))
+    return false
+  } finally {
+    testing.value = false
   }
-  testing.value = false
 }
 
 // --- Load resources ---
@@ -570,6 +614,7 @@ async function loadResources() {
     if (!tempDsId.value) {
       const res = await createDataSource({
         ...form.value,
+        config: buildConfigPayload(),
         knowledge_base_id: props.kbId,
         status: 'paused',
       } as any)
@@ -578,6 +623,7 @@ async function loadResources() {
     } else if (!isEdit.value) {
       await updateDataSource(tempDsId.value, {
         ...form.value,
+        config: buildConfigPayload(),
         knowledge_base_id: props.kbId,
       } as any)
     }
@@ -622,7 +668,8 @@ async function revealExistingSelections(hiddenIds: string[]) {
   if (!tempDsId.value || hiddenIds.length === 0) return
   try {
     const res = await resolveResourceAncestors(tempDsId.value, hiddenIds)
-    const ancestors: string[] = res?.data?.ancestors || res?.ancestors || []
+    const payload = (res as any)?.data ?? res
+    const ancestors: string[] = payload?.ancestors || []
     if (ancestors.length === 0) return
     const expanded = new Set(expandedResourceIds.value)
     for (const id of ancestors) expanded.add(id)
@@ -714,9 +761,38 @@ function validateRssFeedUrls(): boolean {
   return true
 }
 
+function hydrateSettingsFromConfig(type: string, config: { settings?: Record<string, any>; resource_ids?: string[] }) {
+  if (type === 'rss') {
+    return hydrateRssFeedUrlsFromConfig(config)
+  }
+  if (type === 'wecom_wedrive') {
+    return hydrateWeComWeDriveSettingsFromConfig(config)
+  }
+  return config.settings || {}
+}
+
+function hydrateWeComWeDriveSettingsFromConfig(config: { settings?: Record<string, any>; resource_ids?: string[] }) {
+  const settings = { ...(config.settings || {}) }
+  const rawSpaceIds = settings.space_ids
+  if (Array.isArray(rawSpaceIds)) {
+    settings.space_ids = rawSpaceIds.join('\n')
+  }
+  return settings
+}
+
+function validateWeComWeDriveSpaceIds(): boolean {
+  if (form.value.type !== 'wecom_wedrive') return true
+  if (!String(form.value.config.settings.space_ids || '').trim()) {
+    MessagePlugin.warning(`${t('datasource.field.wecomSpaceIds')} ${t('datasource.isRequired')}`)
+    return false
+  }
+  return true
+}
+
 function validateStep1Fields(): boolean {
   syncRssAuthHeadersToCredentials()
   if (!validateRssFeedUrls()) return false
+  if (!validateWeComWeDriveSpaceIds()) return false
   if (isEdit.value && credentialsConfigured.value && !replaceCredentialsMode.value) {
     return true
   }
@@ -736,8 +812,8 @@ async function nextStep() {
   if (step.value === 1) {
     if (!validateStep1Fields()) return
     if (needsConnectionTest() && testResult.value !== 'success') {
-      await testConnection()
-      if (testResult.value !== 'success') return
+      const connected = await testConnection()
+      if (!connected) return
     }
   }
   step.value++
@@ -763,8 +839,26 @@ function buildConfigPayload(): Record<string, unknown> {
   return {
     credentials: isEdit.value ? {} : { ...form.value.config.credentials },
     resource_ids: form.value.config.resource_ids,
-    settings: form.value.config.settings,
+    settings: buildSettingsPayload(),
   }
+}
+
+function buildSettingsPayload(): Record<string, unknown> {
+  const settings = { ...form.value.config.settings }
+  if (form.value.type === 'wecom_wedrive') {
+    settings.space_ids = parseDelimitedList(settings.space_ids)
+  }
+  return settings
+}
+
+function parseDelimitedList(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map(String).map(s => s.trim()).filter(Boolean)
+  }
+  return String(raw || '')
+    .split(/[\n\r,;]+/)
+    .map(s => s.trim())
+    .filter(Boolean)
 }
 
 // In edit mode, when the user opted in to Replace credentials and typed at
@@ -826,6 +920,8 @@ async function handleSubmit() {
 
     if (isEdit.value) {
       MessagePlugin.warning(t('datasource.updateSuccessSyncHint'))
+    } else if (form.value.type === 'wecom_wedrive') {
+      MessagePlugin.success(t('datasource.createSuccessManualSync_wecom_wedrive'))
     } else {
       try {
         await triggerSync(dataSourceId)
@@ -900,6 +996,9 @@ const resourceTypeLabelMap: Record<string, string> = {
   wiki_space: 'datasource.resourceType.wikiSpace',
   doc_category: 'datasource.resourceType.docCategory',
   book: 'datasource.resourceType.book',
+  wedrive_space: 'datasource.resourceType.wecomWeDriveSpace',
+  wedrive_folder: 'datasource.resourceType.wecomWeDriveFolder',
+  wedrive_file: 'datasource.resourceType.wecomWeDriveFile',
 }
 
 function resourceTypeLabel(type: string): string {
@@ -931,7 +1030,9 @@ const drawerDescription = computed(() => stepTitles.value[step.value] ?? '')
 
 const drawerConfirmText = computed(() => {
   if (step.value === 3) {
-    return isEdit.value ? t('datasource.save') : t('datasource.createAndSync')
+    if (isEdit.value) return t('datasource.save')
+    if (form.value.type === 'wecom_wedrive') return t('datasource.create')
+    return t('datasource.createAndSync')
   }
   if (step.value >= 1) return t('datasource.next')
   return t('common.save')
@@ -1134,6 +1235,21 @@ const drawerConfirmText = computed(() => {
             spellcheck="false"
           />
           <p class="form-desc">{{ t('datasource.field.feedUrlsHint') }}</p>
+        </div>
+      </section>
+
+      <section v-if="form.type === 'wecom_wedrive'" class="setting-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ t('datasource.field.wecomSpaceIds') }}</h4>
+        <div class="form-item">
+          <label class="form-label required">{{ t('datasource.field.wecomSpaceIds') }}</label>
+          <t-textarea
+            v-model="form.config.settings.space_ids"
+            placeholder="SPACEID"
+            :autosize="{ minRows: 2, maxRows: 6 }"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="form-desc">{{ t('datasource.field.wecomSpaceIdsHint') }}</p>
         </div>
       </section>
 

@@ -15,3 +15,17 @@ func TestFeishuMetadataDoesNotAdvertiseWebhook(t *testing.T) {
 		}
 	}
 }
+
+func TestWeComWeDriveMetadataIsExposedWithoutSyncCapabilities(t *testing.T) {
+	meta := ConnectorMetadataRegistry[types.ConnectorTypeWeComWeDrive]
+
+	if meta.Type != types.ConnectorTypeWeComWeDrive {
+		t.Fatalf("metadata type = %q, want %q", meta.Type, types.ConnectorTypeWeComWeDrive)
+	}
+	if meta.AuthType != "custom" {
+		t.Fatalf("auth type = %q, want custom", meta.AuthType)
+	}
+	if len(meta.Capabilities) != 0 {
+		t.Fatalf("capabilities = %#v, want none until sync pipeline is implemented", meta.Capabilities)
+	}
+}

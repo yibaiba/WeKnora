@@ -203,6 +203,14 @@ var ConnectorMetadataRegistry = map[string]ConnectorMetadata{
 		AuthType:     "custom",
 		Capabilities: []string{"incremental"},
 	},
+	types.ConnectorTypeWeComWeDrive: {
+		Type:         types.ConnectorTypeWeComWeDrive,
+		Name:         "Enterprise WeChat Microdisk (企业微信微盘)",
+		Description:  "Browse Enterprise WeChat Microdisk spaces, folders, and files",
+		Priority:     13,
+		AuthType:     "custom",
+		Capabilities: []string{},
+	},
 }
 
 // ListAvailableConnectors returns all available connector metadata

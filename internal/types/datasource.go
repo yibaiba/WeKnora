@@ -14,18 +14,19 @@ import (
 // Data source types and constants
 const (
 	// Connector types
-	ConnectorTypeFeishu      = "feishu"
-	ConnectorTypeNotion      = "notion"
-	ConnectorTypeConfluence  = "confluence"
-	ConnectorTypeYuque       = "yuque"
-	ConnectorTypeGitHub      = "github"
-	ConnectorTypeGoogleDrive = "google_drive"
-	ConnectorTypeOneDrive    = "onedrive"
-	ConnectorTypeDingTalk    = "dingtalk"
-	ConnectorTypeWebCrawler  = "web_crawler"
-	ConnectorTypeSlack       = "slack"
-	ConnectorTypeIMAP        = "imap"
-	ConnectorTypeRSS         = "rss"
+	ConnectorTypeFeishu       = "feishu"
+	ConnectorTypeNotion       = "notion"
+	ConnectorTypeConfluence   = "confluence"
+	ConnectorTypeYuque        = "yuque"
+	ConnectorTypeGitHub       = "github"
+	ConnectorTypeGoogleDrive  = "google_drive"
+	ConnectorTypeOneDrive     = "onedrive"
+	ConnectorTypeDingTalk     = "dingtalk"
+	ConnectorTypeWebCrawler   = "web_crawler"
+	ConnectorTypeSlack        = "slack"
+	ConnectorTypeIMAP         = "imap"
+	ConnectorTypeRSS          = "rss"
+	ConnectorTypeWeComWeDrive = "wecom_wedrive"
 
 	// Sync modes
 	SyncModeIncremental = "incremental"
@@ -239,9 +240,22 @@ func (d DataSourceConfig) HasConfiguredCredentials(connectorType string) bool {
 		}
 		s, ok := raw.(string)
 		return ok && strings.TrimSpace(s) != ""
+	case ConnectorTypeWeComWeDrive:
+		return nonEmptyStringCredential(d.Credentials, "corp_id") &&
+			nonEmptyStringCredential(d.Credentials, "secret") &&
+			nonEmptyStringCredential(d.Credentials, "userid")
 	default:
 		return len(d.Credentials) > 0
 	}
+}
+
+func nonEmptyStringCredential(credentials map[string]interface{}, key string) bool {
+	raw, ok := credentials[key]
+	if !ok {
+		return false
+	}
+	s, ok := raw.(string)
+	return ok && strings.TrimSpace(s) != ""
 }
 
 // StripNonSecretCredentials removes non-secret values mistakenly stored in the
@@ -253,6 +267,16 @@ func (d *DataSourceConfig) StripNonSecretCredentials(connectorType string) {
 	switch connectorType {
 	case ConnectorTypeRSS:
 		delete(d.Credentials, "feed_urls")
+	case ConnectorTypeWeComWeDrive:
+		delete(d.Credentials, "space_ids")
+		delete(d.Credentials, "page_size")
+		delete(d.Credentials, "access_token")
+		delete(d.Credentials, "cookie_name")
+		delete(d.Credentials, "cookie_value")
+		delete(d.Credentials, "download_url")
+	}
+	switch connectorType {
+	case ConnectorTypeRSS, ConnectorTypeWeComWeDrive:
 		if len(d.Credentials) == 0 {
 			d.Credentials = nil
 		}

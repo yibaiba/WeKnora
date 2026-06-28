@@ -141,3 +141,37 @@ func TestDataSourceConfig_HasConfiguredCredentials_RSS(t *testing.T) {
 		assert.False(t, cfg.HasCredentials())
 	})
 }
+
+func TestDataSourceConfig_WeComWeDriveCredentials(t *testing.T) {
+	onlySettings := DataSourceConfig{
+		Credentials: map[string]interface{}{
+			"space_ids": "space-1",
+			"page_size": "100",
+		},
+	}
+	assert.False(t, onlySettings.HasConfiguredCredentials(ConnectorTypeWeComWeDrive))
+	assert.True(t, onlySettings.HasCredentials())
+
+	withRequired := DataSourceConfig{
+		Credentials: map[string]interface{}{
+			"corp_id":      "ww123",
+			"secret":       "secret",
+			"userid":       "sync-user",
+			"space_ids":    "space-1",
+			"page_size":    "100",
+			"access_token": "token",
+			"cookie_value": "cookie",
+		},
+	}
+	assert.True(t, withRequired.HasConfiguredCredentials(ConnectorTypeWeComWeDrive))
+
+	withRequired.StripNonSecretCredentials(ConnectorTypeWeComWeDrive)
+	assert.Equal(t, map[string]interface{}{
+		"corp_id": "ww123",
+		"secret":  "secret",
+		"userid":  "sync-user",
+	}, withRequired.Credentials)
+
+	onlySettings.StripNonSecretCredentials(ConnectorTypeWeComWeDrive)
+	assert.Nil(t, onlySettings.Credentials)
+}
