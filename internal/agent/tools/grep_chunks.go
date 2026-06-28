@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
 )
 
@@ -65,20 +66,29 @@ type GrepChunksInput struct {
 // the snippet, mirroring the UX of wiki_search.
 type GrepChunksTool struct {
 	BaseTool
-	db            *gorm.DB
-	searchTargets types.SearchTargets
+	db               *gorm.DB
+	knowledgeService interfaces.KnowledgeService
+	sourceACLGuard   interfaces.SourceACLGuardService
+	searchTargets    types.SearchTargets
 
 	mu         sync.Mutex
 	seenChunks map[string]bool
 }
 
 // NewGrepChunksTool creates a new grep chunks tool
-func NewGrepChunksTool(db *gorm.DB, searchTargets types.SearchTargets) *GrepChunksTool {
+func NewGrepChunksTool(
+	db *gorm.DB,
+	knowledgeService interfaces.KnowledgeService,
+	sourceACLGuard interfaces.SourceACLGuardService,
+	searchTargets types.SearchTargets,
+) *GrepChunksTool {
 	return &GrepChunksTool{
-		BaseTool:      grepChunksTool,
-		db:            db,
-		searchTargets: searchTargets,
-		seenChunks:    make(map[string]bool),
+		BaseTool:         grepChunksTool,
+		db:               db,
+		knowledgeService: knowledgeService,
+		sourceACLGuard:   sourceACLGuard,
+		searchTargets:    searchTargets,
+		seenChunks:       make(map[string]bool),
 	}
 }
 
@@ -145,6 +155,14 @@ func (t *GrepChunksTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		return &types.ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("Search failed: %v", err),
+		}, err
+	}
+	results, err = t.filterSourceACL(ctx, results)
+	if err != nil {
+		logger.Errorf(ctx, "[Tool][GrepChunks] Source ACL filtering failed: %v", err)
+		return &types.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Source ACL filtering failed: %v", err),
 		}, err
 	}
 
@@ -359,6 +377,48 @@ func (t *GrepChunksTool) searchChunks(
 	}
 
 	return results, nil
+}
+
+func (t *GrepChunksTool) filterSourceACL(ctx context.Context, results []chunkWithTitle) ([]chunkWithTitle, error) {
+	if t.sourceACLGuard == nil || t.knowledgeService == nil || len(results) == 0 {
+		return results, nil
+	}
+	knowledgeIDs := make([]string, 0, len(results))
+	seen := make(map[string]struct{})
+	for _, result := range results {
+		if result.KnowledgeID == "" {
+			continue
+		}
+		if _, ok := seen[result.KnowledgeID]; ok {
+			continue
+		}
+		seen[result.KnowledgeID] = struct{}{}
+		knowledgeIDs = append(knowledgeIDs, result.KnowledgeID)
+	}
+	if len(knowledgeIDs) == 0 {
+		return nil, nil
+	}
+	knowledges, err := t.knowledgeService.GetKnowledgeBatchByIDsOnly(ctx, knowledgeIDs)
+	if err != nil {
+		return nil, err
+	}
+	allowedKnowledges, err := t.sourceACLGuard.FilterKnowledges(ctx, "agent_grep_chunks", knowledges)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]struct{}, len(allowedKnowledges))
+	for _, knowledge := range allowedKnowledges {
+		if knowledge != nil && knowledge.ID != "" {
+			allowed[knowledge.ID] = struct{}{}
+		}
+	}
+	filtered := make([]chunkWithTitle, 0, len(results))
+	for _, result := range results {
+		if _, ok := allowed[result.KnowledgeID]; ok {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered, nil
 }
 
 // formatOutput emits per-chunk XML with <match_snippet> and <query_hit>

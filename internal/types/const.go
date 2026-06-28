@@ -16,6 +16,11 @@ const (
 	UserContextKey ContextKey = "User"
 	// UserIDContextKey is the context key for user ID
 	UserIDContextKey ContextKey = "UserID"
+	// SourceACLActorUserIDContextKey is the explicit human actor used for
+	// service-key automation reads against source-backed protected content.
+	SourceACLActorUserIDContextKey ContextKey = "SourceACLActorUserID"
+	// ServiceKeyCallContextKey marks requests authenticated by X-API-Key.
+	ServiceKeyCallContextKey ContextKey = "ServiceKeyCall"
 	// TenantRoleContextKey is the context key for the caller's TenantRole
 	// in the currently active tenant (loaded by the auth middleware from
 	// the tenant_members table). See TenantRoleFromContext.

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
@@ -27,13 +28,18 @@ import (
 // access — that lookup answers "is the caller the creator of THIS
 // resource", not "does the caller's tenant have access").
 type ChunkHandler struct {
-	service   interfaces.ChunkService
-	kgService interfaces.KnowledgeService
+	service        interfaces.ChunkService
+	kgService      interfaces.KnowledgeService
+	sourceACLGuard interfaces.SourceACLGuardService
 }
 
 // NewChunkHandler creates a new chunk handler.
-func NewChunkHandler(service interfaces.ChunkService, kgService interfaces.KnowledgeService) *ChunkHandler {
-	return &ChunkHandler{service: service, kgService: kgService}
+func NewChunkHandler(
+	service interfaces.ChunkService,
+	kgService interfaces.KnowledgeService,
+	sourceACLGuard interfaces.SourceACLGuardService,
+) *ChunkHandler {
+	return &ChunkHandler{service: service, kgService: kgService, sourceACLGuard: sourceACLGuard}
 }
 
 // GetChunkByIDOnly godoc
@@ -72,6 +78,10 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+	if err := h.requireSourceACLRead(ctx, chunk.KnowledgeID, "chunk_read"); err != nil {
+		c.Error(err)
 		return
 	}
 
@@ -137,6 +147,11 @@ func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
 		}
 	}
 
+	if err := h.requireSourceACLRead(ctx, knowledgeID, "chunk_list"); err != nil {
+		c.Error(err)
+		return
+	}
+
 	// The route-level guard has rewritten the request's tenant context
 	// to the effective tenant for shared KBs.
 	result, err := h.service.ListPagedChunksByKnowledgeID(ctx, knowledgeID, &pagination, chunkType)
@@ -159,6 +174,20 @@ func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
 		"total":     result.Total,
 		"page":      result.Page,
 		"page_size": result.PageSize,
+	})
+}
+
+func (h *ChunkHandler) requireSourceACLRead(ctx context.Context, knowledgeID string, purpose string) error {
+	if h.sourceACLGuard == nil {
+		return nil
+	}
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(ctx, knowledgeID)
+	if err != nil {
+		return errors.NewNotFoundError("Knowledge not found")
+	}
+	return h.sourceACLGuard.RequireRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   purpose,
 	})
 }
 

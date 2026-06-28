@@ -25,6 +25,7 @@ type PluginSearch struct {
 	sessionService        interfaces.SessionService
 	webSearchStateService interfaces.WebSearchStateService
 	webSearchProviderRepo interfaces.WebSearchProviderRepository
+	sourceACLGuard        interfaces.SourceACLGuardService
 }
 
 func NewPluginSearch(eventManager *EventManager,
@@ -37,6 +38,7 @@ func NewPluginSearch(eventManager *EventManager,
 	sessionService interfaces.SessionService,
 	webSearchStateService interfaces.WebSearchStateService,
 	webSearchProviderRepo interfaces.WebSearchProviderRepository,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) *PluginSearch {
 	res := &PluginSearch{
 		knowledgeBaseService:  knowledgeBaseService,
@@ -48,6 +50,7 @@ func NewPluginSearch(eventManager *EventManager,
 		sessionService:        sessionService,
 		webSearchStateService: webSearchStateService,
 		webSearchProviderRepo: webSearchProviderRepo,
+		sourceACLGuard:        sourceACLGuard,
 	}
 	eventManager.Register(res)
 	return res
@@ -470,7 +473,15 @@ func (p *PluginSearch) searchSingleTarget(
 	searchKnowledgeIDs := t.KnowledgeIDs
 
 	if t.Type == types.SearchTargetTypeKnowledge {
-		directResults, skippedIDs := p.tryDirectChunkLoading(ctx, chatManage.TenantID, t.KnowledgeIDs)
+		directResults, skippedIDs, err := p.tryDirectChunkLoading(ctx, chatManage.TenantID, t.KnowledgeIDs)
+		if err != nil {
+			pipelineWarn(ctx, "Search", "direct_load_error", map[string]interface{}{
+				"kb_id":       t.KnowledgeBaseID,
+				"target_type": t.Type,
+				"error":       err.Error(),
+			})
+			return
+		}
 
 		if len(directResults) > 0 {
 			for _, r := range directResults {
@@ -529,9 +540,20 @@ func (p *PluginSearch) searchSingleTarget(
 
 // tryDirectChunkLoading attempts to load chunks for given knowledge IDs directly
 // Returns loaded results and a list of knowledge IDs that were skipped (e.g. due to size limits)
-func (p *PluginSearch) tryDirectChunkLoading(ctx context.Context, tenantID uint64, knowledgeIDs []string) ([]*types.SearchResult, []string) {
+func (p *PluginSearch) tryDirectChunkLoading(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeIDs []string,
+) ([]*types.SearchResult, []string, error) {
 	if len(knowledgeIDs) == 0 {
-		return nil, nil
+		return nil, nil, nil
+	}
+	knowledgeIDs, err := p.filterDirectLoadKnowledgeIDs(ctx, tenantID, knowledgeIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(knowledgeIDs) == 0 {
+		return nil, nil, nil
 	}
 
 	// Limit direct loading to avoid OOM or context overflow
@@ -562,7 +584,7 @@ func (p *PluginSearch) tryDirectChunkLoading(ctx context.Context, tenantID uint6
 	}
 
 	if len(allChunks) == 0 {
-		return nil, skippedIDs
+		return nil, skippedIDs, nil
 	}
 
 	// Fetch Knowledge metadata
@@ -614,7 +636,32 @@ func (p *PluginSearch) tryDirectChunkLoading(ctx context.Context, tenantID uint6
 
 	searchutil.EnrichSearchResultsImageInfo(ctx, p.chunkService.GetRepository(), tenantID, results)
 
-	return results, skippedIDs
+	return results, skippedIDs, nil
+}
+
+func (p *PluginSearch) filterDirectLoadKnowledgeIDs(
+	ctx context.Context,
+	tenantID uint64,
+	ids []string,
+) ([]string, error) {
+	if p.sourceACLGuard == nil {
+		return ids, nil
+	}
+	knowledges, err := p.knowledgeService.GetKnowledgeBatchWithSharedAccess(ctx, tenantID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("fetch knowledge for source ACL filtering: %w", err)
+	}
+	allowed, err := p.sourceACLGuard.FilterKnowledges(ctx, "chat_direct_load", knowledges)
+	if err != nil {
+		return nil, fmt.Errorf("filter direct-load knowledge by source ACL: %w", err)
+	}
+	out := make([]string, 0, len(allowed))
+	for _, knowledge := range allowed {
+		if knowledge != nil {
+			out = append(out, knowledge.ID)
+		}
+	}
+	return out, nil
 }
 
 // searchWebIfEnabled executes web search when enabled and returns converted results

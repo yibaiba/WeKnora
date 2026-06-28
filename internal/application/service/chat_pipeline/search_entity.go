@@ -12,9 +12,10 @@ import (
 
 // PluginSearch implements search functionality for chat pipeline
 type PluginSearchEntity struct {
-	graphRepo     interfaces.RetrieveGraphRepository
-	chunkRepo     interfaces.ChunkRepository
-	knowledgeRepo interfaces.KnowledgeRepository
+	graphRepo      interfaces.RetrieveGraphRepository
+	chunkRepo      interfaces.ChunkRepository
+	knowledgeRepo  interfaces.KnowledgeRepository
+	sourceACLGuard interfaces.SourceACLGuardService
 }
 
 // NewPluginSearchEntity creates a new plugin search entity
@@ -23,11 +24,13 @@ func NewPluginSearchEntity(
 	graphRepository interfaces.RetrieveGraphRepository,
 	chunkRepository interfaces.ChunkRepository,
 	knowledgeRepository interfaces.KnowledgeRepository,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) *PluginSearchEntity {
 	res := &PluginSearchEntity{
-		graphRepo:     graphRepository,
-		chunkRepo:     chunkRepository,
-		knowledgeRepo: knowledgeRepository,
+		graphRepo:      graphRepository,
+		chunkRepo:      chunkRepository,
+		knowledgeRepo:  knowledgeRepository,
+		sourceACLGuard: sourceACLGuard,
 	}
 	eventManager.Register(res)
 	return res
@@ -162,11 +165,12 @@ func (p *PluginSearchEntity) OnEvent(ctx context.Context,
 	for _, knowledge := range knowledges {
 		knowledgeMap[knowledge.ID] = knowledge
 	}
-	var entityResults []*types.SearchResult
-	for _, chunk := range chunks {
-		searchResult := chunk2SearchResult(chunk, knowledgeMap[chunk.KnowledgeID])
-		entityResults = append(entityResults, searchResult)
+	allowedKnowledgeIDs, err := p.allowedEntityKnowledgeIDs(ctx, knowledges)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to filter entity search by source ACL, session_id: %s, error: %v", chatManage.SessionID, err)
+		return next()
 	}
+	entityResults := buildEntitySearchResults(ctx, chunks, knowledgeMap, allowedKnowledgeIDs)
 	searchutil.EnrichSearchResultsImageInfo(ctx, p.chunkRepo, types.MustTenantIDFromContext(ctx), entityResults)
 	chatManage.SearchResult = append(chatManage.SearchResult, entityResults...)
 	// remove duplicate results
@@ -182,6 +186,54 @@ func (p *PluginSearchEntity) OnEvent(ctx context.Context,
 		chatManage.SessionID,
 	)
 	return next()
+}
+
+func (p *PluginSearchEntity) allowedEntityKnowledgeIDs(
+	ctx context.Context,
+	knowledges []*types.Knowledge,
+) (map[string]struct{}, error) {
+	if p.sourceACLGuard == nil {
+		return knowledgeIDSet(knowledges), nil
+	}
+	allowedKnowledges, err := p.sourceACLGuard.FilterKnowledges(ctx, "entity_search", knowledges)
+	if err != nil {
+		return nil, err
+	}
+	return knowledgeIDSet(allowedKnowledges), nil
+}
+
+func knowledgeIDSet(knowledges []*types.Knowledge) map[string]struct{} {
+	ids := make(map[string]struct{}, len(knowledges))
+	for _, knowledge := range knowledges {
+		if knowledge != nil && knowledge.ID != "" {
+			ids[knowledge.ID] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func buildEntitySearchResults(
+	ctx context.Context,
+	chunks []*types.Chunk,
+	knowledgeMap map[string]*types.Knowledge,
+	allowedKnowledgeIDs map[string]struct{},
+) []*types.SearchResult {
+	results := make([]*types.SearchResult, 0, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil {
+			continue
+		}
+		if _, ok := allowedKnowledgeIDs[chunk.KnowledgeID]; !ok {
+			continue
+		}
+		knowledge := knowledgeMap[chunk.KnowledgeID]
+		if knowledge == nil {
+			logger.Warnf(ctx, "Skip entity chunk with missing knowledge, chunk_id: %s", chunk.ID)
+			continue
+		}
+		results = append(results, chunk2SearchResult(chunk, knowledge))
+	}
+	return results
 }
 
 // filterSeenChunk filters seen chunks from the graph

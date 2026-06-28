@@ -186,6 +186,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewTenantInvitationService))
 	must(container.Provide(service.NewAuditLogService))
 	must(container.Provide(service.NewAuditLogRetentionRunner))
+	must(container.Provide(service.NewWeComIdentityService))
+	must(container.Provide(service.NewSourceACLPolicyService))
+	must(container.Provide(service.NewSourceACLGuardService))
 	must(container.Provide(service.NewKnowledgeBaseService))
 	must(container.Provide(service.NewOrganizationService))
 	must(container.Provide(service.NewKBShareService)) // KBShareService must be registered before KnowledgeService and KnowledgeTagService
@@ -199,8 +202,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewDatasetService))
 	must(container.Provide(service.NewEvaluationService))
 	must(container.Provide(service.NewUserService))
-	must(container.Provide(service.NewWeComIdentityService))
-	must(container.Provide(service.NewSourceACLPolicyService))
 	must(container.Provide(service.NewSystemSettingService))
 	must(container.Provide(service.NewWeKnoraCloudService))
 

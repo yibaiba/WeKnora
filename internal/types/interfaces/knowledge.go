@@ -67,6 +67,7 @@ type KnowledgeService interface {
 	GetOwningKBCreatorID(ctx context.Context, knowledgeID string) (string, error)
 	// GetKnowledgeBatch retrieves a batch of knowledge by IDs.
 	GetKnowledgeBatch(ctx context.Context, tenantID uint64, ids []string) ([]*types.Knowledge, error)
+	GetKnowledgeBatchByIDsOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error)
 	// GetKnowledgeBatchWithSharedAccess retrieves knowledge by IDs including items from shared KBs the user has access to.
 	GetKnowledgeBatchWithSharedAccess(ctx context.Context, tenantID uint64, ids []string) ([]*types.Knowledge, error)
 	// ListKnowledgeByKnowledgeBaseID lists all knowledge under a knowledge base.
@@ -219,6 +220,7 @@ type KnowledgeRepository interface {
 	DeleteKnowledge(ctx context.Context, tenantID uint64, id string) error
 	DeleteKnowledgeList(ctx context.Context, tenantID uint64, ids []string) error
 	GetKnowledgeBatch(ctx context.Context, tenantID uint64, ids []string) ([]*types.Knowledge, error)
+	GetKnowledgeBatchByIDsOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error)
 	// CheckKnowledgeExists checks if knowledge already exists.
 	// For file types, check by fileHash or (fileName+fileSize).
 	// For URL types, check by URL.

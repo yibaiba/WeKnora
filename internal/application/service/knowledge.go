@@ -58,6 +58,7 @@ type knowledgeService struct {
 	graphEngine     interfaces.RetrieveGraphRepository
 	redisClient     *redis.Client
 	kbShareService  interfaces.KBShareService
+	sourceACLGuard  interfaces.SourceACLGuardService
 	imageResolver   *docparser.ImageResolver
 	taskPendingRepo interfaces.TaskPendingOpsRepository
 
@@ -75,9 +76,11 @@ type knowledgeService struct {
 }
 
 const (
-	manualContentMaxLength = 200000
-	manualFileExtension    = ".md"
-	faqImportBatchSize     = 50 // 每批处理的FAQ条目数
+	manualContentMaxLength      = 200000
+	manualFileExtension         = ".md"
+	faqImportBatchSize          = 50 // 每批处理的FAQ条目数
+	sourceACLSearchOverfetchMin = 20
+	sourceACLSearchOverfetchMax = 100
 )
 
 // NewKnowledgeService creates a new knowledge service instance
@@ -101,6 +104,7 @@ func NewKnowledgeService(
 	ownership retriever.TenantStoreOwnership,
 	redisClient *redis.Client,
 	kbShareService interfaces.KBShareService,
+	sourceACLGuard interfaces.SourceACLGuardService,
 	imageResolver *docparser.ImageResolver,
 	wikiRepo interfaces.WikiPageRepository,
 	wikiService interfaces.WikiPageService,
@@ -127,6 +131,7 @@ func NewKnowledgeService(
 		ownership:       ownership,
 		redisClient:     redisClient,
 		kbShareService:  kbShareService,
+		sourceACLGuard:  sourceACLGuard,
 		imageResolver:   imageResolver,
 		wikiRepo:        wikiRepo,
 		wikiService:     wikiService,
@@ -609,6 +614,10 @@ func (s *knowledgeService) GetKnowledgeBatch(ctx context.Context,
 	return s.repo.GetKnowledgeBatch(ctx, tenantID, ids)
 }
 
+func (s *knowledgeService) GetKnowledgeBatchByIDsOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error) {
+	return s.repo.GetKnowledgeBatchByIDsOnly(ctx, ids)
+}
+
 // GetKnowledgeBatchWithSharedAccess retrieves knowledge by IDs, including items from shared KBs the user has access to.
 // Used when building search targets so that @mentioned files from shared KBs are included.
 func (s *knowledgeService) GetKnowledgeBatchWithSharedAccess(ctx context.Context,
@@ -898,7 +907,7 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 	if len(scopes) == 0 {
 		return nil, false, nil
 	}
-	return s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+	return s.searchKnowledgeInScopesWithSourceACL(ctx, scopes, keyword, offset, limit, fileTypes)
 }
 
 // SearchKnowledgeForScopes searches knowledge within the given scopes (e.g. for shared agent context).
@@ -906,5 +915,45 @@ func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes 
 	if len(scopes) == 0 {
 		return nil, false, nil
 	}
-	return s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+	return s.searchKnowledgeInScopesWithSourceACL(ctx, scopes, keyword, offset, limit, fileTypes)
+}
+
+func (s *knowledgeService) searchKnowledgeInScopesWithSourceACL(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+	keyword string,
+	offset int,
+	limit int,
+	fileTypes []string,
+) ([]*types.Knowledge, bool, error) {
+	fetchLimit := limit
+	if s.sourceACLGuard != nil && limit > 0 {
+		fetchLimit = sourceACLSearchFetchLimit(limit)
+	}
+	knowledges, hasMore, err := s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, fetchLimit, fileTypes)
+	if err != nil || s.sourceACLGuard == nil {
+		return knowledges, hasMore, err
+	}
+	knowledges, err = s.sourceACLGuard.FilterKnowledges(ctx, "knowledge_search", knowledges)
+	if err != nil || limit <= 0 || len(knowledges) <= limit {
+		return knowledges, hasMore, err
+	}
+	return knowledges[:limit], true, nil
+}
+
+func sourceACLSearchFetchLimit(limit int) int {
+	if limit >= sourceACLSearchOverfetchMax {
+		return limit
+	}
+	fetchLimit := limit * 3
+	if fetchLimit < limit+sourceACLSearchOverfetchMin {
+		fetchLimit = limit + sourceACLSearchOverfetchMin
+	}
+	if fetchLimit > sourceACLSearchOverfetchMax && limit <= sourceACLSearchOverfetchMax {
+		return sourceACLSearchOverfetchMax
+	}
+	if fetchLimit < limit {
+		return limit
+	}
+	return fetchLimit
 }

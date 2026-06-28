@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"golang.org/x/sync/errgroup"
@@ -800,6 +801,14 @@ func (s *wikiIngestService) mapOneDocument(
 		s.tracker().SkipSpan(ctx, wikiSpan, "knowledge_deleted")
 		return nil, nil, nil
 	}
+	if blocked, err := s.isSourceACLBlockedForWiki(ctx, payload.TenantID, knowledgeID); err != nil {
+		s.tracker().FailSpan(ctx, wikiSpan, "SOURCE_ACL_CHECK_FAILED", err.Error(), err)
+		return nil, nil, err
+	} else if blocked {
+		logger.Infof(ctx, "wiki ingest: source ACL blocks wiki generation for knowledge %s", knowledgeID)
+		s.tracker().SkipSpan(ctx, wikiSpan, "source_acl_restricted")
+		return nil, nil, nil
+	}
 
 	chunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)
 	if err != nil {
@@ -1210,6 +1219,28 @@ func (s *wikiIngestService) mapOneDocument(
 		MapStats:    mapStats,
 		WikiSpan:    wikiSpan,
 	}, updates, nil
+}
+
+func (s *wikiIngestService) isSourceACLBlockedForWiki(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeID string,
+) (bool, error) {
+	if s.sourceACLGuard == nil {
+		return false, nil
+	}
+	knowledge, err := s.knowledgeRepo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
+	if err != nil {
+		return false, err
+	}
+	decision, err := s.sourceACLGuard.CanRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   "wiki_generation",
+	})
+	if err != nil {
+		return false, err
+	}
+	return !decision.Allowed, nil
 }
 
 func (s *wikiIngestService) extractEntitiesAndConceptsNoUpsert(

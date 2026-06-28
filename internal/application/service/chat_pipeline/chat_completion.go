@@ -34,10 +34,10 @@ func (p *PluginChatCompletion) OnEvent(
 	ctx context.Context, eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
 	pipelineInfo(ctx, "Completion", "input", map[string]interface{}{
-		"session_id":     chatManage.SessionID,
-		"user_question":  chatManage.UserContent,
-		"history_rounds": len(chatManage.History),
-		"chat_model":     chatManage.ChatModelID,
+		"session_id":       chatManage.SessionID,
+		"user_content_len": len([]rune(chatManage.UserContent)),
+		"history_rounds":   len(chatManage.History),
+		"chat_model":       chatManage.ChatModelID,
 	})
 
 	// Prepare chat model and options
@@ -66,7 +66,7 @@ func (p *PluginChatCompletion) OnEvent(
 	}
 
 	pipelineInfo(ctx, "Completion", "output", map[string]interface{}{
-		"answer_preview":    chatResponse.Content,
+		"answer_len":        len([]rune(chatResponse.Content)),
 		"finish_reason":     chatResponse.FinishReason,
 		"completion_tokens": chatResponse.Usage.CompletionTokens,
 		"prompt_tokens":     chatResponse.Usage.PromptTokens,

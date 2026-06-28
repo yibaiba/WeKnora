@@ -211,6 +211,22 @@ func (r *knowledgeRepository) GetKnowledgeBatch(
 	return knowledge, nil
 }
 
+// GetKnowledgeBatchByIDsOnly gets knowledge in batch without tenant filtering.
+func (r *knowledgeRepository) GetKnowledgeBatchByIDsOnly(
+	ctx context.Context, ids []string,
+) ([]*types.Knowledge, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var knowledge []*types.Knowledge
+	if err := r.db.WithContext(ctx).
+		Where("id IN ? AND deleted_at IS NULL", ids).
+		Find(&knowledge).Error; err != nil {
+		return nil, err
+	}
+	return knowledge, nil
+}
+
 // CheckKnowledgeExists checks if knowledge already exists
 func (r *knowledgeRepository) CheckKnowledgeExists(
 	ctx context.Context,

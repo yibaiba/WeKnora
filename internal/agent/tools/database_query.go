@@ -9,6 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
+	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"gorm.io/gorm"
 )
 
@@ -54,7 +55,6 @@ var databaseQueryTool = BaseTool{
 - tenant_id (INTEGER): Owner tenant ID
 - knowledge_base_id (VARCHAR): Parent knowledge base ID
 - knowledge_id (VARCHAR): Parent document ID
-- content (TEXT): Chunk content
 - chunk_index (INTEGER): Index in document
 - is_enabled (BOOLEAN): Enable status
 - chunk_type (VARCHAR): Type (text/image/table)
@@ -90,6 +90,7 @@ Join knowledge bases and documents:
 ## Important Notes
 - DO NOT include tenant_id in WHERE clause - it's automatically added
 - DO NOT include deleted_at filtering manually unless needed - default query already enforces deleted_at IS NULL
+- DO NOT select chunk/document body fields. Use knowledge_search or list_knowledge_chunks for content so source ACL can be enforced.
 - Only SELECT queries are allowed
 - Limit results with LIMIT clause for better performance
 - Use appropriate JOINs when querying across tables
@@ -99,6 +100,21 @@ Join knowledge bases and documents:
 
 type DatabaseQueryInput struct {
 	SQL string `json:"sql" jsonschema:"The SELECT SQL query to execute. DO NOT include tenant_id condition - it will be automatically added for security."`
+}
+
+var databaseQueryBlockedContentFields = map[string]map[string]struct{}{
+	"content": {
+		"chunks": {},
+	},
+	"description": {
+		"knowledges": {},
+	},
+	"summary": {
+		"knowledges": {},
+	},
+	"original_url": {
+		"knowledges": {},
+	},
 }
 
 // DatabaseQueryTool allows AI to query the database with auto-injected tenant_id for security
@@ -147,6 +163,12 @@ func (t *DatabaseQueryTool) Execute(ctx context.Context, args json.RawMessage) (
 
 	logger.Infof(ctx, "[Tool][DatabaseQuery] Original SQL query:\n%s", input.SQL)
 	logger.Infof(ctx, "[Tool][DatabaseQuery] Tenant ID: %d", tenantID)
+	if err := rejectDatabaseQueryContentFields(input.SQL); err != nil {
+		return &types.ToolResult{
+			Success: false,
+			Error:   err.Error(),
+		}, err
+	}
 
 	// Validate and secure the SQL query
 	logger.Debugf(ctx, "[Tool][DatabaseQuery] Validating and securing SQL...")
@@ -284,6 +306,85 @@ func (t *DatabaseQueryTool) validateAndSecureSQL(sqlQuery string, tenantID uint6
 	}
 
 	return securedSQL, nil
+}
+
+func rejectDatabaseQueryContentFields(sqlText string) error {
+	parseResult := utils.ParseSQL(sqlText)
+	if parseResult.ParseError != "" {
+		return fmt.Errorf("%s", parseResult.ParseError)
+	}
+	tables := databaseQueryTableSet(parseResult.TableNames)
+	if databaseQueryHasTableWildcard(sqlText) && databaseQueryTouchesContentTable(tables) {
+		return fmt.Errorf("wildcard projection is not allowed for knowledge content tables; select metadata columns explicitly")
+	}
+	for _, field := range parseResult.SelectFields {
+		blockedTables, blocked := databaseQueryBlockedContentFields[databaseQueryFieldName(field)]
+		if blocked && databaseQueryTouchesBlockedTable(tables, blockedTables) {
+			return fmt.Errorf("column '%s' is not allowed in database_query; use ACL-aware content tools instead", field)
+		}
+	}
+	return nil
+}
+
+func databaseQueryFieldName(field string) string {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(field)), ".")
+	return parts[len(parts)-1]
+}
+
+func databaseQueryTableSet(tableNames []string) map[string]struct{} {
+	tables := make(map[string]struct{}, len(tableNames))
+	for _, tableName := range tableNames {
+		tableName = strings.ToLower(strings.TrimSpace(tableName))
+		if tableName != "" {
+			tables[tableName] = struct{}{}
+		}
+	}
+	return tables
+}
+
+func databaseQueryTouchesBlockedTable(tables map[string]struct{}, blockedTables map[string]struct{}) bool {
+	for tableName := range blockedTables {
+		if _, ok := tables[tableName]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func databaseQueryTouchesContentTable(tables map[string]struct{}) bool {
+	for _, tableName := range []string{"chunks", "knowledges"} {
+		if _, ok := tables[tableName]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func databaseQueryHasTableWildcard(sqlText string) bool {
+	parseResult, err := pg_query.Parse(sqlText)
+	if err != nil || len(parseResult.Stmts) == 0 || parseResult.Stmts[0].Stmt == nil {
+		return false
+	}
+	selectStmt := parseResult.Stmts[0].Stmt.GetSelectStmt()
+	if selectStmt == nil {
+		return false
+	}
+	for _, target := range selectStmt.TargetList {
+		resTarget := target.GetResTarget()
+		if resTarget == nil {
+			continue
+		}
+		columnRef := resTarget.Val.GetColumnRef()
+		if columnRef == nil {
+			continue
+		}
+		for _, field := range columnRef.Fields {
+			if field.GetAStar() != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // formatQueryResults formats query results into readable text

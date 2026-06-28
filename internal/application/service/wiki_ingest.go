@@ -211,7 +211,8 @@ type wikiIngestService struct {
 	spanTracker SpanTracker
 	// liteLocks provides per-KB mutual exclusion in Lite mode (no Redis).
 	// Keys are kbID strings; values are unused (presence = locked).
-	liteLocks sync.Map
+	liteLocks      sync.Map
+	sourceACLGuard interfaces.SourceACLGuardService
 }
 
 // NewWikiIngestService creates a new wiki ingest service
@@ -228,6 +229,7 @@ func NewWikiIngestService(
 	deadLetterRepo interfaces.TaskDeadLetterRepository,
 	redisClient *redis.Client,
 	spanTracker SpanTracker,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) interfaces.TaskHandler {
 	svc := &wikiIngestService{
 		wikiService:    wikiService,
@@ -242,6 +244,7 @@ func NewWikiIngestService(
 		deadLetterRepo: deadLetterRepo,
 		redisClient:    redisClient,
 		spanTracker:    spanTracker,
+		sourceACLGuard: sourceACLGuard,
 	}
 	return svc
 }
@@ -1301,6 +1304,7 @@ func formatExistingTaxonomyForPrompt(paths [][]string) string {
 	}
 	return strings.TrimSpace(buf.String())
 }
+
 // getExistingPageSlugsForKnowledge returns all page slugs that currently
 // reference a given knowledge ID in their source_refs. Used to snapshot
 // state before re-ingest so the reduce phase can reconcile additions vs

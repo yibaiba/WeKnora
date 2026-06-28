@@ -40,10 +40,10 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
 	pipelineInfo(ctx, "Stream", "input", map[string]interface{}{
-		"session_id":     chatManage.SessionID,
-		"user_question":  chatManage.UserContent,
-		"history_rounds": len(chatManage.History),
-		"chat_model":     chatManage.ChatModelID,
+		"session_id":       chatManage.SessionID,
+		"user_content_len": len([]rune(chatManage.UserContent)),
+		"history_rounds":   len(chatManage.History),
+		"chat_model":       chatManage.ChatModelID,
 	})
 
 	// Prepare chat model and options
@@ -57,10 +57,10 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	chatMessages := prepareMessagesWithHistory(chatManage)
 	pipelineInfo(ctx, "Stream", "messages_ready", map[string]interface{}{
 		"message_count": len(chatMessages),
-		"system_prompt": chatMessages[0].Content,
+		"system_len":    len([]rune(chatMessages[0].Content)),
 	})
 	pipelineInfo(ctx, "Stream", "user_message", map[string]interface{}{
-		"content": chatMessages[len(chatMessages)-1].Content,
+		"content_len": len([]rune(chatMessages[len(chatMessages)-1].Content)),
 	})
 	// EventBus is required for event-driven streaming
 	if chatManage.EventBus == nil {

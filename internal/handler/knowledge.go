@@ -35,6 +35,7 @@ type KnowledgeHandler struct {
 	agentShareService interfaces.AgentShareService
 	asynqClient       interfaces.TaskEnqueuer
 	spanRepo          repository.KnowledgeSpanRepository
+	sourceACLGuard    interfaces.SourceACLGuardService
 }
 
 // NewKnowledgeHandler creates a new knowledge handler instance
@@ -45,6 +46,7 @@ func NewKnowledgeHandler(
 	agentShareService interfaces.AgentShareService,
 	asynqClient interfaces.TaskEnqueuer,
 	spanRepo repository.KnowledgeSpanRepository,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) *KnowledgeHandler {
 	return &KnowledgeHandler{
 		kgService:         kgService,
@@ -53,6 +55,7 @@ func NewKnowledgeHandler(
 		agentShareService: agentShareService,
 		asynqClient:       asynqClient,
 		spanRepo:          spanRepo,
+		sourceACLGuard:    sourceACLGuard,
 	}
 }
 
@@ -182,6 +185,16 @@ func (h *KnowledgeHandler) resolveKnowledgeAndValidateKBAccess(c *gin.Context, k
 	_ = userID
 	_ = userExists
 	return nil, ctx, errors.NewForbiddenError("Permission denied to access this knowledge")
+}
+
+func (h *KnowledgeHandler) requireSourceACLRead(ctx context.Context, knowledge *types.Knowledge, purpose string) error {
+	if h.sourceACLGuard == nil {
+		return nil
+	}
+	return h.sourceACLGuard.RequireRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   purpose,
+	})
 }
 
 // handleDuplicateKnowledgeError handles cases where duplicate knowledge is detected
@@ -1187,8 +1200,12 @@ func (h *KnowledgeHandler) DownloadKnowledgeFile(c *gin.Context) {
 		return
 	}
 
-	_, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
+	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
+		c.Error(err)
+		return
+	}
+	if err := h.requireSourceACLRead(effCtx, knowledge, "download"); err != nil {
 		c.Error(err)
 		return
 	}
@@ -1298,8 +1315,12 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 		return
 	}
 
-	_, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
+	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
+		c.Error(err)
+		return
+	}
+	if err := h.requireSourceACLRead(effCtx, knowledge, "preview"); err != nil {
 		c.Error(err)
 		return
 	}
@@ -1454,6 +1475,9 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 			}
 		}
 		knowledges = filtered
+	}
+	if h.sourceACLGuard != nil && len(knowledges) > 0 {
+		knowledges, err = h.sourceACLGuard.FilterKnowledges(ctx, "knowledge_batch", knowledges)
 	}
 
 	if err != nil {

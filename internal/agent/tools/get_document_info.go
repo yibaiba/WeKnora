@@ -74,6 +74,7 @@ type GetDocumentInfoTool struct {
 	BaseTool
 	knowledgeService interfaces.KnowledgeService
 	chunkService     interfaces.ChunkService
+	sourceACLGuard   interfaces.SourceACLGuardService
 	searchTargets    types.SearchTargets // Pre-computed unified search targets with KB-tenant mapping
 }
 
@@ -81,12 +82,14 @@ type GetDocumentInfoTool struct {
 func NewGetDocumentInfoTool(
 	knowledgeService interfaces.KnowledgeService,
 	chunkService interfaces.ChunkService,
+	sourceACLGuard interfaces.SourceACLGuardService,
 	searchTargets types.SearchTargets,
 ) *GetDocumentInfoTool {
 	return &GetDocumentInfoTool{
 		BaseTool:         getDocumentInfoTool,
 		knowledgeService: knowledgeService,
 		chunkService:     chunkService,
+		sourceACLGuard:   sourceACLGuard,
 		searchTargets:    searchTargets,
 	}
 }
@@ -144,6 +147,19 @@ func (t *GetDocumentInfoTool) Execute(ctx context.Context, args json.RawMessage)
 				mu.Unlock()
 				return
 			}
+			knowledge, err := t.knowledgeService.GetKnowledgeByIDOnly(ctx, chunk.KnowledgeID)
+			if err != nil {
+				mu.Lock()
+				results["faq:"+id] = &docInfo{err: fmt.Errorf("knowledge not found: %v", err)}
+				mu.Unlock()
+				return
+			}
+			if err := t.requireSourceACLRead(ctx, knowledge, "agent_get_document_info_faq"); err != nil {
+				mu.Lock()
+				results["faq:"+id] = &docInfo{err: err}
+				mu.Unlock()
+				return
+			}
 			var meta *types.FAQChunkMetadata
 			if chunk.ChunkType == types.ChunkTypeFAQ {
 				meta, _ = chunk.FAQMetadata()
@@ -175,6 +191,14 @@ func (t *GetDocumentInfoTool) Execute(ctx context.Context, args json.RawMessage)
 				mu.Lock()
 				results[id] = &docInfo{
 					err: fmt.Errorf("knowledge base %s is not accessible", knowledge.KnowledgeBaseID),
+				}
+				mu.Unlock()
+				return
+			}
+			if err := t.requireSourceACLRead(ctx, knowledge, "agent_get_document_info"); err != nil {
+				mu.Lock()
+				results[id] = &docInfo{
+					err: err,
 				}
 				mu.Unlock()
 				return
@@ -335,6 +359,20 @@ func (t *GetDocumentInfoTool) Execute(ctx context.Context, args json.RawMessage)
 			"title":        firstTitle,
 		},
 	}, nil
+}
+
+func (t *GetDocumentInfoTool) requireSourceACLRead(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	purpose string,
+) error {
+	if t.sourceACLGuard == nil {
+		return nil
+	}
+	return t.sourceACLGuard.RequireRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   purpose,
+	})
 }
 
 func formatFAQEntryInfo(output *string, chunk *types.Chunk, meta *types.FAQChunkMetadata) map[string]interface{} {

@@ -54,6 +54,20 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return v, ok && v != ""
 }
 
+// SourceACLActorUserIDFromContext extracts the explicit source ACL actor.
+// When absent, callers may fall back to UserIDFromContext for human JWT paths.
+func SourceACLActorUserIDFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(SourceACLActorUserIDContextKey).(string)
+	actor := strings.TrimSpace(v)
+	return actor, ok && actor != ""
+}
+
+// ServiceKeyCallFromContext reports whether the request came through X-API-Key.
+func ServiceKeyCallFromContext(ctx context.Context) bool {
+	v, ok := ctx.Value(ServiceKeyCallContextKey).(bool)
+	return ok && v
+}
+
 // IsSyntheticUserID reports whether id refers to the synthetic system
 // user that the X-API-Key auth path attaches to each tenant
 // (User.ID = "system-<tenantID>"). These users have no real human

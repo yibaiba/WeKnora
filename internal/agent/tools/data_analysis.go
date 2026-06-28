@@ -122,7 +122,8 @@ type DataAnalysisTool struct {
 	// env var at request time can produce a different (or empty) value if the
 	// variable was not exported to the sub-process or was set programmatically
 	// after startup, causing GetFile to look in the wrong directory (#1040).
-	localBaseDir         string
+	localBaseDir   string
+	sourceACLGuard interfaces.SourceACLGuardService
 }
 
 func NewDataAnalysisTool(
@@ -132,6 +133,7 @@ func NewDataAnalysisTool(
 	fileService interfaces.FileService,
 	db *sql.DB,
 	sessionID string,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) *DataAnalysisTool {
 	return &DataAnalysisTool{
 		BaseTool:             dataAnalysisTool,
@@ -145,7 +147,8 @@ func NewDataAnalysisTool(
 		// call to resolveFileServiceForKnowledge uses the same base path.  The
 		// env var is guaranteed to be set (or empty == "/data/files" fallback)
 		// when the application starts and the DI container is assembled.
-		localBaseDir:         strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")),
+		localBaseDir:   strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")),
+		sourceACLGuard: sourceACLGuard,
 	}
 }
 
@@ -562,6 +565,9 @@ func (t *DataAnalysisTool) LoadFromKnowledge(ctx context.Context, knowledge *typ
 	if knowledge == nil {
 		return nil, fmt.Errorf("knowledge cannot be nil")
 	}
+	if err := t.requireSourceACLRead(ctx, knowledge, "agent_data_analysis"); err != nil {
+		return nil, err
+	}
 	tableName := t.TableName(knowledge)
 
 	// Normalize file type to lowercase for comparison
@@ -659,6 +665,20 @@ func (t *DataAnalysisTool) LoadFromKnowledgeID(ctx context.Context, knowledgeID 
 	}
 
 	return t.LoadFromKnowledge(ctx, knowledge)
+}
+
+func (t *DataAnalysisTool) requireSourceACLRead(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	purpose string,
+) error {
+	if t.sourceACLGuard == nil {
+		return nil
+	}
+	return t.sourceACLGuard.RequireRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   purpose,
+	})
 }
 
 // LoadFromTable retrieves the schema information of an existing table

@@ -73,6 +73,7 @@ type ListKnowledgeChunksTool struct {
 	BaseTool
 	chunkService     interfaces.ChunkService
 	knowledgeService interfaces.KnowledgeService
+	sourceACLGuard   interfaces.SourceACLGuardService
 	searchTargets    types.SearchTargets // Pre-computed unified search targets with KB-tenant mapping
 }
 
@@ -80,12 +81,14 @@ type ListKnowledgeChunksTool struct {
 func NewListKnowledgeChunksTool(
 	knowledgeService interfaces.KnowledgeService,
 	chunkService interfaces.ChunkService,
+	sourceACLGuard interfaces.SourceACLGuardService,
 	searchTargets types.SearchTargets,
 ) *ListKnowledgeChunksTool {
 	return &ListKnowledgeChunksTool{
 		BaseTool:         listKnowledgeChunksTool,
 		chunkService:     chunkService,
 		knowledgeService: knowledgeService,
+		sourceACLGuard:   sourceACLGuard,
 		searchTargets:    searchTargets,
 	}
 }
@@ -132,6 +135,12 @@ func (t *ListKnowledgeChunksTool) Execute(ctx context.Context, args json.RawMess
 			Success: false,
 			Error:   fmt.Sprintf("Knowledge base %s is not accessible", knowledge.KnowledgeBaseID),
 		}, fmt.Errorf("knowledge base not in search targets")
+	}
+	if err := t.requireSourceACLRead(ctx, knowledge, "agent_list_knowledge_chunks"); err != nil {
+		return &types.ToolResult{
+			Success: false,
+			Error:   "source ACL denied",
+		}, err
 	}
 
 	// Use the knowledge's actual tenant_id for chunk query (supports cross-tenant shared KB)
@@ -296,6 +305,19 @@ func (t *ListKnowledgeChunksTool) executeByChunkID(ctx context.Context, chunkID 
 			Error:   fmt.Sprintf("knowledge base %s is not accessible", chunk.KnowledgeBaseID),
 		}, fmt.Errorf("knowledge base not in search targets")
 	}
+	knowledge, err := t.knowledgeService.GetKnowledgeByIDOnly(ctx, chunk.KnowledgeID)
+	if err != nil {
+		return &types.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("knowledge not found: %v", err),
+		}, err
+	}
+	if err := t.requireSourceACLRead(ctx, knowledge, "agent_read_chunk"); err != nil {
+		return &types.ToolResult{
+			Success: false,
+			Error:   "source ACL denied",
+		}, err
+	}
 
 	chunks := []*types.Chunk{chunk}
 	if chunk.ImageInfo == "" {
@@ -346,6 +368,20 @@ func (t *ListKnowledgeChunksTool) executeByChunkID(ctx context.Context, chunkID 
 		Output:  output,
 		Data:    data,
 	}, nil
+}
+
+func (t *ListKnowledgeChunksTool) requireSourceACLRead(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	purpose string,
+) error {
+	if t.sourceACLGuard == nil {
+		return nil
+	}
+	return t.sourceACLGuard.RequireRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   purpose,
+	})
 }
 
 // lookupKnowledgeTitle looks up the title of a knowledge document

@@ -24,10 +24,16 @@ type DataSchemaTool struct {
 	BaseTool
 	knowledgeService interfaces.KnowledgeService
 	chunkRepo        interfaces.ChunkRepository
+	sourceACLGuard   interfaces.SourceACLGuardService
 	targetChunkTypes []types.ChunkType
 }
 
-func NewDataSchemaTool(knowledgeService interfaces.KnowledgeService, chunkRepo interfaces.ChunkRepository, targetChunkTypes ...types.ChunkType) *DataSchemaTool {
+func NewDataSchemaTool(
+	knowledgeService interfaces.KnowledgeService,
+	chunkRepo interfaces.ChunkRepository,
+	sourceACLGuard interfaces.SourceACLGuardService,
+	targetChunkTypes ...types.ChunkType,
+) *DataSchemaTool {
 	if len(targetChunkTypes) == 0 {
 		targetChunkTypes = []types.ChunkType{types.ChunkTypeTableSummary, types.ChunkTypeTableColumn}
 	}
@@ -35,6 +41,7 @@ func NewDataSchemaTool(knowledgeService interfaces.KnowledgeService, chunkRepo i
 		BaseTool:         dataSchemaTool,
 		knowledgeService: knowledgeService,
 		chunkRepo:        chunkRepo,
+		sourceACLGuard:   sourceACLGuard,
 		targetChunkTypes: targetChunkTypes,
 	}
 }
@@ -55,6 +62,12 @@ func (t *DataSchemaTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		return &types.ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("Failed to get knowledge '%s': %v", input.KnowledgeID, err),
+		}, err
+	}
+	if err := t.requireSourceACLRead(ctx, knowledge); err != nil {
+		return &types.ToolResult{
+			Success: false,
+			Error:   "source ACL denied",
 		}, err
 	}
 
@@ -111,4 +124,14 @@ func (t *DataSchemaTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 			"columns": columnContent,
 		},
 	}, nil
+}
+
+func (t *DataSchemaTool) requireSourceACLRead(ctx context.Context, knowledge *types.Knowledge) error {
+	if t.sourceACLGuard == nil {
+		return nil
+	}
+	return t.sourceACLGuard.RequireRead(ctx, interfaces.SourceACLGuardRequest{
+		Knowledge: knowledge,
+		Purpose:   "agent_data_schema",
+	})
 }

@@ -54,6 +54,7 @@ type agentService struct {
 	webSearchService      interfaces.WebSearchService
 	knowledgeBaseService  interfaces.KnowledgeBaseService
 	knowledgeService      interfaces.KnowledgeService
+	sourceACLGuard        interfaces.SourceACLGuardService
 	fileService           interfaces.FileService
 	chunkService          interfaces.ChunkService
 	duckdb                *sql.DB
@@ -81,12 +82,14 @@ func NewAgentService(
 	wikiPageService interfaces.WikiPageService,
 	tenantService interfaces.TenantService,
 	toolApprovalGate approval.MCPApproval,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
 		modelService:          modelService,
 		knowledgeBaseService:  knowledgeBaseService,
 		knowledgeService:      knowledgeService,
+		sourceACLGuard:        sourceACLGuard,
 		fileService:           fileService,
 		chunkService:          chunkService,
 		mcpServiceService:     mcpServiceService,
@@ -524,14 +527,29 @@ func (s *agentService) registerTools(
 				s.cfg,
 			)
 		case tools.ToolGrepChunks:
-			toolToRegister = tools.NewGrepChunksTool(s.db, config.SearchTargets)
+			toolToRegister = tools.NewGrepChunksTool(
+				s.db,
+				s.knowledgeService,
+				s.sourceACLGuard,
+				config.SearchTargets,
+			)
 			logger.Infof(ctx, "Registered grep_chunks tool with searchTargets: %d targets", len(config.SearchTargets))
 		case tools.ToolListKnowledgeChunks:
-			toolToRegister = tools.NewListKnowledgeChunksTool(s.knowledgeService, s.chunkService, config.SearchTargets)
+			toolToRegister = tools.NewListKnowledgeChunksTool(
+				s.knowledgeService,
+				s.chunkService,
+				s.sourceACLGuard,
+				config.SearchTargets,
+			)
 		case tools.ToolQueryKnowledgeGraph:
 			toolToRegister = tools.NewQueryKnowledgeGraphTool(s.knowledgeBaseService)
 		case tools.ToolGetDocumentInfo:
-			toolToRegister = tools.NewGetDocumentInfoTool(s.knowledgeService, s.chunkService, config.SearchTargets)
+			toolToRegister = tools.NewGetDocumentInfoTool(
+				s.knowledgeService,
+				s.chunkService,
+				s.sourceACLGuard,
+				config.SearchTargets,
+			)
 		case tools.ToolDatabaseQuery:
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
 		case tools.ToolWebSearch:
@@ -551,11 +569,23 @@ func (s *agentService) registerTools(
 			logger.Infof(ctx, "Registered web_fetch tool for session: %s", sessionID)
 
 		case tools.ToolDataAnalysis:
-			toolToRegister = tools.NewDataAnalysisTool(s.knowledgeBaseService, s.knowledgeService, s.tenantService, s.fileService, s.duckdb, sessionID)
+			toolToRegister = tools.NewDataAnalysisTool(
+				s.knowledgeBaseService,
+				s.knowledgeService,
+				s.tenantService,
+				s.fileService,
+				s.duckdb,
+				sessionID,
+				s.sourceACLGuard,
+			)
 			logger.Infof(ctx, "Registered data_analysis tool for session: %s", sessionID)
 
 		case tools.ToolDataSchema:
-			toolToRegister = tools.NewDataSchemaTool(s.knowledgeService, s.chunkService.GetRepository())
+			toolToRegister = tools.NewDataSchemaTool(
+				s.knowledgeService,
+				s.chunkService.GetRepository(),
+				s.sourceACLGuard,
+			)
 			logger.Infof(ctx, "Registered data_schema tool")
 
 		// Wiki tools — only registered when wiki KBs are detected
@@ -564,7 +594,11 @@ func (s *agentService) registerTools(
 		case tools.ToolWikiSearch:
 			toolToRegister = tools.NewWikiSearchTool(s.wikiPageService, wikiScopes)
 		case tools.ToolWikiReadSourceDoc:
-			toolToRegister = tools.NewWikiReadSourceDocTool(s.knowledgeService, s.chunkService)
+			toolToRegister = tools.NewWikiReadSourceDocTool(
+				s.knowledgeService,
+				s.chunkService,
+				s.sourceACLGuard,
+			)
 		case tools.ToolWikiFlagIssue:
 			toolToRegister = tools.NewWikiFlagIssueTool(s.wikiPageService, wikiKBIDs)
 		case tools.ToolWikiReadIssue:
@@ -766,6 +800,12 @@ func (s *agentService) getSelectedDocumentInfos(ctx context.Context, knowledgeID
 	knowledges, err := s.knowledgeService.GetKnowledgeBatchWithSharedAccess(ctx, tenantID, knowledgeIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get knowledge batch: %w", err)
+	}
+	if s.sourceACLGuard != nil {
+		knowledges, err = s.sourceACLGuard.FilterKnowledges(ctx, "agent_selected_document", knowledges)
+		if err != nil {
+			return nil, fmt.Errorf("source ACL filter selected documents: %w", err)
+		}
 	}
 
 	// Build map for quick lookup

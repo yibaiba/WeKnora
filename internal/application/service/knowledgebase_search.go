@@ -203,9 +203,9 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 			"group_count":            len(groups),
 		},
 		Metadata: map[string]interface{}{
-			"primary_kb_id":      kb.ID,
-			"primary_kb_type":    string(kb.Type),
-			"embedding_model_id": kb.EmbeddingModelID,
+			"primary_kb_id":       kb.ID,
+			"primary_kb_type":     string(kb.Type),
+			"embedding_model_id":  kb.EmbeddingModelID,
 			"has_query_embedding": len(params.QueryEmbedding) > 0,
 		},
 	})
@@ -247,6 +247,12 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		return nil, err
 	}
 
+	if s.sourceACLGuard != nil {
+		deduplicatedChunks, err = s.sourceACLGuard.FilterIndexCandidates(ctx, "hybrid_search", deduplicatedChunks)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(deduplicatedChunks) > params.MatchCount {
 		deduplicatedChunks = deduplicatedChunks[:params.MatchCount]
 	}

@@ -116,6 +116,13 @@ const (
 	// reader can distinguish a real revoke from a noop attempt.
 	// TenantID=0 because the change is system-scope.
 	AuditActionSystemAdminRevoked AuditAction = "system.admin_revoked"
+
+	// AuditActionSourceACLReadAllowed fires when a protected source read is
+	// permitted by source ACL policy. Details must stay metadata-only.
+	AuditActionSourceACLReadAllowed AuditAction = "source_acl.read_allowed"
+	// AuditActionSourceACLReadDenied fires when a protected source read is
+	// denied by source ACL policy. Details must stay metadata-only.
+	AuditActionSourceACLReadDenied AuditAction = "source_acl.read_denied"
 )
 
 // AuditOutcome distinguishes successful mutations from middleware-level

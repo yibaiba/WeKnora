@@ -44,6 +44,7 @@ func NewPluginSearchParallel(
 	graphRepository interfaces.RetrieveGraphRepository,
 	chunkRepository interfaces.ChunkRepository,
 	knowledgeRepository interfaces.KnowledgeRepository,
+	sourceACLGuard interfaces.SourceACLGuardService,
 ) *PluginSearchParallel {
 	// Create internal plugins without registering them
 	searchPlugin := &PluginSearch{
@@ -56,12 +57,14 @@ func NewPluginSearchParallel(
 		sessionService:        sessionService,
 		webSearchStateService: webSearchStateService,
 		webSearchProviderRepo: webSearchProviderRepo,
+		sourceACLGuard:        sourceACLGuard,
 	}
 
 	searchEntityPlugin := &PluginSearchEntity{
-		graphRepo:     graphRepository,
-		chunkRepo:     chunkRepository,
-		knowledgeRepo: knowledgeRepository,
+		graphRepo:      graphRepository,
+		chunkRepo:      chunkRepository,
+		knowledgeRepo:  knowledgeRepository,
+		sourceACLGuard: sourceACLGuard,
 	}
 
 	res := &PluginSearchParallel{
