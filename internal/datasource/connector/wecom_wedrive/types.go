@@ -1,8 +1,9 @@
 // Package wecom_wedrive implements the Enterprise WeChat built-in Microdisk
 // (WeDrive / 企业微信微盘) data source connector.
 //
-// This child task only exposes credential validation and resource browsing.
-// File sync is intentionally implemented in a later sync-pipeline task.
+// The first sync slice supports department-public Microdisk folders. Restricted
+// or mixed-permission roots must wait for the source ACL policy/enforcement
+// tasks, so this connector fails closed when ACL enforcement is requested.
 package wecom_wedrive
 
 import (
@@ -21,14 +22,19 @@ const (
 
 	fileTypeFolder = 1
 	fileStatusOK   = 1
+
+	accessModePublic     = "public"
+	accessModeRestricted = "restricted"
 )
 
 type Config struct {
-	CorpID   string `json:"corp_id"`
-	Secret   string `json:"secret"`
-	UserID   string `json:"userid"`
-	SpaceIDs []string
-	PageSize int
+	CorpID           string `json:"corp_id"`
+	Secret           string `json:"secret"`
+	UserID           string `json:"userid"`
+	SpaceIDs         []string
+	PageSize         int
+	AccessMode       string
+	RequireSourceACL bool
 }
 
 func parseConfig(config *types.DataSourceConfig) (*Config, error) {
@@ -71,6 +77,12 @@ func parseConfig(config *types.DataSourceConfig) (*Config, error) {
 	if cfg.PageSize == 0 {
 		cfg.PageSize = DefaultPageSize
 	}
+	cfg.AccessMode = accessModeFromSettings(config.Settings)
+	requireACL, err := boolFromSettings(config.Settings, "require_source_acl")
+	if err != nil {
+		return nil, err
+	}
+	cfg.RequireSourceACL = requireACL
 	return &cfg, nil
 }
 
@@ -164,6 +176,82 @@ func validatePageSize(value int) (int, error) {
 		return 0, fmt.Errorf("%w: page_size must be greater than zero", datasource.ErrInvalidConfig)
 	}
 	return value, nil
+}
+
+func accessModeFromSettings(settings map[string]interface{}) string {
+	if len(settings) == 0 {
+		return accessModePublic
+	}
+	raw, ok := settings["access_mode"]
+	if !ok || raw == nil {
+		return accessModePublic
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return accessModeRestricted
+	}
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return accessModePublic
+	}
+	return value
+}
+
+func boolFromSettings(settings map[string]interface{}, key string) (bool, error) {
+	if len(settings) == 0 {
+		return false, nil
+	}
+	raw, ok := settings[key]
+	if !ok || raw == nil {
+		return false, nil
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v, nil
+	case int:
+		if v == 0 {
+			return false, nil
+		}
+		if v == 1 {
+			return true, nil
+		}
+	case int64:
+		if v == 0 {
+			return false, nil
+		}
+		if v == 1 {
+			return true, nil
+		}
+	case float64:
+		if v == 0 {
+			return false, nil
+		}
+		if v == 1 {
+			return true, nil
+		}
+	case string:
+		value := strings.TrimSpace(strings.ToLower(v))
+		if value == "" || value == "false" || value == "0" || value == "no" {
+			return false, nil
+		}
+		if value == "true" || value == "1" || value == "yes" {
+			return true, nil
+		}
+	}
+	return false, fmt.Errorf("%w: %s must be a boolean", datasource.ErrInvalidConfig, key)
+}
+
+func (c *Config) validatePublicSync() error {
+	if c.RequireSourceACL || c.AccessMode == accessModeRestricted {
+		return fmt.Errorf(
+			"%w: wecom_wedrive restricted sync requires source ACL policy and enforcement tasks",
+			datasource.ErrInvalidConfig,
+		)
+	}
+	if c.AccessMode != accessModePublic {
+		return fmt.Errorf("%w: unsupported wecom_wedrive access_mode %q", datasource.ErrInvalidConfig, c.AccessMode)
+	}
+	return nil
 }
 
 type tencentBaseResponse struct {

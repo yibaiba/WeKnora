@@ -209,7 +209,7 @@ var ConnectorMetadataRegistry = map[string]ConnectorMetadata{
 		Description:  "Browse Enterprise WeChat Microdisk spaces, folders, and files",
 		Priority:     13,
 		AuthType:     "custom",
-		Capabilities: []string{},
+		Capabilities: []string{"incremental", "deletion_sync"},
 	},
 }
 

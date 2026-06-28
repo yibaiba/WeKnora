@@ -61,6 +61,22 @@ func newFakeWeDriveServer(t *testing.T) *httptest.Server {
 				info["file_type"] = 1
 			}
 			writeJSON(t, w, map[string]interface{}{"errcode": 0, "file_info": info})
+		case "/wedrive/file_download":
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode file_download request: %v", err)
+			}
+			fileID, _ := body["fileid"].(string)
+			writeJSON(t, w, map[string]interface{}{
+				"errcode":      0,
+				"download_url": "http://" + r.Host + "/download/" + fileID,
+				"cookie_name":  "wedrive_session",
+				"cookie_value": "cookie-secret",
+			})
+		case "/download/file-1":
+			_, _ = w.Write([]byte("# Readme"))
+		case "/download/file-2":
+			_, _ = w.Write([]byte("docx bytes"))
 		default:
 			t.Fatalf("unexpected fake WeDrive path %s", r.URL.Path)
 		}

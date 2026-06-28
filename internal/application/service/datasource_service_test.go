@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"strings"
 	"testing"
 	"time"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
@@ -57,7 +59,65 @@ func TestProcessSyncCancelsWhenKnowledgeBaseDeleted(t *testing.T) {
 	require.NotNil(t, updated.FinishedAt)
 }
 
+func TestProcessSyncPersistsPartialWhenItemIngestionFails(t *testing.T) {
+	config := &types.DataSourceConfig{Type: "partial_test"}
+	configJSON, err := config.ToJSON()
+	require.NoError(t, err)
+
+	ds := &types.DataSource{
+		ID:              "ds-partial",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		Name:            "WeDrive",
+		Type:            "partial_test",
+		Config:          configJSON,
+		Status:          types.DataSourceStatusActive,
+		SyncMode:        types.SyncModeFull,
+	}
+	dsRepo := newKBDeleteDSRepo("kb-1", ds)
+	syncLog := &types.SyncLog{
+		ID:           "log-partial",
+		DataSourceID: ds.ID,
+		TenantID:     ds.TenantID,
+		Status:       types.SyncLogStatusRunning,
+		StartedAt:    time.Now().UTC(),
+	}
+	syncLogRepo := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{syncLog.ID: syncLog}}
+	registry := datasource.NewConnectorRegistry()
+	require.NoError(t, registry.Register(&partialTestConnector{}))
+
+	svc := &DataSourceService{
+		dsRepo:            dsRepo,
+		syncLogRepo:       syncLogRepo,
+		kbService:         &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
+		knowledgeService:  &captureKnowledgeService{repo: &captureKnowledgeRepository{}},
+		tenantRepo:        &processSyncTenantRepo{},
+		tagService:        &processSyncTagService{},
+		connectorRegistry: registry,
+	}
+
+	payload, err := json.Marshal(types.DataSourceSyncPayload{
+		DataSourceID: ds.ID,
+		TenantID:     ds.TenantID,
+		SyncLogID:    syncLog.ID,
+		ForceFull:    true,
+	})
+	require.NoError(t, err)
+
+	err = svc.ProcessSync(context.Background(), asynq.NewTask(types.TypeDataSourceSync, payload))
+	require.NoError(t, err)
+
+	updated := syncLogRepo.logs[syncLog.ID]
+	require.NotNil(t, updated)
+	assert.Equal(t, types.SyncLogStatusPartial, updated.Status)
+	assert.Equal(t, 2, updated.ItemsTotal)
+	assert.Equal(t, 1, updated.ItemsCreated)
+	assert.Equal(t, 1, updated.ItemsFailed)
+	assert.Contains(t, updated.ErrorMessage, "Some items failed")
+}
+
 type processSyncKBService struct {
+	kb     *types.KnowledgeBase
 	getErr error
 }
 
@@ -65,10 +125,16 @@ func (s *processSyncKBService) CreateKnowledgeBase(context.Context, *types.Knowl
 	return nil, nil
 }
 func (s *processSyncKBService) GetKnowledgeBaseByID(context.Context, string) (*types.KnowledgeBase, error) {
-	return nil, s.getErr
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.kb, nil
 }
 func (s *processSyncKBService) GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error) {
-	return nil, s.getErr
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.kb, nil
 }
 func (s *processSyncKBService) GetKnowledgeBasesByIDsOnly(context.Context, []string) ([]*types.KnowledgeBase, error) {
 	return nil, nil
@@ -146,6 +212,64 @@ func (r *processSyncSyncLogRepo) CancelPendingByDataSource(context.Context, stri
 }
 func (r *processSyncSyncLogRepo) CleanupOldLogs(context.Context, int) error { return nil }
 
+type partialTestConnector struct{}
+
+func (c *partialTestConnector) Type() string { return "partial_test" }
+func (c *partialTestConnector) Validate(context.Context, *types.DataSourceConfig) error {
+	return nil
+}
+func (c *partialTestConnector) ListResources(context.Context, *types.DataSourceConfig, string) ([]types.Resource, error) {
+	return nil, nil
+}
+func (c *partialTestConnector) ResolveResourceAncestors(
+	context.Context, *types.DataSourceConfig, []string,
+) ([]string, error) {
+	return nil, nil
+}
+func (c *partialTestConnector) FetchAll(
+	context.Context, *types.DataSourceConfig, []string,
+) ([]types.FetchedItem, error) {
+	return []types.FetchedItem{
+		{
+			ExternalID:       "ok",
+			Title:            "Ok.md",
+			FileName:         "Ok.md",
+			Content:          []byte("# ok"),
+			SourceResourceID: "root",
+		},
+		{
+			ExternalID:       "bad",
+			Title:            "Bad.md",
+			FileName:         "Bad.md",
+			SourceResourceID: "root",
+			Metadata:         map[string]string{"error": "download failed"},
+		},
+	}, nil
+}
+func (c *partialTestConnector) FetchIncremental(
+	context.Context, *types.DataSourceConfig, *types.SyncCursor,
+) ([]types.FetchedItem, *types.SyncCursor, error) {
+	return nil, nil, errors.New("not used")
+}
+
+type processSyncTenantRepo struct {
+	interfaces.TenantRepository
+}
+
+func (r *processSyncTenantRepo) GetTenantByID(context.Context, uint64) (*types.Tenant, error) {
+	return &types.Tenant{ID: 1, Name: "tenant"}, nil
+}
+
+type processSyncTagService struct {
+	interfaces.KnowledgeTagService
+}
+
+func (s *processSyncTagService) FindOrCreateTagByName(
+	context.Context, string, string,
+) (*types.KnowledgeTag, error) {
+	return &types.KnowledgeTag{ID: "tag-1", Name: "WeDrive"}, nil
+}
+
 func TestAllFetchedItemsFailedError(t *testing.T) {
 	err := allFetchedItemsFailedError(&types.SyncResult{
 		Total:  2,
@@ -183,4 +307,99 @@ func TestAllFetchedItemsFailedErrorTruncatesLongDetail(t *testing.T) {
 	require.Error(t, err)
 	assert.LessOrEqual(t, len(err.Error()), 560)
 	assert.Contains(t, err.Error(), "...")
+}
+
+func TestProcessConfigFromSettings(t *testing.T) {
+	raw := map[string]interface{}{
+		"chunking_config": map[string]interface{}{"chunk_size": float64(768)},
+		"parser_engine_overrides": map[string]interface{}{
+			"pdf_force_scanned": "true",
+		},
+	}
+
+	overrides, err := processConfigFromSettings(map[string]interface{}{"process_config": raw})
+	require.NoError(t, err)
+	require.NotNil(t, overrides)
+	require.NotNil(t, overrides.ChunkingConfig)
+	assert.Equal(t, 768, overrides.ChunkingConfig.ChunkSize)
+	assert.Equal(t, "true", overrides.ParserEngineOverrides["pdf_force_scanned"])
+}
+
+func TestSyncStatusFromResultMarksItemFailuresPartial(t *testing.T) {
+	status, message := syncStatusFromResult(&types.SyncResult{Total: 2, Created: 1, Failed: 1}, nil)
+
+	assert.Equal(t, types.SyncLogStatusPartial, status)
+	assert.Contains(t, message, "Some items failed")
+}
+
+func TestIngestItemForwardsProcessOverridesToFileIngestion(t *testing.T) {
+	chunkSize := 512
+	overrides := &types.KnowledgeProcessOverrides{
+		ChunkingConfig: &types.ChunkingConfig{ChunkSize: chunkSize},
+	}
+	knowledgeSvc := &captureKnowledgeService{repo: &captureKnowledgeRepository{}}
+	svc := &DataSourceService{knowledgeService: knowledgeSvc}
+	ds := &types.DataSource{
+		ID:              "ds-1",
+		TenantID:        7,
+		KnowledgeBaseID: "kb-1",
+		Type:            types.ConnectorTypeWeComWeDrive,
+	}
+	item := &types.FetchedItem{
+		ExternalID:       "wecom_wedrive:space:file",
+		Title:            "Doc.md",
+		FileName:         "Doc.md",
+		Content:          []byte("# doc"),
+		SourceResourceID: "folder:space:folder",
+		Metadata:         map[string]string{"provider": "wecom_wedrive"},
+	}
+
+	_, err := svc.ingestItem(context.Background(), ds, item, []string{"tag-1"}, overrides)
+	require.NoError(t, err)
+	require.Same(t, overrides, knowledgeSvc.fileOverrides)
+	assert.Equal(t, "tag-1", knowledgeSvc.fileTagIDs[0])
+	assert.Equal(t, types.ConnectorTypeWeComWeDrive, knowledgeSvc.fileChannel)
+}
+
+type captureKnowledgeService struct {
+	interfaces.KnowledgeService
+	repo          interfaces.KnowledgeRepository
+	fileOverrides *types.KnowledgeProcessOverrides
+	fileTagIDs    []string
+	fileChannel   string
+}
+
+func (s *captureKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
+	return s.repo
+}
+
+func (s *captureKnowledgeService) CreateKnowledgeFromFile(
+	_ context.Context,
+	kbID string,
+	_ *multipart.FileHeader,
+	_ map[string]string,
+	_ *bool,
+	_ string,
+	tagIDs []string,
+	channel string,
+	processOverrides *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
+	s.fileOverrides = processOverrides
+	s.fileTagIDs = tagIDs
+	s.fileChannel = channel
+	return &types.Knowledge{ID: "knowledge-1", KnowledgeBaseID: kbID}, nil
+}
+
+type captureKnowledgeRepository struct {
+	interfaces.KnowledgeRepository
+}
+
+func (r *captureKnowledgeRepository) FindByMetadataKey(
+	context.Context,
+	uint64,
+	string,
+	string,
+	string,
+) (*types.Knowledge, error) {
+	return nil, nil
 }

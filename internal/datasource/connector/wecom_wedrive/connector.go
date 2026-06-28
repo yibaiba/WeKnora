@@ -2,7 +2,6 @@ package wecom_wedrive
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -124,13 +123,23 @@ func (c *Connector) ResolveResourceAncestors(
 func (c *Connector) FetchAll(
 	ctx context.Context, config *types.DataSourceConfig, resourceIDs []string,
 ) ([]types.FetchedItem, error) {
-	return nil, errors.New("wecom_wedrive sync is not implemented yet; use the sync-pipeline task before triggering imports")
+	items, _, err := c.walkSync(ctx, config, resourceIDs, nil, false)
+	return items, err
 }
 
 func (c *Connector) FetchIncremental(
 	ctx context.Context, config *types.DataSourceConfig, cursor *types.SyncCursor,
 ) ([]types.FetchedItem, *types.SyncCursor, error) {
-	return nil, nil, errors.New("wecom_wedrive incremental sync is not implemented yet; use the sync-pipeline task before triggering imports")
+	cfg, err := parseConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	prev, err := decodeSyncCursor(cursor)
+	if err != nil {
+		return nil, nil, err
+	}
+	items, next, err := c.walkSyncWithConfig(ctx, cfg, config.ResourceIDs, prev, true)
+	return items, next.toSyncCursor(), err
 }
 
 func (c *Connector) listSpaces(ctx context.Context, client *Client, cfg *Config) ([]types.Resource, error) {

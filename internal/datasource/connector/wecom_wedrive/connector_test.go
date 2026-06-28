@@ -2,7 +2,11 @@ package wecom_wedrive
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,15 +82,193 @@ func TestConnectorResolveResourceAncestors(t *testing.T) {
 	}
 }
 
-func TestConnectorFetchExplicitlyNotImplemented(t *testing.T) {
-	connector := NewConnector()
-	_, err := connector.FetchAll(testContext(t), testDataSourceConfig(nil), nil)
-	if err == nil || !strings.Contains(err.Error(), "not implemented") {
+func TestConnectorFetchAllDownloadsSupportedFiles(t *testing.T) {
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return fakeClient(t, cfg)
+	})
+	items, err := connector.FetchAll(
+		testContext(t),
+		testDataSourceConfig(map[string]interface{}{"space_ids": []interface{}{"space-1"}}),
+		[]string{FolderResourceID("space-1", "folder-1")},
+	)
+	if err != nil {
 		t.Fatalf("FetchAll() error = %v", err)
 	}
-	_, _, err = connector.FetchIncremental(testContext(t), testDataSourceConfig(nil), nil)
-	if err == nil || !strings.Contains(err.Error(), "not implemented") {
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	item := items[0]
+	if item.ExternalID != "wecom_wedrive:space-1:file-2" {
+		t.Fatalf("external id = %q", item.ExternalID)
+	}
+	if string(item.Content) != "docx bytes" {
+		t.Fatalf("content = %q", string(item.Content))
+	}
+	if item.URL != "" {
+		t.Fatalf("URL should not be used for WeDrive byte-backed items: %q", item.URL)
+	}
+	if item.Metadata["source_url"] != "" || item.Metadata["file_type"] != "2" || item.Metadata["access_mode"] != "public" {
+		t.Fatalf("metadata = %#v", item.Metadata)
+	}
+}
+
+func TestConnectorFetchAllSkipsUnsupportedBeforeDownload(t *testing.T) {
+	server := newUnsupportedFileServer(t)
+	defer server.Close()
+
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return NewClient(cfg, WithBaseURL(server.URL))
+	})
+	items, err := connector.FetchAll(
+		testContext(t),
+		testDataSourceConfig(map[string]interface{}{"space_ids": []interface{}{"space-1"}}),
+		[]string{SpaceResourceID("space-1")},
+	)
+	if err != nil {
+		t.Fatalf("FetchAll() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	if items[0].Metadata["skip_reason"] != "unsupported file type" {
+		t.Fatalf("metadata = %#v", items[0].Metadata)
+	}
+	if len(items[0].Content) != 0 || items[0].URL != "" {
+		t.Fatalf("unsupported item should not carry content or URL: %#v", items[0])
+	}
+}
+
+func TestConnectorFetchAllRestrictedFailsClosedBeforeDownload(t *testing.T) {
+	server := newUnsupportedFileServer(t)
+	defer server.Close()
+
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return NewClient(cfg, WithBaseURL(server.URL))
+	})
+	_, err := connector.FetchAll(
+		testContext(t),
+		testDataSourceConfig(map[string]interface{}{
+			"space_ids":          []interface{}{"space-1"},
+			"access_mode":        "restricted",
+			"require_source_acl": true,
+		}),
+		[]string{SpaceResourceID("space-1")},
+	)
+	if err == nil || !strings.Contains(err.Error(), "source ACL policy") {
+		t.Fatalf("FetchAll() error = %v", err)
+	}
+}
+
+func TestConnectorFetchAllLoadsMissingListingMetadata(t *testing.T) {
+	server := newMissingMetadataServer(t)
+	defer server.Close()
+
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return NewClient(cfg, WithBaseURL(server.URL))
+	})
+	items, err := connector.FetchAll(
+		testContext(t),
+		testDataSourceConfig(map[string]interface{}{"space_ids": []interface{}{"space-1"}}),
+		[]string{SpaceResourceID("space-1")},
+	)
+	if err != nil {
+		t.Fatalf("FetchAll() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	if items[0].FileName != "Recovered.md" || string(items[0].Content) != "# recovered" {
+		t.Fatalf("item = %#v", items[0])
+	}
+}
+
+func TestConnectorFetchIncrementalSkipsUnchangedAndEmitsDeletes(t *testing.T) {
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return fakeClient(t, cfg)
+	})
+	cfg := testDataSourceConfig(map[string]interface{}{"space_ids": []interface{}{"space-1"}})
+
+	first, cursor, err := connector.FetchIncremental(testContext(t), cfg, nil)
+	if err != nil {
+		t.Fatalf("first FetchIncremental() error = %v", err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("first items len = %d, want 2: %#v", len(first), first)
+	}
+	if cursor == nil || len(cursor.ConnectorCursor) == 0 {
+		t.Fatalf("cursor = %#v", cursor)
+	}
+
+	second, _, err := connector.FetchIncremental(testContext(t), cfg, cursor)
+	if err != nil {
+		t.Fatalf("second FetchIncremental() error = %v", err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("second items = %#v, want unchanged skip", second)
+	}
+
+	prev, err := decodeSyncCursor(cursor)
+	if err != nil {
+		t.Fatalf("decodeSyncCursor() error = %v", err)
+	}
+	prev.Files[fileStateKey("space-1", "deleted-file")] = syncFileState{
+		SpaceID:  "space-1",
+		FileID:   "deleted-file",
+		FatherID: "folder-1",
+		FileName: "Deleted.md",
+		FileType: 2,
+	}
+	deletedCursor := prev.toSyncCursor()
+	third, _, err := connector.FetchIncremental(testContext(t), cfg, deletedCursor)
+	if err != nil {
+		t.Fatalf("third FetchIncremental() error = %v", err)
+	}
+	foundDeleted := false
+	for _, item := range third {
+		if item.ExternalID == "wecom_wedrive:space-1:deleted-file" && item.IsDeleted {
+			foundDeleted = true
+		}
+	}
+	if !foundDeleted {
+		t.Fatalf("deleted item not emitted: %#v", third)
+	}
+}
+
+func TestConnectorFetchIncrementalDoesNotDeleteWhenRootSelectionChanges(t *testing.T) {
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return fakeClient(t, cfg)
+	})
+	cfg := testDataSourceConfig(map[string]interface{}{"space_ids": []interface{}{"space-1"}})
+	prev := (&syncCursor{
+		LastSyncTime: time.Now().UTC(),
+		Roots:        []string{FolderResourceID("space-1", "old-folder")},
+		Files: map[string]syncFileState{
+			fileStateKey("space-1", "old-file"): {
+				SpaceID:  "space-1",
+				FileID:   "old-file",
+				FileName: "Old.md",
+				FileType: 2,
+			},
+		},
+	}).toSyncCursor()
+
+	items, _, err := connector.FetchIncremental(testContext(t), cfg, prev)
+	if err != nil {
 		t.Fatalf("FetchIncremental() error = %v", err)
+	}
+	for _, item := range items {
+		if item.ExternalID == "wecom_wedrive:space-1:old-file" && item.IsDeleted {
+			t.Fatalf("root selection changed but old file was deleted: %#v", items)
+		}
+	}
+}
+
+func TestDecodeSyncCursorRejectsMalformedConnectorCursor(t *testing.T) {
+	_, err := decodeSyncCursor(&types.SyncCursor{
+		ConnectorCursor: map[string]interface{}{"files": "bad"},
+	})
+	if err == nil {
+		t.Fatal("decodeSyncCursor() expected error")
 	}
 }
 
@@ -120,4 +302,88 @@ func testContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+func newUnsupportedFileServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gettoken":
+			writeJSON(t, w, map[string]interface{}{"errcode": 0, "access_token": "token-1", "expires_in": 7200})
+		case "/wedrive/file_list":
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode file_list request: %v", err)
+			}
+			spaceID, _ := body["spaceid"].(string)
+			writeJSON(t, w, map[string]interface{}{
+				"errcode":  0,
+				"has_more": false,
+				"file_list": map[string]interface{}{"item": []map[string]interface{}{
+					{
+						"fileid":      "file-exe",
+						"file_name":   "Setup.exe",
+						"spaceid":     spaceID,
+						"file_type":   2,
+						"file_status": 1,
+						"mtime":       1700000100,
+					},
+				}},
+			})
+		case "/wedrive/file_download":
+			t.Fatalf("file_download should not be called for unsupported files")
+		default:
+			t.Fatalf("unexpected fake WeDrive path %s", r.URL.Path)
+		}
+	}))
+}
+
+func newMissingMetadataServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var fileInfoCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gettoken":
+			writeJSON(t, w, map[string]interface{}{"errcode": 0, "access_token": "token-1", "expires_in": 7200})
+		case "/wedrive/file_list":
+			writeJSON(t, w, map[string]interface{}{
+				"errcode":  0,
+				"has_more": false,
+				"file_list": map[string]interface{}{"item": []map[string]interface{}{
+					{
+						"fileid":      "file-missing-metadata",
+						"spaceid":     "space-1",
+						"file_status": 1,
+						"mtime":       1700000200,
+					},
+				}},
+			})
+		case "/wedrive/file_info":
+			atomic.AddInt32(&fileInfoCalls, 1)
+			writeJSON(t, w, map[string]interface{}{
+				"errcode": 0,
+				"file_info": map[string]interface{}{
+					"fileid":      "file-missing-metadata",
+					"file_name":   "Recovered.md",
+					"spaceid":     "space-1",
+					"file_type":   2,
+					"file_status": 1,
+					"mtime":       1700000200,
+				},
+			})
+		case "/wedrive/file_download":
+			if got := atomic.LoadInt32(&fileInfoCalls); got == 0 {
+				t.Fatalf("file_info should run before file_download")
+			}
+			writeJSON(t, w, map[string]interface{}{
+				"errcode":      0,
+				"download_url": "http://" + r.Host + "/download/file-missing-metadata",
+			})
+		case "/download/file-missing-metadata":
+			_, _ = w.Write([]byte("# recovered"))
+		default:
+			t.Fatalf("unexpected fake WeDrive path %s", r.URL.Path)
+		}
+	}))
+	return server
 }

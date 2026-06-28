@@ -70,6 +70,43 @@ func TestParseConfigSettingsSpaceIDsOverrideCredentialFallback(t *testing.T) {
 	}
 }
 
+func TestParseConfigReadsAccessModeAndRequireSourceACL(t *testing.T) {
+	cfg, err := parseConfig(&types.DataSourceConfig{
+		Credentials: map[string]interface{}{
+			"corp_id": "ww123",
+			"secret":  "secret",
+			"userid":  "user1",
+		},
+		Settings: map[string]interface{}{
+			"access_mode":        " restricted ",
+			"require_source_acl": "true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	if cfg.AccessMode != accessModeRestricted || !cfg.RequireSourceACL {
+		t.Fatalf("access config = %#v", cfg)
+	}
+	if err := cfg.validatePublicSync(); err == nil {
+		t.Fatal("validatePublicSync() expected restricted config error")
+	}
+}
+
+func TestParseConfigRejectsInvalidRequireSourceACL(t *testing.T) {
+	_, err := parseConfig(&types.DataSourceConfig{
+		Credentials: map[string]interface{}{
+			"corp_id": "ww123",
+			"secret":  "secret",
+			"userid":  "user1",
+		},
+		Settings: map[string]interface{}{"require_source_acl": "maybe"},
+	})
+	if err == nil {
+		t.Fatal("parseConfig() expected error")
+	}
+}
+
 func TestParseConfigRejectsMissingCredentials(t *testing.T) {
 	_, err := parseConfig(&types.DataSourceConfig{
 		Credentials: map[string]interface{}{"corp_id": "ww123", "secret": "secret"},

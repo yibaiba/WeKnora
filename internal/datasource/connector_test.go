@@ -16,7 +16,7 @@ func TestFeishuMetadataDoesNotAdvertiseWebhook(t *testing.T) {
 	}
 }
 
-func TestWeComWeDriveMetadataIsExposedWithoutSyncCapabilities(t *testing.T) {
+func TestWeComWeDriveMetadataExposesSyncCapabilities(t *testing.T) {
 	meta := ConnectorMetadataRegistry[types.ConnectorTypeWeComWeDrive]
 
 	if meta.Type != types.ConnectorTypeWeComWeDrive {
@@ -25,7 +25,16 @@ func TestWeComWeDriveMetadataIsExposedWithoutSyncCapabilities(t *testing.T) {
 	if meta.AuthType != "custom" {
 		t.Fatalf("auth type = %q, want custom", meta.AuthType)
 	}
-	if len(meta.Capabilities) != 0 {
-		t.Fatalf("capabilities = %#v, want none until sync pipeline is implemented", meta.Capabilities)
+	if !hasCapability(meta.Capabilities, "incremental") || !hasCapability(meta.Capabilities, "deletion_sync") {
+		t.Fatalf("capabilities = %#v, want incremental and deletion_sync", meta.Capabilities)
 	}
+}
+
+func hasCapability(capabilities []string, want string) bool {
+	for _, capability := range capabilities {
+		if capability == want {
+			return true
+		}
+	}
+	return false
 }

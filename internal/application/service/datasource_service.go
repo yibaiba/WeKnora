@@ -624,6 +624,21 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		return err
 	}
 
+	processOverrides, err := processConfigFromSettings(config.Settings)
+	if err != nil {
+		logger.Errorf(ctx, "failed to parse data source process_config: %v", err)
+		syncLog.Status = types.SyncLogStatusFailed
+		syncLog.FinishedAt = timePtr(time.Now().UTC())
+		syncLog.ErrorMessage = fmt.Sprintf("Invalid process_config: %v", err)
+		_ = s.syncLogRepo.Update(ctx, syncLog)
+		if !wasPaused {
+			ds.Status = types.DataSourceStatusError
+		}
+		ds.ErrorMessage = syncLog.ErrorMessage
+		_ = s.dsRepo.Update(ctx, ds)
+		return err
+	}
+
 	// Fetch items based on sync mode
 	var items []types.FetchedItem
 	var nextCursor *types.SyncCursor
@@ -729,7 +744,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 			continue
 		}
 
-		isUpdate, err := s.ingestItem(ctx, ds, &item, autoTagIDs)
+		isUpdate, err := s.ingestItem(ctx, ds, &item, autoTagIDs, processOverrides)
 		if err != nil {
 			// Duplicate file/URL is not a failure — count as skipped
 			var dupErr *types.DuplicateKnowledgeError
@@ -748,8 +763,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		}
 	}
 
-	resultJSON, _ := result.ToJSON()
 	if err := allFetchedItemsFailedError(result); err != nil {
+		resultJSON, _ := result.ToJSON()
 		logger.Errorf(ctx, "data source sync failed while processing fetched items: %v", err)
 		s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, err.Error(), wasPaused)
 		return err
@@ -762,16 +777,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	}
 
 	ds.LastSyncAt = timePtr(time.Now().UTC())
-	syncStatus := types.SyncLogStatusSuccess
-	syncErrorMessage := ""
-	if len(fetchWarnings) > 0 {
-		syncStatus = types.SyncLogStatusPartial
-		syncErrorMessage = fmt.Sprintf("Some feeds failed: %s", strings.Join(fetchWarnings, "; "))
-		for _, w := range fetchWarnings {
-			result.Errors = append(result.Errors, w)
-		}
-		resultJSON, _ = result.ToJSON()
+	for _, w := range fetchWarnings {
+		result.Errors = append(result.Errors, w)
 	}
+	syncStatus, syncErrorMessage := syncStatusFromResult(result, fetchWarnings)
+	resultJSON, _ := result.ToJSON()
 	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, syncStatus, syncErrorMessage, wasPaused)
 
 	logger.Infof(ctx, "data source sync completed: ds=%s created=%d updated=%d deleted=%d",
@@ -843,6 +853,59 @@ func allFetchedItemsFailedError(result *types.SyncResult) error {
 	return fmt.Errorf("all fetched items failed during sync (%d/%d): %s", result.Failed, result.Total, detail)
 }
 
+func processConfigFromSettings(settings map[string]interface{}) (*types.KnowledgeProcessOverrides, error) {
+	if len(settings) == 0 {
+		return nil, nil
+	}
+	raw, ok := settings["process_config"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	switch v := raw.(type) {
+	case *types.KnowledgeProcessOverrides:
+		return v, nil
+	case types.KnowledgeProcessOverrides:
+		return &v, nil
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil, nil
+		}
+		return decodeProcessConfigBytes([]byte(v))
+	case json.RawMessage:
+		return decodeProcessConfigBytes(v)
+	case types.JSON:
+		return decodeProcessConfigBytes(v)
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("marshal process_config: %w", err)
+		}
+		return decodeProcessConfigBytes(data)
+	}
+}
+
+func decodeProcessConfigBytes(data []byte) (*types.KnowledgeProcessOverrides, error) {
+	var overrides types.KnowledgeProcessOverrides
+	if err := json.Unmarshal(data, &overrides); err != nil {
+		return nil, fmt.Errorf("parse process_config: %w", err)
+	}
+	return &overrides, nil
+}
+
+func syncStatusFromResult(result *types.SyncResult, fetchWarnings []string) (string, string) {
+	if len(fetchWarnings) > 0 {
+		return types.SyncLogStatusPartial, fmt.Sprintf("Some resources failed: %s", strings.Join(fetchWarnings, "; "))
+	}
+	if result != nil && result.Failed > 0 && syncHasCompletedItem(result) {
+		return types.SyncLogStatusPartial, fmt.Sprintf("Some items failed: %d", result.Failed)
+	}
+	return types.SyncLogStatusSuccess, ""
+}
+
+func syncHasCompletedItem(result *types.SyncResult) bool {
+	return result.Created > 0 || result.Updated > 0 || result.Deleted > 0 || result.Skipped > 0
+}
+
 // ValidateCredentials tests connectivity using raw credentials without persisting anything.
 func (s *DataSourceService) ValidateCredentials(ctx context.Context, connectorType string, credentials map[string]interface{}) error {
 	connector, err := s.connectorRegistry.Get(connectorType)
@@ -886,7 +949,13 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //   - Has URL only      → CreateKnowledgeFromURL  (让 WeKnora 下载并解析)
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
-func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
+func (s *DataSourceService) ingestItem(
+	ctx context.Context,
+	ds *types.DataSource,
+	item *types.FetchedItem,
+	tagIDs []string,
+	processOverrides *types.KnowledgeProcessOverrides,
+) (bool, error) {
 	channel := ds.Type // e.g. "feishu", "notion"
 
 	metadata := map[string]string{
@@ -931,7 +1000,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			item.FileName, // customFileName — must include extension for file-type validation
 			tagIDs,        // auto-tag from data source
 			channel,
-			nil,
+			processOverrides,
 		)
 		return isUpdate, err
 	}
@@ -948,7 +1017,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			item.Title,
 			tagIDs, // auto-tag from data source
 			channel,
-			nil,
+			processOverrides,
 		)
 		return isUpdate, err
 	}
