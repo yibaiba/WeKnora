@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS source_acl_entries;
+DROP TABLE IF EXISTS source_acl_snapshots;
 DROP TABLE IF EXISTS wecom_user_bindings;
 DROP TABLE IF EXISTS wecom_identity_departments;
 DROP TABLE IF EXISTS wecom_departments;
