@@ -138,27 +138,6 @@ func TestConnectorFetchAllSkipsUnsupportedBeforeDownload(t *testing.T) {
 	}
 }
 
-func TestConnectorFetchAllRestrictedFailsClosedBeforeDownload(t *testing.T) {
-	server := newUnsupportedFileServer(t)
-	defer server.Close()
-
-	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
-		return NewClient(cfg, WithBaseURL(server.URL))
-	})
-	_, err := connector.FetchAll(
-		testContext(t),
-		testDataSourceConfig(map[string]interface{}{
-			"space_ids":          []interface{}{"space-1"},
-			"access_mode":        "restricted",
-			"require_source_acl": true,
-		}),
-		[]string{SpaceResourceID("space-1")},
-	)
-	if err == nil || !strings.Contains(err.Error(), "source ACL policy") {
-		t.Fatalf("FetchAll() error = %v", err)
-	}
-}
-
 func TestConnectorFetchAllLoadsMissingListingMetadata(t *testing.T) {
 	server := newMissingMetadataServer(t)
 	defer server.Close()
@@ -179,6 +158,76 @@ func TestConnectorFetchAllLoadsMissingListingMetadata(t *testing.T) {
 	}
 	if items[0].FileName != "Recovered.md" || string(items[0].Content) != "# recovered" {
 		t.Fatalf("item = %#v", items[0])
+	}
+}
+
+func TestConnectorFetchAllRestrictedAttachesSourceACLMetadata(t *testing.T) {
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return fakeClient(t, cfg)
+	})
+	items, err := connector.FetchAll(
+		testContext(t),
+		testDataSourceConfig(map[string]interface{}{
+			"space_ids":          []interface{}{"space-1"},
+			"access_mode":        "restricted",
+			"require_source_acl": true,
+		}),
+		[]string{FolderResourceID("space-1", "folder-1")},
+	)
+	if err != nil {
+		t.Fatalf("FetchAll() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	item := items[0]
+	if string(item.Content) != "docx bytes" {
+		t.Fatalf("content = %q", string(item.Content))
+	}
+	if item.Metadata["access_mode"] != "restricted" || item.Metadata["queryable_state"] != "restricted" {
+		t.Fatalf("metadata = %#v", item.Metadata)
+	}
+	if item.Metadata["source_acl_visibility"] != "all_company" || item.Metadata["source_acl_status"] != "ready" {
+		t.Fatalf("source ACL metadata = %#v", item.Metadata)
+	}
+	if !strings.Contains(item.Metadata["source_acl_entries"], `"subject_type":"all_company"`) ||
+		!strings.Contains(item.Metadata["source_acl_entries"], `"subject_type":"wecom_user"`) ||
+		!strings.Contains(item.Metadata["source_acl_entries"], `"subject_id":"42"`) {
+		t.Fatalf("source ACL entries = %s", item.Metadata["source_acl_entries"])
+	}
+	if item.Metadata["permission_fingerprint"] == "" {
+		t.Fatalf("missing permission fingerprint: %#v", item.Metadata)
+	}
+}
+
+func TestConnectorFetchAllRestrictedPermissionFailureDoesNotDownload(t *testing.T) {
+	var downloadCalls int
+	server := newPermissionFailureServer(t, &downloadCalls)
+	defer server.Close()
+
+	connector := NewConnectorWithClientFactory(func(cfg *Config) *Client {
+		return NewClient(cfg, WithBaseURL(server.URL))
+	})
+	items, err := connector.FetchAll(
+		testContext(t),
+		testDataSourceConfig(map[string]interface{}{
+			"space_ids":          []interface{}{"space-1"},
+			"access_mode":        "restricted",
+			"require_source_acl": true,
+		}),
+		[]string{SpaceResourceID("space-1")},
+	)
+	if err != nil {
+		t.Fatalf("FetchAll() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1: %#v", len(items), items)
+	}
+	if len(items[0].Content) != 0 || items[0].Metadata["error"] == "" {
+		t.Fatalf("item should fail closed without content: %#v", items[0])
+	}
+	if downloadCalls != 0 {
+		t.Fatalf("file_download calls = %d, want 0", downloadCalls)
 	}
 }
 
@@ -332,6 +381,38 @@ func newUnsupportedFileServer(t *testing.T) *httptest.Server {
 			})
 		case "/wedrive/file_download":
 			t.Fatalf("file_download should not be called for unsupported files")
+		default:
+			t.Fatalf("unexpected fake WeDrive path %s", r.URL.Path)
+		}
+	}))
+}
+
+func newPermissionFailureServer(t *testing.T, downloadCalls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gettoken":
+			writeJSON(t, w, map[string]interface{}{"errcode": 0, "access_token": "token-1", "expires_in": 7200})
+		case "/wedrive/file_list":
+			writeJSON(t, w, map[string]interface{}{
+				"errcode":  0,
+				"has_more": false,
+				"file_list": map[string]interface{}{"item": []map[string]interface{}{
+					{
+						"fileid":      "file-1",
+						"file_name":   "Plan.md",
+						"spaceid":     "space-1",
+						"file_type":   2,
+						"file_status": 1,
+						"mtime":       1700000100,
+					},
+				}},
+			})
+		case "/wedrive/get_file_permission":
+			writeJSON(t, w, map[string]interface{}{"errcode": 60001, "errmsg": "no permission"})
+		case "/wedrive/file_download":
+			(*downloadCalls)++
+			t.Fatalf("file_download should not be called when permission sync fails")
 		default:
 			t.Fatalf("unexpected fake WeDrive path %s", r.URL.Path)
 		}

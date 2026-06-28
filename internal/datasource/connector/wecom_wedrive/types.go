@@ -1,9 +1,5 @@
 // Package wecom_wedrive implements the Enterprise WeChat built-in Microdisk
 // (WeDrive / 企业微信微盘) data source connector.
-//
-// The first sync slice supports department-public Microdisk folders. Restricted
-// or mixed-permission roots must wait for the source ACL policy/enforcement
-// tasks, so this connector fails closed when ACL enforcement is requested.
 package wecom_wedrive
 
 import (
@@ -242,16 +238,21 @@ func boolFromSettings(settings map[string]interface{}, key string) (bool, error)
 }
 
 func (c *Config) validatePublicSync() error {
-	if c.RequireSourceACL || c.AccessMode == accessModeRestricted {
-		return fmt.Errorf(
-			"%w: wecom_wedrive restricted sync requires source ACL policy and enforcement tasks",
-			datasource.ErrInvalidConfig,
-		)
-	}
-	if c.AccessMode != accessModePublic {
+	switch c.AccessMode {
+	case accessModePublic:
+	case accessModeRestricted:
+		c.RequireSourceACL = true
+	default:
 		return fmt.Errorf("%w: unsupported wecom_wedrive access_mode %q", datasource.ErrInvalidConfig, c.AccessMode)
 	}
 	return nil
+}
+
+func (c *Config) requiresSourceACL() bool {
+	if c == nil {
+		return false
+	}
+	return c.RequireSourceACL || c.AccessMode == accessModeRestricted
 }
 
 type tencentBaseResponse struct {
@@ -327,5 +328,133 @@ type fileDownloadResponse struct {
 
 type filePermissionResponse struct {
 	tencentBaseResponse
-	AuthList map[string]interface{} `json:"auth_list"`
+	ShareRange     permissionShareRange `json:"share_range"`
+	InheritedAuth  *inheritedPermission `json:"inherit_father_auth"`
+	FileMemberList []permissionNode     `json:"file_member_list"`
+	AuthList       permissionNodeList   `json:"auth_list"`
+}
+
+type permissionShareRange struct {
+	EnableCorpInternal bool          `json:"enable_corp_internal"`
+	CorpInternalAuth   flexibleInt64 `json:"corp_internal_auth"`
+}
+
+func (r permissionShareRange) allCompanyRead() bool {
+	return r.EnableCorpInternal && int64(r.CorpInternalAuth) != 0
+}
+
+type inheritedPermission struct {
+	Inherit        bool               `json:"inherit"`
+	FatherID       string             `json:"fatherid"`
+	FileID         string             `json:"fileid"`
+	FileIDAlt      string             `json:"file_id"`
+	AuthList       permissionNodeList `json:"auth_list"`
+	FileMemberList []permissionNode   `json:"file_member_list"`
+}
+
+func (p inheritedPermission) effectiveFatherID() string {
+	if strings.TrimSpace(p.FatherID) != "" {
+		return strings.TrimSpace(p.FatherID)
+	}
+	if strings.TrimSpace(p.FileID) != "" {
+		return strings.TrimSpace(p.FileID)
+	}
+	return strings.TrimSpace(p.FileIDAlt)
+}
+
+type permissionNodeList struct {
+	Item []permissionNode
+	Raw  any
+}
+
+func (l *permissionNodeList) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" || string(data) == `{}` {
+		l.Item = nil
+		l.Raw = nil
+		return nil
+	}
+	if err := json.Unmarshal(data, &l.Raw); err != nil {
+		return err
+	}
+	if len(data) > 0 && data[0] == '[' {
+		return json.Unmarshal(data, &l.Item)
+	}
+	var wrapped struct {
+		Item []permissionNode `json:"item"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Item != nil {
+		l.Item = wrapped.Item
+		return nil
+	}
+	var node permissionNode
+	if err := json.Unmarshal(data, &node); err != nil {
+		return nil
+	}
+	l.Item = []permissionNode{node}
+	return nil
+}
+
+func (l permissionNodeList) isJSONObject() bool {
+	_, ok := l.Raw.(map[string]any)
+	return ok
+}
+
+type permissionNode struct {
+	Type          flexibleInt64      `json:"type"`
+	UserID        flexibleString     `json:"userid"`
+	UserIDs       flexibleStringList `json:"userid_list"`
+	DepartmentID  flexibleString     `json:"departmentid"`
+	DepartmentID2 flexibleString     `json:"department_id"`
+	PartyID       flexibleString     `json:"partyid"`
+	PartyIDs      flexibleStringList `json:"partyid_list"`
+	GroupID       flexibleString     `json:"groupid"`
+	GroupIDs      flexibleStringList `json:"groupid_list"`
+	TagID         flexibleString     `json:"tagid"`
+	TagIDs        flexibleStringList `json:"tagid_list"`
+	Auth          flexibleString     `json:"auth"`
+	AuthType      flexibleString     `json:"auth_type"`
+	Role          flexibleString     `json:"role"`
+}
+
+func (n permissionNode) grantsRead() bool {
+	for _, value := range []string{string(n.Auth), string(n.AuthType), string(n.Role)} {
+		value = strings.TrimSpace(strings.ToLower(value))
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "0", "false", "none", "deny", "denied", "forbid", "forbidden":
+			return false
+		default:
+			return true
+		}
+	}
+	return true
+}
+
+func (n permissionNode) userIDs() []string {
+	if int64(n.Type) == 2 {
+		return nil
+	}
+	out := append([]string{}, n.UserIDs...)
+	if n.UserID != "" {
+		out = append(out, string(n.UserID))
+	}
+	return cleanStringSlice(out)
+}
+
+func (n permissionNode) departmentIDs() []string {
+	out := []string{string(n.DepartmentID), string(n.DepartmentID2), string(n.PartyID)}
+	out = append(out, n.PartyIDs...)
+	if int64(n.Type) == 2 && n.UserID != "" {
+		out = append(out, string(n.UserID))
+	}
+	return cleanStringSlice(out)
+}
+
+func (n permissionNode) groupIDs() []string {
+	out := []string{string(n.GroupID), string(n.TagID)}
+	out = append(out, n.GroupIDs...)
+	out = append(out, n.TagIDs...)
+	return cleanStringSlice(out)
 }

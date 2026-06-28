@@ -123,13 +123,17 @@ func (c *Connector) collectSyncItems(
 		}
 		for _, record := range records {
 			state := fileState(record.SpaceID, record.File)
+			acl := c.fetchSourceACL(ctx, client, cfg, state)
+			if acl != nil && acl.SourceHash != "" {
+				state.PermissionFingerprint = acl.SourceHash
+			}
 			key := fileStateKey(state.SpaceID, state.FileID)
 			seen[key] = struct{}{}
 			next.Files[key] = state
 			if incremental && prev != nil && prev.sameFileState(key, state) {
 				continue
 			}
-			items = append(items, c.fetchedItem(ctx, client, cfg, record, state))
+			items = append(items, c.fetchedItem(ctx, client, cfg, record, state, acl))
 		}
 	}
 	return items, warnings
@@ -295,8 +299,12 @@ func (c *Connector) fetchedItem(
 	cfg *Config,
 	record syncFileRecord,
 	state syncFileState,
+	acl *normalizedSourceACL,
 ) types.FetchedItem {
 	item := baseFetchedItem(record, state)
+	if cfg.requiresSourceACL() {
+		return c.restrictedFetchedItem(ctx, client, cfg, state, acl, item)
+	}
 	if !isSupportedSyncFile(state.FileName) {
 		item.Metadata["skip_reason"] = "unsupported file type"
 		return item
@@ -315,6 +323,101 @@ func (c *Connector) fetchedItem(
 	item.Content = data
 	item.ContentType = contentTypeForName(state.FileName)
 	return item
+}
+
+func (c *Connector) restrictedFetchedItem(
+	ctx context.Context,
+	client *Client,
+	cfg *Config,
+	state syncFileState,
+	acl *normalizedSourceACL,
+	item types.FetchedItem,
+) types.FetchedItem {
+	if acl == nil {
+		item.Metadata["error"] = "wecom wedrive permission snapshot missing"
+		item.Metadata["access_mode"] = accessModeRestricted
+		item.Metadata["queryable_state"] = accessModeRestricted
+		item.Metadata[metadataRequireSourceACL] = "true"
+		return item
+	}
+	if err := applySourceACLMetadata(&item, acl); err != nil {
+		item.Metadata["error"] = err.Error()
+		return item
+	}
+	if acl.Status != types.SourceACLStatusReady {
+		if acl.Error != "" {
+			item.Metadata["error"] = acl.Error
+		} else {
+			item.Metadata["error"] = "wecom wedrive permission snapshot unmapped"
+		}
+		return item
+	}
+	if !isSupportedSyncFile(state.FileName) {
+		item.Metadata["skip_reason"] = "unsupported file type"
+		return item
+	}
+	link, err := client.FileDownload(ctx, cfg.UserID, state.FileID)
+	if err != nil {
+		item.Metadata["error"] = redactURLSecrets(err.Error())
+		return item
+	}
+	data, err := client.DownloadFileBytes(ctx, link.DownloadURL, link.CookieName, link.CookieValue)
+	if err != nil {
+		item.Metadata["error"] = redactURLSecrets(err.Error())
+		return item
+	}
+	item.Content = data
+	item.ContentType = contentTypeForName(state.FileName)
+	return item
+}
+
+func (c *Connector) fetchSourceACL(
+	ctx context.Context,
+	client *Client,
+	cfg *Config,
+	state syncFileState,
+) *normalizedSourceACL {
+	if !cfg.requiresSourceACL() || state.FileID == "" {
+		return nil
+	}
+	permission, err := client.GetFilePermission(ctx, cfg.UserID, state.FileID)
+	if err != nil {
+		return &normalizedSourceACL{
+			Visibility: types.SourceACLVisibilityRestricted,
+			Status:     types.SourceACLStatusInvalid,
+			Provenance: types.SourceACLProvenanceDirect,
+			SourceHash: permissionErrorHash(state.FileID, err),
+			SyncedAt:   time.Now().UTC(),
+			Error:      redactURLSecrets(err.Error()),
+		}
+	}
+	acl, err := normalizeFilePermission(permission, state.FileID, time.Now().UTC())
+	if err != nil {
+		return &normalizedSourceACL{
+			Visibility: types.SourceACLVisibilityRestricted,
+			Status:     types.SourceACLStatusInvalid,
+			Provenance: types.SourceACLProvenanceDirect,
+			SourceHash: permissionErrorHash(state.FileID, err),
+			SyncedAt:   time.Now().UTC(),
+			Error:      err.Error(),
+		}
+	}
+	return acl
+}
+
+func permissionErrorHash(fileID string, err error) string {
+	return permissionFingerprint(fileID, &normalizedSourceACL{
+		Visibility: types.SourceACLVisibilityRestricted,
+		Status:     types.SourceACLStatusInvalid,
+		Provenance: types.SourceACLProvenanceDirect,
+		Entries: []types.SourceACLMetadataEntry{
+			{
+				SubjectType: types.SourceACLSubjectWeComUser,
+				SubjectID:   redactURLSecrets(err.Error()),
+				Permission:  types.SourceACLPermissionRead,
+			},
+		},
+	})
 }
 
 func baseFetchedItem(record syncFileRecord, state syncFileState) types.FetchedItem {

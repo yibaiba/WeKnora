@@ -3,6 +3,7 @@ package wecom_wedrive
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -88,8 +89,8 @@ func TestParseConfigReadsAccessModeAndRequireSourceACL(t *testing.T) {
 	if cfg.AccessMode != accessModeRestricted || !cfg.RequireSourceACL {
 		t.Fatalf("access config = %#v", cfg)
 	}
-	if err := cfg.validatePublicSync(); err == nil {
-		t.Fatal("validatePublicSync() expected restricted config error")
+	if err := cfg.validatePublicSync(); err != nil {
+		t.Fatalf("validatePublicSync() error = %v", err)
 	}
 }
 
@@ -141,5 +142,41 @@ func TestFileListCollectionUnmarshalSupportsWrappedAndArray(t *testing.T) {
 	}
 	if len(array.FileList) != 1 || array.FileList[0].FileID != "f2" {
 		t.Fatalf("array file list = %#v", array.FileList)
+	}
+}
+
+func TestFilePermissionResponseUnmarshalSupportsNumericSubjects(t *testing.T) {
+	var resp filePermissionResponse
+	err := json.Unmarshal([]byte(`{
+		"errcode": 0,
+		"share_range": {"enable_corp_internal": true, "corp_internal_auth": "1"},
+		"file_member_list": [
+			{"userid": "wx-a", "auth": 1},
+			{"type": 2, "userid": 42, "auth": "read"}
+		],
+		"inherit_father_auth": {
+			"inherit": true,
+			"fatherid": "folder-1",
+			"auth_list": {"item": [{"userid_list": ["wx-b"], "auth": 1}]}
+		}
+	}`), &resp)
+	if err != nil {
+		t.Fatalf("unmarshal permission response: %v", err)
+	}
+	acl, err := normalizeFilePermission(&resp, "file-1", time.Unix(1700000000, 0).UTC())
+	if err != nil {
+		t.Fatalf("normalizeFilePermission() error = %v", err)
+	}
+	if acl.Visibility != "all_company" || acl.Status != "ready" {
+		t.Fatalf("acl = %#v", acl)
+	}
+	got := map[string]bool{}
+	for _, entry := range acl.Entries {
+		got[entry.SubjectType+":"+entry.SubjectID] = true
+	}
+	for _, want := range []string{"all_company:*", "wecom_user:wx-a", "wecom_department:42", "wecom_user:wx-b"} {
+		if !got[want] {
+			t.Fatalf("missing ACL entry %s from %#v", want, acl.Entries)
+		}
 	}
 }

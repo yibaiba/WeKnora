@@ -73,6 +73,18 @@ func newFakeWeDriveServer(t *testing.T) *httptest.Server {
 				"cookie_name":  "wedrive_session",
 				"cookie_value": "cookie-secret",
 			})
+		case "/wedrive/get_file_permission":
+			writeJSON(t, w, map[string]interface{}{
+				"errcode": 0,
+				"share_range": map[string]interface{}{
+					"enable_corp_internal": true,
+					"corp_internal_auth":   1,
+				},
+				"file_member_list": []map[string]interface{}{
+					{"userid": "wx-a", "auth": 1},
+					{"type": 2, "userid": 42, "auth": 1},
+				},
+			})
 		case "/download/file-1":
 			_, _ = w.Write([]byte("# Readme"))
 		case "/download/file-2":

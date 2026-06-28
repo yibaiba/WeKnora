@@ -7,6 +7,15 @@ import (
 )
 
 const (
+	SourceACLMetadataKeyEntries                 = "source_acl_entries"
+	SourceACLMetadataKeyEntryCount              = "source_acl_entries_count"
+	SourceACLMetadataKeyInheritedFromResourceID = "source_acl_inherited_from_resource_id"
+	SourceACLMetadataKeyProvenance              = "source_acl_provenance"
+	SourceACLMetadataKeySourceHash              = "source_acl_hash"
+	SourceACLMetadataKeyStatus                  = "source_acl_status"
+	SourceACLMetadataKeySyncedAt                = "source_acl_synced_at"
+	SourceACLMetadataKeyVisibility              = "source_acl_visibility"
+
 	SourceACLVisibilityRestricted = "restricted"
 	SourceACLVisibilityAllCompany = "all_company"
 	SourceACLVisibilityPublic     = "public"
@@ -88,6 +97,14 @@ func (SourceACLEntry) TableName() string { return "source_acl_entries" }
 type SourceACLRecord struct {
 	Snapshot *SourceACLSnapshot
 	Entries  []*SourceACLEntry
+}
+
+type SourceACLMetadataEntry struct {
+	SubjectType             string `json:"subject_type"`
+	SubjectID               string `json:"subject_id"`
+	Permission              string `json:"permission"`
+	Provenance              string `json:"provenance,omitempty"`
+	InheritedFromResourceID string `json:"inherited_from_resource_id,omitempty"`
 }
 
 type SourceACLDecision struct {

@@ -32,6 +32,7 @@ type DataSourceService struct {
 	scheduler         *datasource.Scheduler
 	tenantRepo        interfaces.TenantRepository
 	tagService        interfaces.KnowledgeTagService
+	sourceACLRepo     interfaces.SourceACLRepository
 }
 
 // NewDataSourceService creates a new data source service
@@ -45,6 +46,7 @@ func NewDataSourceService(
 	scheduler *datasource.Scheduler,
 	tenantRepo interfaces.TenantRepository,
 	tagService interfaces.KnowledgeTagService,
+	sourceACLRepo interfaces.SourceACLRepository,
 ) interfaces.DataSourceService {
 	return &DataSourceService{
 		dsRepo:            dsRepo,
@@ -56,6 +58,7 @@ func NewDataSourceService(
 		scheduler:         scheduler,
 		tenantRepo:        tenantRepo,
 		tagService:        tagService,
+		sourceACLRepo:     sourceACLRepo,
 	}
 }
 
@@ -732,6 +735,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		}
 
 		if len(item.Content) == 0 && item.URL == "" {
+			if dataSourceItemRequiresSourceACL(&item) {
+				if handled := s.handleACLOnlyFetchedItem(ctx, ds, &item, result); handled {
+					continue
+				}
+			}
 			// Check if this is an error item from the connector (failed to fetch content)
 			if errMsg, hasErr := item.Metadata["error"]; hasErr {
 				logger.Warnf(ctx, "item %q (external_id=%s) fetch failed: %s", item.Title, item.ExternalID, errMsg)
@@ -964,6 +972,9 @@ func (s *DataSourceService) ingestItem(
 		"datasource_id":      ds.ID,
 	}
 	for k, v := range item.Metadata {
+		if dataSourceMetadataKeyIsTransient(k) {
+			continue
+		}
 		metadata[k] = v
 	}
 
@@ -991,7 +1002,7 @@ func (s *DataSourceService) ingestItem(
 		if err != nil {
 			return isUpdate, fmt.Errorf("build file header: %w", err)
 		}
-		_, err = s.knowledgeService.CreateKnowledgeFromFile(
+		knowledge, err := s.knowledgeService.CreateKnowledgeFromFile(
 			ctx,
 			ds.KnowledgeBaseID,
 			fh,
@@ -1002,12 +1013,15 @@ func (s *DataSourceService) ingestItem(
 			channel,
 			processOverrides,
 		)
-		return isUpdate, err
+		if err != nil {
+			return isUpdate, err
+		}
+		return isUpdate, s.upsertItemSourceACL(ctx, ds, item, knowledge)
 	}
 
 	// Case 2: only a remote URL — let WeKnora handle downloading and parsing
 	if item.URL != "" {
-		_, err := s.knowledgeService.CreateKnowledgeFromURL(
+		knowledge, err := s.knowledgeService.CreateKnowledgeFromURL(
 			ctx,
 			ds.KnowledgeBaseID,
 			item.URL,
@@ -1019,7 +1033,10 @@ func (s *DataSourceService) ingestItem(
 			channel,
 			processOverrides,
 		)
-		return isUpdate, err
+		if err != nil {
+			return isUpdate, err
+		}
+		return isUpdate, s.upsertItemSourceACL(ctx, ds, item, knowledge)
 	}
 
 	return isUpdate, fmt.Errorf("item has neither content nor URL")

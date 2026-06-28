@@ -361,12 +361,138 @@ func TestIngestItemForwardsProcessOverridesToFileIngestion(t *testing.T) {
 	assert.Equal(t, types.ConnectorTypeWeComWeDrive, knowledgeSvc.fileChannel)
 }
 
+func TestIngestItemUpsertsSourceACLForRestrictedWeDriveItem(t *testing.T) {
+	entries, err := json.Marshal([]types.SourceACLMetadataEntry{
+		{
+			SubjectType: types.SourceACLSubjectWeComUser,
+			SubjectID:   "wx-a",
+			Permission:  types.SourceACLPermissionRead,
+		},
+		{
+			SubjectType: types.SourceACLSubjectWeComDepartment,
+			SubjectID:   "42",
+			Permission:  types.SourceACLPermissionRead,
+		},
+	})
+	require.NoError(t, err)
+
+	knowledgeSvc := &captureKnowledgeService{repo: &captureKnowledgeRepository{}}
+	aclRepo := &captureSourceACLRepository{}
+	svc := &DataSourceService{knowledgeService: knowledgeSvc, sourceACLRepo: aclRepo}
+	ds := &types.DataSource{
+		ID:              "ds-1",
+		TenantID:        7,
+		KnowledgeBaseID: "kb-1",
+		Type:            types.ConnectorTypeWeComWeDrive,
+	}
+	item := &types.FetchedItem{
+		ExternalID:       "wecom_wedrive:space:file-1",
+		Title:            "Doc.md",
+		FileName:         "Doc.md",
+		Content:          []byte("# doc"),
+		SourceResourceID: "folder:space:folder-1",
+		Metadata: map[string]string{
+			"provider":                           types.ConnectorTypeWeComWeDrive,
+			"file_id":                            "file-1",
+			"access_mode":                        "restricted",
+			"queryable_state":                    "restricted",
+			"require_source_acl":                 "true",
+			types.SourceACLMetadataKeyVisibility: "restricted",
+			types.SourceACLMetadataKeyStatus:     "ready",
+			types.SourceACLMetadataKeySourceHash: "acl:abc",
+			types.SourceACLMetadataKeyEntries:    string(entries),
+		},
+	}
+
+	_, err = svc.ingestItem(context.Background(), ds, item, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, aclRepo.input.Snapshot)
+	assert.NotContains(t, knowledgeSvc.fileMetadata, types.SourceACLMetadataKeyEntries)
+	assert.Equal(t, "restricted", knowledgeSvc.fileMetadata["access_mode"])
+	assert.Equal(t, uint64(7), aclRepo.input.Snapshot.TenantID)
+	assert.Equal(t, "knowledge-1", aclRepo.input.Snapshot.KnowledgeID)
+	assert.Equal(t, "kb-1", aclRepo.input.Snapshot.KnowledgeBaseID)
+	assert.Equal(t, "file-1", aclRepo.input.Snapshot.SourceItemID)
+	assert.Equal(t, types.SourceACLVisibilityRestricted, aclRepo.input.Snapshot.Visibility)
+	assert.Equal(t, "acl:abc", aclRepo.input.Snapshot.SourceHash)
+	require.Len(t, aclRepo.input.Entries, 2)
+	assert.Equal(t, types.SourceACLSubjectWeComUser, aclRepo.input.Entries[0].SubjectType)
+	assert.Equal(t, "wx-a", aclRepo.input.Entries[0].SubjectID)
+	assert.Equal(t, types.SourceACLSubjectWeComDepartment, aclRepo.input.Entries[1].SubjectType)
+	assert.Equal(t, "42", aclRepo.input.Entries[1].SubjectID)
+}
+
+func TestHandleACLOnlyFetchedItemRefreshesExistingSnapshot(t *testing.T) {
+	repo := &captureKnowledgeRepository{
+		byExternalID: map[string]*types.Knowledge{
+			"wecom_wedrive:space:file-1": {
+				ID:              "knowledge-1",
+				TenantID:        7,
+				KnowledgeBaseID: "kb-1",
+			},
+		},
+	}
+	aclRepo := &captureSourceACLRepository{}
+	svc := &DataSourceService{
+		knowledgeService: &captureKnowledgeService{repo: repo},
+		sourceACLRepo:    aclRepo,
+	}
+	ds := &types.DataSource{
+		ID:              "ds-1",
+		TenantID:        7,
+		KnowledgeBaseID: "kb-1",
+		Type:            types.ConnectorTypeWeComWeDrive,
+	}
+	item := &types.FetchedItem{
+		ExternalID:       "wecom_wedrive:space:file-1",
+		Title:            "Doc.md",
+		SourceResourceID: "folder:space:folder-1",
+		Metadata: map[string]string{
+			"provider":                           types.ConnectorTypeWeComWeDrive,
+			"file_id":                            "file-1",
+			"access_mode":                        "restricted",
+			"queryable_state":                    "restricted",
+			"require_source_acl":                 "true",
+			types.SourceACLMetadataKeyVisibility: "restricted",
+			types.SourceACLMetadataKeyStatus:     types.SourceACLStatusUnmapped,
+			types.SourceACLMetadataKeySourceHash: "acl:revoked",
+			types.SourceACLMetadataKeyEntries:    "[]",
+		},
+	}
+	result := &types.SyncResult{Total: 1}
+
+	handled := svc.handleACLOnlyFetchedItem(context.Background(), ds, item, result)
+	require.True(t, handled)
+	assert.Equal(t, 1, result.Updated)
+	assert.Equal(t, types.SourceACLStatusUnmapped, aclRepo.input.Snapshot.Status)
+	assert.Equal(t, "knowledge-1", aclRepo.input.Snapshot.KnowledgeID)
+	assert.Empty(t, aclRepo.input.Entries)
+}
+
 type captureKnowledgeService struct {
 	interfaces.KnowledgeService
 	repo          interfaces.KnowledgeRepository
 	fileOverrides *types.KnowledgeProcessOverrides
 	fileTagIDs    []string
 	fileChannel   string
+	fileMetadata  map[string]string
+}
+
+type captureSourceACLRepository struct {
+	interfaces.SourceACLRepository
+	input interfaces.SourceACLUpsertInput
+	err   error
+}
+
+func (r *captureSourceACLRepository) UpsertSnapshot(
+	_ context.Context,
+	input interfaces.SourceACLUpsertInput,
+) (*types.SourceACLRecord, error) {
+	r.input = input
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &types.SourceACLRecord{Snapshot: input.Snapshot, Entries: input.Entries}, nil
 }
 
 func (s *captureKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
@@ -377,7 +503,7 @@ func (s *captureKnowledgeService) CreateKnowledgeFromFile(
 	_ context.Context,
 	kbID string,
 	_ *multipart.FileHeader,
-	_ map[string]string,
+	metadata map[string]string,
 	_ *bool,
 	_ string,
 	tagIDs []string,
@@ -387,19 +513,37 @@ func (s *captureKnowledgeService) CreateKnowledgeFromFile(
 	s.fileOverrides = processOverrides
 	s.fileTagIDs = tagIDs
 	s.fileChannel = channel
+	s.fileMetadata = metadata
 	return &types.Knowledge{ID: "knowledge-1", KnowledgeBaseID: kbID}, nil
 }
 
 type captureKnowledgeRepository struct {
 	interfaces.KnowledgeRepository
+	byExternalID map[string]*types.Knowledge
 }
 
 func (r *captureKnowledgeRepository) FindByMetadataKey(
+	_ context.Context,
+	tenantID uint64,
+	kbID string,
+	key string,
+	value string,
+) (*types.Knowledge, error) {
+	if key != "external_id" || r.byExternalID == nil {
+		return nil, nil
+	}
+	knowledge := r.byExternalID[value]
+	if knowledge == nil || knowledge.TenantID != tenantID || knowledge.KnowledgeBaseID != kbID {
+		return nil, nil
+	}
+	return knowledge, nil
+}
+
+func (r *captureKnowledgeRepository) CheckKnowledgeExists(
 	context.Context,
 	uint64,
 	string,
-	string,
-	string,
-) (*types.Knowledge, error) {
-	return nil, nil
+	*types.KnowledgeCheckParams,
+) (bool, *types.Knowledge, error) {
+	return false, nil, nil
 }
