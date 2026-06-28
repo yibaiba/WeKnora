@@ -197,6 +197,27 @@ func (h *KnowledgeHandler) requireSourceACLRead(ctx context.Context, knowledge *
 	})
 }
 
+func (h *KnowledgeHandler) filterSourceACLKnowledgeList(
+	ctx context.Context,
+	result *types.PageResult,
+) (interface{}, int64, error) {
+	if result == nil || h.sourceACLGuard == nil {
+		if result == nil {
+			return nil, 0, nil
+		}
+		return result.Data, result.Total, nil
+	}
+	knowledges, ok := result.Data.([]*types.Knowledge)
+	if !ok {
+		return nil, 0, errors.NewInternalServerError("invalid knowledge list result")
+	}
+	filtered, err := h.sourceACLGuard.FilterKnowledges(ctx, "knowledge_list", knowledges)
+	if err != nil {
+		return nil, 0, err
+	}
+	return filtered, int64(len(filtered)), nil
+}
+
 // handleDuplicateKnowledgeError handles cases where duplicate knowledge is detected
 // Returns true if the error was a duplicate error and was handled, false otherwise
 func (h *KnowledgeHandler) handleDuplicateKnowledgeError(c *gin.Context,
@@ -602,6 +623,10 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 		c.Error(errors.NewNotFoundError("Knowledge not found"))
 		return
 	}
+	if err := h.requireSourceACLRead(effCtx, knowledge, "knowledge_detail"); err != nil {
+		c.Error(err)
+		return
+	}
 
 	logger.Infof(ctx, "Knowledge retrieved successfully, ID: %s, title: %s",
 		secutils.SanitizeForLog(knowledge.ID), secutils.SanitizeForLog(knowledge.Title))
@@ -635,8 +660,12 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 		return
 	}
 
-	knowledge, _, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
+	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
+		c.Error(err)
+		return
+	}
+	if err := h.requireSourceACLRead(effCtx, knowledge, "knowledge_spans"); err != nil {
 		c.Error(err)
 		return
 	}
@@ -924,17 +953,23 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
+	data, total, err := h.filterSourceACLKnowledgeList(ctx, result)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(err)
+		return
+	}
 
 	logger.Infof(
 		ctx,
 		"Knowledge list retrieved successfully, knowledge base ID: %s, total: %d",
 		secutils.SanitizeForLog(kbID),
-		result.Total,
+		total,
 	)
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
-		"data":      result.Data,
-		"total":     result.Total,
+		"data":      data,
+		"total":     total,
 		"page":      result.Page,
 		"page_size": result.PageSize,
 	})
