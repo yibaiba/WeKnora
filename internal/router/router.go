@@ -54,6 +54,7 @@ type RouterParams struct {
 	TenantMemberService          interfaces.TenantMemberService
 	TenantMemberHandler          *handler.TenantMemberHandler
 	TenantInvitationHandler      *handler.TenantInvitationHandler
+	WeComIdentityHandler         *handler.WeComIdentityHandler
 	AuditLogHandler              *handler.AuditLogHandler
 	AuditLogService              interfaces.AuditLogService
 	ChunkHandler                 *handler.ChunkHandler
@@ -202,7 +203,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		)
 
 		RegisterAuthRoutes(v1, params.AuthHandler)
-		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.AuditLogHandler, rbacGuards)
+		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.WeComIdentityHandler, params.AuditLogHandler, rbacGuards)
 		RegisterMyInvitationRoutes(v1, params.TenantInvitationHandler)
 		RegisterKnowledgeBaseRoutes(v1, params.KBHandler, rbacGuards)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
@@ -536,6 +537,7 @@ func RegisterTenantRoutes(
 	handler *handler.TenantHandler,
 	memberHandler *handler.TenantMemberHandler,
 	invitationHandler *handler.TenantInvitationHandler,
+	wecomIdentityHandler *handler.WeComIdentityHandler,
 	auditLogHandler *handler.AuditLogHandler,
 	g *rbacGuards,
 ) {
@@ -604,6 +606,16 @@ func RegisterTenantRoutes(
 				// of /invitations; the underlying row still lives in the
 				// tenant_invitations table and shows up in the GET above.
 				tenantByID.POST("/invite-links", g.Owner(), invitationHandler.CreateInviteLink)
+			}
+
+			if wecomIdentityHandler != nil {
+				tenantByID.GET("/wecom/bindings", g.Admin(), wecomIdentityHandler.ListBindings)
+				tenantByID.POST("/wecom/bindings", g.Admin(), wecomIdentityHandler.CreateBinding)
+				tenantByID.PUT("/wecom/bindings/:user_id", g.Admin(), wecomIdentityHandler.UpdateBinding)
+				tenantByID.DELETE("/wecom/bindings/:user_id", g.Admin(), wecomIdentityHandler.DeleteBinding)
+				tenantByID.POST("/wecom/bindings/import", g.Admin(), wecomIdentityHandler.ImportBindings)
+				tenantByID.POST("/wecom/sync", g.Admin(), wecomIdentityHandler.Sync)
+				tenantByID.GET("/wecom/subjects/:user_id", g.Admin(), wecomIdentityHandler.ResolveSubject)
 			}
 
 			// Audit log feed (PR 6 of #1303). Admin+ so denied-action

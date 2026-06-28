@@ -1,3 +1,7 @@
+DROP TABLE IF EXISTS wecom_user_bindings;
+DROP TABLE IF EXISTS wecom_identity_departments;
+DROP TABLE IF EXISTS wecom_departments;
+DROP TABLE IF EXISTS wecom_identities;
 DROP TABLE IF EXISTS tenant_invitations;
 DROP TABLE IF EXISTS user_kb_pins;
 DROP TABLE IF EXISTS user_resource_favorites;
