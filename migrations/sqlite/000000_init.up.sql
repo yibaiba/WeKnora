@@ -398,6 +398,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_tags_kb_name ON knowledge_tags(t
 CREATE INDEX IF NOT EXISTS idx_knowledge_tags_kb ON knowledge_tags(tenant_id, knowledge_base_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_tags_seq_id ON knowledge_tags(seq_id);
 
+CREATE TABLE IF NOT EXISTS knowledge_tag_relations (
+    knowledge_id VARCHAR(36) NOT NULL,
+    tag_id VARCHAR(36) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (knowledge_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ktr_knowledge ON knowledge_tag_relations(knowledge_id);
+CREATE INDEX IF NOT EXISTS idx_ktr_tag ON knowledge_tag_relations(tag_id);
+
 CREATE TABLE IF NOT EXISTS mcp_services (
     id VARCHAR(36) PRIMARY KEY,
     tenant_id INTEGER NOT NULL,

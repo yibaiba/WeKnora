@@ -238,10 +238,10 @@ func (r *userRepository) RevokeSystemAdmin(ctx context.Context, userID, actorID 
 // SearchUsers searches users by username or email
 func (r *userRepository) SearchUsers(ctx context.Context, query string, limit int) ([]*types.User, error) {
 	var users []*types.User
-	searchPattern := "%" + query + "%"
+	searchPattern := "%" + escapeLikeKeyword(query) + "%"
 
 	dbQuery := r.db.WithContext(ctx).
-		Where("username ILIKE ? OR email ILIKE ?", searchPattern, searchPattern).
+		Where("LOWER(username) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?)", searchPattern, searchPattern).
 		Where("is_active = ?", true).
 		Order("username ASC")
 

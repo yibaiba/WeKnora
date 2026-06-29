@@ -89,9 +89,10 @@ func (r *organizationRepository) ListSearchable(ctx context.Context, query strin
 	var orgs []*types.Organization
 	q := r.db.WithContext(ctx).Where("searchable = ?", true)
 	if query != "" {
-		pattern := "%" + query + "%"
+		pattern := "%" + escapeLikeKeyword(query) + "%"
 		// 支持按名称、描述或空间 ID 搜索，便于区分同名空间
-		q = q.Where("name ILIKE ? OR description ILIKE ? OR id::text ILIKE ?", pattern, pattern, pattern)
+		q = q.Where("LOWER(name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?) OR LOWER(id) LIKE LOWER(?)",
+			pattern, pattern, pattern)
 	}
 	err := q.Order("created_at DESC").Limit(limit).Find(&orgs).Error
 	if err != nil {
