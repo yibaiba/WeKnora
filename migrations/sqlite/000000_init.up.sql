@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS knowledges (
     description TEXT,
     source VARCHAR(2048) NOT NULL,
     parse_status VARCHAR(50) NOT NULL DEFAULT 'unprocessed',
+    pending_subtasks_count INTEGER NOT NULL DEFAULT 0,
     enable_status VARCHAR(50) NOT NULL DEFAULT 'enabled',
     embedding_model_id VARCHAR(64),
     file_name VARCHAR(255),
@@ -225,6 +226,7 @@ CREATE TABLE IF NOT EXISTS users (
     tenant_id INTEGER,
     is_active BOOLEAN NOT NULL DEFAULT 1,
     can_access_all_tenants BOOLEAN NOT NULL DEFAULT 0,
+    is_system_admin BOOLEAN NOT NULL DEFAULT 0,
     -- Per-user JSON preferences (memory toggle, future UI knobs).
     -- SQLite has no JSONB; store as TEXT and let GORM (de)serialise via
     -- the driver.Valuer / sql.Scanner methods on types.UserPreferences.
@@ -238,6 +240,23 @@ CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_users_is_system_admin ON users(is_system_admin);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key VARCHAR(128) NOT NULL UNIQUE,
+    value TEXT NOT NULL,
+    value_type VARCHAR(16) NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    is_secret BOOLEAN NOT NULL DEFAULT 0,
+    requires_restart BOOLEAN NOT NULL DEFAULT 0,
+    last_modified_by VARCHAR(36) NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_settings_category ON system_settings(category);
 
 CREATE TABLE IF NOT EXISTS auth_tokens (
     id VARCHAR(36) PRIMARY KEY,
