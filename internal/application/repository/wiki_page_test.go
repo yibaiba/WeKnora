@@ -14,63 +14,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// wikiPagesTestDDL is a minimal SQLite-compatible subset of the
-// production wiki_pages DDL (migrations/versioned/000037_wiki_and_indexing.up.sql).
-// JSONB is stored as TEXT in SQLite; the StringArray Scan/Value pair
-// handles the JSON round-trip unchanged.
-const wikiPagesTestDDL = `
-CREATE TABLE IF NOT EXISTS wiki_pages (
-    id                VARCHAR(36) PRIMARY KEY,
-    tenant_id         INTEGER NOT NULL,
-    knowledge_base_id VARCHAR(36) NOT NULL,
-    slug              VARCHAR(255) NOT NULL,
-    title             VARCHAR(512) NOT NULL DEFAULT '',
-    page_type         VARCHAR(32) NOT NULL DEFAULT 'summary',
-    status            VARCHAR(32) NOT NULL DEFAULT 'published',
-    content           TEXT NOT NULL DEFAULT '',
-    summary           TEXT NOT NULL DEFAULT '',
-    parent_slug       VARCHAR(255) NOT NULL DEFAULT '',
-    folder_id         VARCHAR(36) NOT NULL DEFAULT '',
-    category_path     TEXT DEFAULT '[]',
-    wiki_path         VARCHAR(1024) NOT NULL DEFAULT '',
-    depth             INTEGER NOT NULL DEFAULT 0,
-    sort_order        INTEGER NOT NULL DEFAULT 0,
-    source_refs       TEXT DEFAULT '[]',
-    chunk_refs        TEXT DEFAULT '[]',
-    in_links          TEXT DEFAULT '[]',
-    out_links         TEXT DEFAULT '[]',
-    page_metadata     TEXT DEFAULT '{}',
-    aliases           TEXT DEFAULT '[]',
-    version           INTEGER NOT NULL DEFAULT 1,
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at        DATETIME
-);
-`
-
-// wikiFoldersTestDDL mirrors the production wiki_folders DDL for SQLite.
-const wikiFoldersTestDDL = `
-CREATE TABLE IF NOT EXISTS wiki_folders (
-    id                VARCHAR(36) PRIMARY KEY,
-    tenant_id         INTEGER NOT NULL DEFAULT 0,
-    knowledge_base_id VARCHAR(36) NOT NULL,
-    parent_id         VARCHAR(36) NOT NULL DEFAULT '',
-    name              VARCHAR(255) NOT NULL,
-    path              VARCHAR(1024) NOT NULL DEFAULT '',
-    depth             INTEGER NOT NULL DEFAULT 0,
-    sort_order        INTEGER NOT NULL DEFAULT 0,
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at        DATETIME
-);
-`
-
 func setupWikiPagesTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(wikiPagesTestDDL).Error)
-	require.NoError(t, db.Exec(wikiFoldersTestDDL).Error)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	requireExecSQLFile(t, sqlDB, "..", "..", "..", "migrations", "sqlite", "000005_wiki_runtime_tables.up.sql")
 	return db
 }
 
@@ -323,4 +273,101 @@ func TestListByTypeLight_ClampsLimit(t *testing.T) {
 	clampedEntries, _, err := repo.ListByTypeLight(ctx, "kb-cap", types.WikiPageTypeEntity, 5000, 0)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(clampedEntries), 200)
+}
+
+func TestWikiPageRepository_SourceRefsUseSQLiteJSONEach(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+
+	exact := makeWikiPage("kb-src", "summary/exact", types.WikiPageTypeSummary, types.WikiPageStatusPublished)
+	exact.SourceRefs = types.StringArray{"kid-exact"}
+	exact.Content = "exact content"
+	legacy := makeWikiPage("kb-src", "summary/legacy", types.WikiPageTypeSummary, types.WikiPageStatusPublished)
+	legacy.SourceRefs = types.StringArray{"kid-legacy|Legacy Doc"}
+	legacy.Content = "legacy content"
+	archived := makeWikiPage("kb-src", "summary/archived", types.WikiPageTypeSummary, types.WikiPageStatusArchived)
+	archived.SourceRefs = types.StringArray{"kid-legacy"}
+	otherKB := makeWikiPage("kb-other", "summary/other", types.WikiPageTypeSummary, types.WikiPageStatusPublished)
+	otherKB.SourceRefs = types.StringArray{"kid-legacy"}
+	for _, p := range []*types.WikiPage{exact, legacy, archived, otherKB} {
+		require.NoError(t, repo.Create(ctx, p))
+	}
+
+	pages, err := repo.ListBySourceRef(ctx, "kb-src", "kid-legacy")
+	require.NoError(t, err)
+	require.Len(t, pages, 2)
+	assert.ElementsMatch(t, []string{"summary/legacy", "summary/archived"}, []string{pages[0].Slug, pages[1].Slug})
+
+	slugs, err := repo.ListSlugsBySourceRef(ctx, "kb-src", "kid-exact")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"summary/exact"}, slugs)
+
+	summaries, err := repo.ListSummariesByKnowledgeIDs(ctx, "kb-src", []string{"kid-exact", "kid-legacy"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"kid-exact":  "exact content",
+		"kid-legacy": "legacy content",
+	}, summaries)
+}
+
+func TestWikiPageRepository_SQLiteSearchPaths(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+
+	titleHit := makeWikiPage("kb-search", "entity/acme", types.WikiPageTypeEntity, types.WikiPageStatusPublished)
+	titleHit.Title = "Quarterly Plan"
+	titleHit.Content = "plain body"
+	contentHit := makeWikiPage("kb-search", "entity/body", types.WikiPageTypeEntity, types.WikiPageStatusPublished)
+	contentHit.Title = "Body Only"
+	contentHit.Content = "mentions quarterly budget"
+	archived := makeWikiPage("kb-search", "entity/archived", types.WikiPageTypeEntity, types.WikiPageStatusArchived)
+	archived.Title = "Quarterly Archived"
+	for _, p := range []*types.WikiPage{titleHit, contentHit, archived} {
+		require.NoError(t, repo.Create(ctx, p))
+	}
+
+	listed, total, err := repo.List(ctx, &types.WikiPageListRequest{
+		KnowledgeBaseID: "kb-search",
+		Query:           "quarterly",
+		Page:            1,
+		PageSize:        10,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), total)
+	assert.Len(t, listed, 3)
+
+	found, err := repo.Search(ctx, "kb-search", "quarterly", 10)
+	require.NoError(t, err)
+	require.Len(t, found, 2)
+	assert.Equal(t, "entity/acme", found[0].Slug, "title match should rank ahead of content match")
+	assert.Equal(t, "entity/body", found[1].Slug)
+}
+
+func TestWikiPageRepository_SQLiteSimilarAndOrphanStats(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+
+	entity := makeWikiPage("kb-stats", "entity/vector-search", types.WikiPageTypeEntity, types.WikiPageStatusPublished)
+	entity.Title = "Vector Search"
+	entity.InLinks = types.StringArray{}
+	concept := makeWikiPage("kb-stats", "concept/vector-db", types.WikiPageTypeConcept, types.WikiPageStatusPublished)
+	concept.Title = "Vector Database"
+	concept.InLinks = types.StringArray{"entity/vector-search"}
+	index := makeWikiPage("kb-stats", "index", types.WikiPageTypeIndex, types.WikiPageStatusPublished)
+	index.Title = "Index"
+	for _, p := range []*types.WikiPage{entity, concept, index} {
+		require.NoError(t, repo.Create(ctx, p))
+	}
+
+	similar, err := repo.FindSimilarPages(ctx, "kb-stats", "vector", nil, 10)
+	require.NoError(t, err)
+	require.Len(t, similar, 2)
+	assert.ElementsMatch(t, []string{"entity/vector-search", "concept/vector-db"}, []string{similar[0].Slug, similar[1].Slug})
+
+	count, err := repo.CountOrphans(ctx, "kb-stats")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
 }
