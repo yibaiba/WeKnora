@@ -943,10 +943,19 @@ func (s *knowledgeService) searchKnowledgeInScopesWithSourceACL(
 		return knowledges, hasMore, total, err
 	}
 	knowledges, err = s.sourceACLGuard.FilterKnowledges(ctx, "knowledge_search", knowledges)
-	if err != nil || limit <= 0 || len(knowledges) <= limit {
-		return knowledges, hasMore, total, err
+	if err != nil {
+		return nil, false, 0, err
 	}
-	return knowledges[:limit], true, total, nil
+	knowledges, hasMore, visibleTotal := sourceACLSearchPage(knowledges, limit)
+	return knowledges, hasMore, visibleTotal, nil
+}
+
+func sourceACLSearchPage(knowledges []*types.Knowledge, limit int) ([]*types.Knowledge, bool, int64) {
+	visibleTotal := int64(len(knowledges))
+	if limit > 0 && len(knowledges) > limit {
+		return knowledges[:limit], true, visibleTotal
+	}
+	return knowledges, false, visibleTotal
 }
 
 func sourceACLSearchFetchLimit(limit int) int {
