@@ -1976,6 +1976,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 				"success":  true,
 				"data":     []interface{}{},
 				"has_more": false,
+				"total":    0,
 			})
 			return
 		}
@@ -2017,7 +2018,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 					agentID, removed)
 			}
 		}
-		knowledges, hasMore, err := h.kgService.SearchKnowledgeForScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(ctx, scopes, keyword, offset, limit, fileTypes)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, nil)
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
@@ -2027,12 +2028,13 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			"success":  true,
 			"data":     knowledges,
 			"has_more": hasMore,
+			"total":    total,
 		})
 		return
 	}
 
 	// Default: own + shared KBs
-	knowledges, hasMore, err := h.kgService.SearchKnowledge(ctx, keyword, offset, limit, fileTypes)
+	knowledges, hasMore, total, err := h.kgService.SearchKnowledge(ctx, keyword, offset, limit, fileTypes)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
@@ -2043,6 +2045,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 		"success":  true,
 		"data":     knowledges,
 		"has_more": hasMore,
+		"total":    total,
 	})
 }
 

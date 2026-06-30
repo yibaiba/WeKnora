@@ -494,7 +494,15 @@ func (s *knowledgeService) GetKnowledgeByIDOnly(ctx context.Context, id string) 
 // KB row itself is not returned so callers can't accidentally widen
 // their scope past "needed the creator id".
 func (s *knowledgeService) GetOwningKBCreatorID(ctx context.Context, knowledgeID string) (string, error) {
-	knowledge, err := s.GetKnowledgeByID(ctx, knowledgeID)
+	// Resolve via the repository directly: ownership only needs the
+	// knowledge -> kb_id link, so we deliberately skip the service-level
+	// GetKnowledgeByID (which also eagerly loads tags) to keep this lookup
+	// minimal and tenant-scoped.
+	tenantID, ok := ctx.Value(types.TenantIDContextKey).(uint64)
+	if !ok {
+		return "", werrors.NewUnauthorizedError("Tenant ID not found in context")
+	}
+	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
 	if err != nil {
 		return "", err
 	}
@@ -866,10 +874,10 @@ func (s *knowledgeService) UpdateKnowledgeTagBatch(ctx context.Context, authoriz
 
 // SearchKnowledge searches knowledge items by keyword across the tenant and shared knowledge bases.
 // fileTypes: optional list of file extensions to filter by (e.g., ["csv", "xlsx"])
-func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, error) {
+func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error) {
 	tenantID, ok := ctx.Value(types.TenantIDContextKey).(uint64)
 	if !ok {
-		return nil, false, werrors.NewUnauthorizedError("Tenant ID not found in context")
+		return nil, false, 0, werrors.NewUnauthorizedError("Tenant ID not found in context")
 	}
 
 	scopes := make([]types.KnowledgeSearchScope, 0)
@@ -905,15 +913,15 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 	}
 
 	if len(scopes) == 0 {
-		return nil, false, nil
+		return nil, false, 0, nil
 	}
 	return s.searchKnowledgeInScopesWithSourceACL(ctx, scopes, keyword, offset, limit, fileTypes)
 }
 
 // SearchKnowledgeForScopes searches knowledge within the given scopes (e.g. for shared agent context).
-func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, error) {
+func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error) {
 	if len(scopes) == 0 {
-		return nil, false, nil
+		return nil, false, 0, nil
 	}
 	return s.searchKnowledgeInScopesWithSourceACL(ctx, scopes, keyword, offset, limit, fileTypes)
 }
@@ -925,20 +933,20 @@ func (s *knowledgeService) searchKnowledgeInScopesWithSourceACL(
 	offset int,
 	limit int,
 	fileTypes []string,
-) ([]*types.Knowledge, bool, error) {
+) ([]*types.Knowledge, bool, int64, error) {
 	fetchLimit := limit
 	if s.sourceACLGuard != nil && limit > 0 {
 		fetchLimit = sourceACLSearchFetchLimit(limit)
 	}
-	knowledges, hasMore, err := s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, fetchLimit, fileTypes)
+	knowledges, hasMore, total, err := s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, fetchLimit, fileTypes)
 	if err != nil || s.sourceACLGuard == nil {
-		return knowledges, hasMore, err
+		return knowledges, hasMore, total, err
 	}
 	knowledges, err = s.sourceACLGuard.FilterKnowledges(ctx, "knowledge_search", knowledges)
 	if err != nil || limit <= 0 || len(knowledges) <= limit {
-		return knowledges, hasMore, err
+		return knowledges, hasMore, total, err
 	}
-	return knowledges[:limit], true, nil
+	return knowledges[:limit], true, total, nil
 }
 
 func sourceACLSearchFetchLimit(limit int) int {
