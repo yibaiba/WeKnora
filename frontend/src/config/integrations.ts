@@ -3,9 +3,16 @@ export const CHROME_EXTENSION_URL =
 
 export const CLAWHUB_SKILL_URL = 'https://clawhub.ai/lyingbug/weknora'
 
-export type IntegrationTab = 'im' | 'embed' | 'chrome' | 'claw'
+export type IntegrationTab = 'im' | 'embed' | 'api' | 'chrome' | 'claw'
 
-export const INTEGRATION_TABS: IntegrationTab[] = ['im', 'embed', 'chrome', 'claw']
+export const INTEGRATION_TABS: IntegrationTab[] = ['im', 'embed', 'api', 'chrome', 'claw']
+
+/** Aligns with Settings.vue SECTION_MIN_ROLE.api and router.go g.Owner() on /api-principal-config. */
+export type IntegrationTabRole = 'viewer' | 'contributor' | 'admin' | 'owner'
+
+export const INTEGRATION_TAB_MIN_ROLE: Partial<Record<IntegrationTab, IntegrationTabRole>> = {
+  api: 'owner',
+}
 
 export type IntegrationPreviewIcon =
   | { type: 'icon'; name: string }
@@ -18,6 +25,7 @@ export const INTEGRATION_PREVIEW_ITEMS: Array<{
 }> = [
   { key: 'im', icon: { type: 'icon', name: 'chat-message' } },
   { key: 'embed', icon: { type: 'icon', name: 'code' } },
+  { key: 'api', icon: { type: 'icon', name: 'secured' } },
   { key: 'chrome', icon: { type: 'icon', name: 'extension' } },
   { key: 'claw', icon: { type: 'emoji', value: '🦞' } },
 ]
