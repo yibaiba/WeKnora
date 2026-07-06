@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/handler/dto"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -411,7 +413,7 @@ func (h *TenantHandler) GetTenant(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    tenant,
+		"data":    dto.NewTenantResponse(ctx, tenant),
 	})
 }
 
@@ -502,7 +504,7 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    updatedTenant,
+		"data":    dto.NewTenantResponse(ctx, updatedTenant),
 	})
 }
 
@@ -852,7 +854,7 @@ func (h *TenantHandler) ListTenants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"items": []*types.Tenant{tenant},
+			"items": []*dto.TenantResponse{dto.NewTenantResponse(ctx, tenant)},
 		},
 	})
 }
@@ -889,7 +891,7 @@ func (h *TenantHandler) ListAllTenants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"items": tenants,
+			"items": dto.NewTenantResponsesCrossTenant(tenants),
 		},
 	})
 }
@@ -959,7 +961,7 @@ func (h *TenantHandler) SearchTenants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"items":     tenants,
+			"items":     dto.NewTenantResponsesCrossTenant(tenants),
 			"total":     total,
 			"page":      page,
 			"page_size": pageSize,
@@ -982,6 +984,14 @@ func (h *TenantHandler) SearchTenants(c *gin.Context) {
 func (h *TenantHandler) GetTenantKV(c *gin.Context) {
 	ctx := c.Request.Context()
 	key := secutils.SanitizeForLog(c.Param("key"))
+
+	switch key {
+	case "web-search-config", "parser-engine-config", "storage-engine-config":
+		if !dto.CanViewIntegrationSecrets(ctx) {
+			c.Error(errors.NewForbiddenError("integration configuration requires admin access"))
+			return
+		}
+	}
 
 	switch key {
 	case "web-search-config":
@@ -1061,18 +1071,18 @@ func (h *TenantHandler) updateTenantWebSearchConfigInternal(c *gin.Context) {
 		return
 	}
 
-	cfg = *types.EffectiveWebSearchConfig(&cfg)
-
-	// Validate configuration
-	if cfg.MaxResults < 1 || cfg.MaxResults > 50 {
-		c.Error(errors.NewBadRequestError("max_results must be between 1 and 50"))
-		return
-	}
-
 	tenant, _ := types.TenantInfoFromContext(ctx)
 	if tenant == nil {
 		logger.Error(ctx, "Tenant is empty")
 		c.Error(errors.NewBadRequestError("Tenant is empty"))
+		return
+	}
+
+	cfg = *types.MergeWebSearchConfigForUpdate(&cfg, tenant.WebSearchConfig)
+
+	// Validate configuration
+	if cfg.MaxResults < 1 || cfg.MaxResults > 50 {
+		c.Error(errors.NewBadRequestError("max_results must be between 1 and 50"))
 		return
 	}
 
@@ -1090,7 +1100,7 @@ func (h *TenantHandler) updateTenantWebSearchConfigInternal(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    types.EffectiveWebSearchConfig(updatedTenant.WebSearchConfig),
+		"data":    types.WebSearchConfigForResponse(updatedTenant.WebSearchConfig, true),
 		"message": "Web search configuration updated successfully",
 	})
 }
@@ -1120,7 +1130,7 @@ func (h *TenantHandler) GetTenantWebSearchConfig(c *gin.Context) {
 	logger.Infof(ctx, "Tenant web search config retrieved successfully, Tenant ID: %d", tenant.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    types.EffectiveWebSearchConfig(tenant.WebSearchConfig),
+		"data":    types.WebSearchConfigForResponse(tenant.WebSearchConfig, true),
 	})
 }
 
@@ -1133,7 +1143,7 @@ func (h *TenantHandler) GetTenantParserEngineConfig(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Tenant is empty"))
 		return
 	}
-	data := tenant.ParserEngineConfig
+	data := types.ParserEngineConfigForResponse(tenant.ParserEngineConfig, true)
 	if data == nil {
 		data = &types.ParserEngineConfig{}
 	}
@@ -1158,7 +1168,12 @@ func (h *TenantHandler) updateTenantParserEngineConfigInternal(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Tenant is empty"))
 		return
 	}
-	tenant.ParserEngineConfig = &cfg
+	merged := types.MergeParserEngineConfigForUpdate(&cfg, tenant.ParserEngineConfig)
+	if err := validateParserEngineOutboundURLs(merged); err != nil {
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	tenant.ParserEngineConfig = merged
 	updatedTenant, err := h.service.UpdateTenant(ctx, tenant)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
@@ -1171,7 +1186,7 @@ func (h *TenantHandler) updateTenantParserEngineConfigInternal(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    updatedTenant.ParserEngineConfig,
+		"data":    types.ParserEngineConfigForResponse(updatedTenant.ParserEngineConfig, true),
 		"message": "解析引擎配置已更新",
 	})
 }
@@ -1185,7 +1200,7 @@ func (h *TenantHandler) GetTenantStorageEngineConfig(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Tenant is empty"))
 		return
 	}
-	data := tenant.StorageEngineConfig
+	data := types.StorageEngineConfigForResponse(tenant.StorageEngineConfig, true)
 	if data == nil {
 		data = &types.StorageEngineConfig{}
 	}
@@ -1223,7 +1238,8 @@ func (h *TenantHandler) updateTenantStorageEngineConfigInternal(c *gin.Context) 
 		c.Error(errors.NewBadRequestError("Tenant is empty"))
 		return
 	}
-	tenant.StorageEngineConfig = &cfg
+	merged := types.MergeStorageEngineConfigForUpdate(&cfg, tenant.StorageEngineConfig)
+	tenant.StorageEngineConfig = merged
 	updatedTenant, err := h.service.UpdateTenant(ctx, tenant)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
@@ -1236,7 +1252,7 @@ func (h *TenantHandler) updateTenantStorageEngineConfigInternal(c *gin.Context) 
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    updatedTenant.StorageEngineConfig,
+		"data":    types.StorageEngineConfigForResponse(updatedTenant.StorageEngineConfig, true),
 		"message": "存储引擎配置已更新",
 	})
 }
@@ -1453,4 +1469,21 @@ func (h *TenantHandler) updateTenantRetrievalConfigInternal(c *gin.Context) {
 		"data":    updatedTenant.RetrievalConfig,
 		"message": "Retrieval configuration updated successfully",
 	})
+}
+
+func validateParserEngineOutboundURLs(cfg *types.ParserEngineConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if endpoint := strings.TrimSpace(cfg.MinerUEndpoint); endpoint != "" {
+		if err := secutils.ValidateURLForSSRF(endpoint); err != nil {
+			return fmt.Errorf("mineru_endpoint failed SSRF validation: %v", err)
+		}
+	}
+	if vlmURL := strings.TrimSpace(cfg.MinerUVLMServerURL); vlmURL != "" {
+		if err := secutils.ValidateURLForSSRF(vlmURL); err != nil {
+			return fmt.Errorf("mineru_vlm_server_url failed SSRF validation: %v", err)
+		}
+	}
+	return nil
 }
