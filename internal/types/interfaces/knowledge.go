@@ -70,6 +70,9 @@ type KnowledgeService interface {
 	GetKnowledgeBatchByIDsOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error)
 	// GetKnowledgeBatchWithSharedAccess retrieves knowledge by IDs including items from shared KBs the user has access to.
 	GetKnowledgeBatchWithSharedAccess(ctx context.Context, tenantID uint64, ids []string) ([]*types.Knowledge, error)
+	// ListKnowledgeIDsByTagIDs returns document knowledge IDs carrying any of
+	// the specified KB-local tags.
+	ListKnowledgeIDsByTagIDs(ctx context.Context, tenantID uint64, kbID string, tagIDs []string) ([]string, error)
 	// ListKnowledgeByKnowledgeBaseID lists all knowledge under a knowledge base.
 	ListKnowledgeByKnowledgeBaseID(ctx context.Context, kbID string) ([]*types.Knowledge, error)
 	// ListPagedKnowledgeByKnowledgeBaseID lists all knowledge under a knowledge base
