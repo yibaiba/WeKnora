@@ -3956,6 +3956,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/knowledge-bases/{id}/duplicate": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "创建一个只包含设置的新知识库副本，不复制知识、FAQ 内容、分块、索引、Wiki 页面、分享或置顶状态",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "知识库"
+                ],
+                "summary": "创建知识库副本",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "源知识库 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "创建后的知识库副本",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "请求参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
+                        }
+                    }
+                }
+            }
+        },
         "/knowledge-bases/{id}/faq/entries": {
             "get": {
                 "security": [
@@ -10630,6 +10674,111 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/{session_id}/messages/{message_id}/suggestions": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "会话"
+                ],
+                "summary": "获取回答后推荐问题",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "助手消息 ID",
+                        "name": "message_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "对已完成的助手消息异步生成或重新生成推荐问题；相同配置快照会复用持久化结果",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "会话"
+                ],
+                "summary": "确保生成回答后推荐问题",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "助手消息 ID",
+                        "name": "message_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "生成选项",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.EnsureMessageSuggestionsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/sessions/{session_id}/pin": {
             "post": {
                 "security": [
@@ -10726,6 +10875,49 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_errors.AppError"
                         }
+                    }
+                }
+            }
+        },
+        "/sessions/{session_id}/suggestion-events": {
+            "post": {
+                "security": [
+                    {
+                        "Bearer": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "记录曝光、点击或关闭事件",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "会话"
+                ],
+                "summary": "上报推荐问题事件",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "会话 ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "事件",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.SuggestionEventRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     }
                 }
             }
@@ -11104,31 +11296,128 @@ const docTemplate = `{
                 }
             }
         },
-        "/system/admin/settings": {
+        "/system/admin/runtime/queues": {
             "get": {
-                "description": "Return every row in the system_settings table (system-scope,\nnot tenant-scope). SystemAdmin only.",
+                "description": "返回各 asynq 队列的实时深度（pending/active/scheduled/retry 等）与 worker 并发配置，仅系统管理员可见",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "系统管理"
+                ],
+                "summary": "获取解析任务队列运行时状态",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.RuntimeQueuesResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/system/admin/runtime/queues/{queue}/tasks": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "System Admin"
                 ],
-                "summary": "List all system settings",
+                "summary": "List runtime queue tasks by state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Queue name",
+                        "name": "queue",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "pending",
+                            "active",
+                            "scheduled",
+                            "retry",
+                            "archived",
+                            "completed"
+                        ],
+                        "type": "string",
+                        "description": "Task state",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size",
+                        "name": "page_size",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "list of settings",
+                        "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.SystemSetting"
-                            }
+                            "$ref": "#/definitions/internal_handler.RuntimeTasksResponse"
                         }
+                    }
+                }
+            }
+        },
+        "/system/admin/runtime/queues/{queue}/tasks/{task_id}/actions/{action}": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Run a safe runtime task action",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Queue name",
+                        "name": "queue",
+                        "in": "path",
+                        "required": true
                     },
-                    "403": {
-                        "description": "Forbidden: not a system admin",
+                    {
+                        "type": "string",
+                        "description": "Task ID",
+                        "name": "task_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "cancel",
+                            "run_now",
+                            "delete"
+                        ],
+                        "type": "string",
+                        "description": "Action",
+                        "name": "action",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": true
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
                         }
                     }
                 }
@@ -11289,6 +11578,62 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "DB write failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/system/admin/users/reset-password": {
+            "post": {
+                "description": "Replace another user's local password and revoke all of their existing sessions (SystemAdmin only).\nA system administrator cannot reset their own password through this endpoint; self-service password change still requires the old password.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Admin"
+                ],
+                "summary": "Reset another user's password",
+                "parameters": [
+                    {
+                        "description": "Password reset request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.ResetUserPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Password reset successfully",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request, weak password, or self reset",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden: not a system admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -11494,7 +11839,7 @@ const docTemplate = `{
                         "Bearer": []
                     }
                 ],
-                "description": "创建新的租户。任意已登录用户均可调用以建立自己的新工作区，\n调用方会被自动设为该租户的 Owner。跨租户超管仍可像以前一样\n通过本接口创建任意租户。",
+                "description": "创建新的租户。任意已登录用户均可调用以建立自己的新工作区，\n调用方会被自动设为该租户的 Owner。跨租户超管仍可像以前一样\n通过本接口创建任意租户。\n当 tenant.auto_create_api_key（或 WEKNORA_TENANT_AUTO_CREATE_API_KEY）\n开启时，会自动创建一个 full_access API Key，并在响应体的 data.api_key 字段返回其明文 token。",
                 "consumes": [
                     "application/json"
                 ],
@@ -11518,7 +11863,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "创建的租户",
+                        "description": "创建的租户（可选含 api_key）",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -13693,6 +14038,7 @@ const docTemplate = `{
                 2002,
                 2003,
                 2004,
+                2005,
                 2100,
                 2101,
                 2102,
@@ -13717,6 +14063,7 @@ const docTemplate = `{
                 "ErrTenantInactive",
                 "ErrTenantNameRequired",
                 "ErrTenantInvalidStatus",
+                "ErrTenantCreationDisabled",
                 "ErrAgentMissingThinkingModel",
                 "ErrAgentMissingAllowedTools",
                 "ErrAgentInvalidMaxIterations",
@@ -13821,6 +14168,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Tencent_WeKnora_internal_models_limiter.RuntimeStat": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "integer"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "model_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "waiting": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_Tencent_WeKnora_internal_types.APIPrincipalMode": {
             "type": "string",
             "enum": [
@@ -13909,7 +14276,12 @@ const docTemplate = `{
                 "opensearch.reindex_executed",
                 "system.setting_changed",
                 "system.admin_promoted",
-                "system.admin_revoked"
+                "system.admin_revoked",
+                "system.user_password_reset",
+                "system.queue_task_retried",
+                "system.queue_task_deleted",
+                "system.queue_task_run_now",
+                "system.queue_task_cancelled"
             ],
             "x-enum-varnames": [
                 "AuditActionMemberAdded",
@@ -13930,7 +14302,12 @@ const docTemplate = `{
                 "AuditActionOpenSearchReindexExecuted",
                 "AuditActionSystemSettingChanged",
                 "AuditActionSystemAdminPromoted",
-                "AuditActionSystemAdminRevoked"
+                "AuditActionSystemAdminRevoked",
+                "AuditActionSystemUserPasswordReset",
+                "AuditActionSystemQueueTaskRetried",
+                "AuditActionSystemQueueTaskDeleted",
+                "AuditActionSystemQueueTaskRunNow",
+                "AuditActionSystemQueueTaskCancelled"
             ]
         },
         "github_com_Tencent_WeKnora_internal_types.AuditLog": {
@@ -14077,6 +14454,10 @@ const docTemplate = `{
                 },
                 "strategy": {
                     "description": "Strategy selects the adaptive chunking tier. Empty / \"legacy\" preserves\nthe historical recursive splitter; \"auto\" lets a profiler pick between\nheading-aware, heuristic and recursive tiers; \"heading\" / \"heuristic\" /\n\"recursive\" pin the tier explicitly.",
+                    "type": "string"
+                },
+                "table_metadata_instructions": {
+                    "description": "TableMetadataInstructions contains optional business guidance used when\ngenerating searchable summaries for CSV/Excel tables. The system-owned\noutput contract remains fixed; these instructions only add domain context.",
                     "type": "string"
                 },
                 "token_limit": {
@@ -14363,6 +14744,14 @@ const docTemplate = `{
                     "description": "Dedicated chat model ID for the query-understanding (rewrite + intent) step.\nWhen empty, the main conversation ModelID is used as a fallback.",
                     "type": "string"
                 },
+                "question_suggestions": {
+                    "description": "===== Conversation Question Suggestions =====\nQuestionSuggestions owns both the static/knowledge-backed prompts shown\nbefore the first user turn and the contextual follow-up questions shown\nafter a completed assistant answer.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.QuestionSuggestionConfig"
+                        }
+                    ]
+                },
                 "rerank_model_id": {
                     "description": "ReRank model ID for retrieval",
                     "type": "string"
@@ -14401,13 +14790,6 @@ const docTemplate = `{
                 "skills_selection_mode": {
                     "description": "===== Skills Settings (only for smart-reasoning mode) =====\nSkills selection mode: \"all\" = all preloaded skills, \"selected\" = specific skills, \"none\" = no skills",
                     "type": "string"
-                },
-                "suggested_prompts": {
-                    "description": "===== Suggested Prompts =====\n推荐问题列表，用于在前端对话面板展示快捷提问",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "supported_file_types": {
                     "description": "===== File Type Restriction Settings =====\nSupported file types for this agent (e.g., [\"csv\", \"xlsx\", \"xls\"])\nEmpty means all file types are supported\nWhen set, only files with matching extensions can be used with this agent",
@@ -14585,6 +14967,10 @@ const docTemplate = `{
         "github_com_Tencent_WeKnora_internal_types.ExtractConfig": {
             "type": "object",
             "properties": {
+                "custom_instructions": {
+                    "description": "CustomInstructions adds domain-specific extraction guidance while the\nsystem keeps ownership of the structured graph output protocol.",
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -14796,6 +15182,47 @@ const docTemplate = `{
                 },
                 "vector_threshold": {
                     "type": "number"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.FollowUpSuggestionConfig": {
+            "type": "object",
+            "properties": {
+                "additional_instruction": {
+                    "type": "string"
+                },
+                "allow_regenerate": {
+                    "type": "boolean"
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "knowledge_fallback": {
+                    "type": "boolean"
+                },
+                "max_context_turns": {
+                    "type": "integer"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "model_id": {
+                    "type": "string"
+                },
+                "suppress_on_fallback": {
+                    "type": "boolean"
+                },
+                "suppress_when_answer_asks_question": {
+                    "type": "boolean"
                 }
             }
         },
@@ -16001,6 +16428,10 @@ const docTemplate = `{
                     "description": "Agent total execution duration in milliseconds (from query start to answer start)",
                     "type": "integer"
                 },
+                "agent_id": {
+                    "description": "AgentID is the agent used for this individual assistant turn. Unlike the\nsession's last_request_state it remains stable when users switch agents.",
+                    "type": "string"
+                },
                 "agent_steps": {
                     "description": "Agent execution steps (only for assistant messages generated by agent)\nThis contains the detailed reasoning process and tool calls made by the agent\nStored for user history display, but NOT included in LLM context to avoid redundancy",
                     "type": "array",
@@ -16071,6 +16502,10 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.MentionedItem"
                     }
+                },
+                "model_id": {
+                    "description": "ModelID is the requested/effective chat model binding captured for this\nturn. It is useful for reproducibility and suggestion generation.",
+                    "type": "string"
                 },
                 "request_id": {
                     "description": "Request identifier for tracking API requests",
@@ -16198,6 +16633,10 @@ const docTemplate = `{
                 "interface_type": {
                     "type": "string"
                 },
+                "max_concurrency": {
+                    "description": "MaxConcurrency caps concurrent in-flight BACKGROUND (ingestion /\nenrichment) calls to THIS specific model, keyed by model ID and shared\nacross all replicas. 0 (the default) means \"fall back to the\nprocess-wide model.max_concurrency\". Interactive user-facing calls are\nnever gated. Only chat / vlm / embedding honour this (see limiter.Gate).",
+                    "type": "integer"
+                },
                 "parameter_size": {
                     "description": "Ollama model parameter size (e.g., \"7B\", \"13B\", \"70B\")",
                     "type": "string"
@@ -16229,6 +16668,7 @@ const docTemplate = `{
                 "siliconflow",
                 "jina",
                 "openrouter",
+                "requesty",
                 "nvidia",
                 "novita",
                 "azure_openai"
@@ -16248,6 +16688,7 @@ const docTemplate = `{
                 "ModelSourceOpenAI": "OpenAI model",
                 "ModelSourceOpenRouter": "OpenRouter model",
                 "ModelSourceRemote": "Remote model",
+                "ModelSourceRequesty": "Requesty model",
                 "ModelSourceSiliconFlow": "SiliconFlow model",
                 "ModelSourceVolcengine": "Volcengine model",
                 "ModelSourceZhipu": "Zhipu model"
@@ -16267,6 +16708,7 @@ const docTemplate = `{
                 "SiliconFlow model",
                 "Jina AI model",
                 "OpenRouter model",
+                "Requesty model",
                 "NVIDIA model",
                 "Novita AI model",
                 "Azure OpenAI model"
@@ -16286,6 +16728,7 @@ const docTemplate = `{
                 "ModelSourceSiliconFlow",
                 "ModelSourceJina",
                 "ModelSourceOpenRouter",
+                "ModelSourceRequesty",
                 "ModelSourceNvidia",
                 "ModelSourceNovita",
                 "ModelSourceAzureOpenAI"
@@ -16641,11 +17084,83 @@ const docTemplate = `{
         "github_com_Tencent_WeKnora_internal_types.QuestionGenerationConfig": {
             "type": "object",
             "properties": {
+                "custom_instructions": {
+                    "description": "CustomInstructions describes the intended audience or question style.\nIt is appended to the stable system question-generation template.",
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
                 "question_count": {
                     "description": "Number of questions to generate per chunk (default: 3, max: 10)",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.QuestionSuggestionConfig": {
+            "type": "object",
+            "properties": {
+                "follow_ups": {
+                    "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.FollowUpSuggestionConfig"
+                },
+                "starters": {
+                    "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.StarterSuggestionConfig"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.QueueStat": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "integer"
+                },
+                "archived": {
+                    "type": "integer"
+                },
+                "completed": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "latency_ms": {
+                    "description": "LatencyMs is the age of the oldest pending task, in milliseconds.",
+                    "type": "integer"
+                },
+                "memory_usage_bytes": {
+                    "description": "MemoryUsageBytes is the approximate Redis memory the queue occupies.",
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "paused": {
+                    "description": "Paused reports whether the queue is paused (tasks not consumed).",
+                    "type": "boolean"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "pool": {
+                    "description": "Pool is the independent worker pool that drains this queue.",
+                    "type": "string"
+                },
+                "processed": {
+                    "description": "Processed / Failed are today's counters (reset daily).",
+                    "type": "integer"
+                },
+                "retry": {
+                    "type": "integer"
+                },
+                "scheduled": {
+                    "type": "integer"
+                },
+                "size": {
+                    "description": "Size is the total number of tasks in the queue (pending + active +\nscheduled + retry + aggregating + archived).",
+                    "type": "integer"
+                },
+                "weight": {
+                    "description": "Weight is the queue's scheduling weight inside its pool.",
                     "type": "integer"
                 }
             }
@@ -16923,6 +17438,127 @@ const docTemplate = `{
                     ]
                 }
             }
+        },
+        "github_com_Tencent_WeKnora_internal_types.RuntimeTaskAction": {
+            "type": "string",
+            "enum": [
+                "cancel",
+                "run_now",
+                "delete"
+            ],
+            "x-enum-varnames": [
+                "RuntimeTaskActionCancel",
+                "RuntimeTaskActionRunNow",
+                "RuntimeTaskActionDelete"
+            ]
+        },
+        "github_com_Tencent_WeKnora_internal_types.RuntimeTaskInfo": {
+            "type": "object",
+            "properties": {
+                "allowed_actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.RuntimeTaskAction"
+                    }
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "data_source_id": {
+                    "type": "string"
+                },
+                "deadline": {
+                    "type": "string"
+                },
+                "enqueued_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_orphaned": {
+                    "type": "boolean"
+                },
+                "knowledge_base_id": {
+                    "type": "string"
+                },
+                "knowledge_count": {
+                    "type": "integer"
+                },
+                "knowledge_id": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_failed_at": {
+                    "type": "string"
+                },
+                "max_retry": {
+                    "type": "integer"
+                },
+                "next_process_at": {
+                    "type": "string"
+                },
+                "queue": {
+                    "type": "string"
+                },
+                "retried": {
+                    "type": "integer"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "source_kb_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "state": {
+                    "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.RuntimeTaskState"
+                },
+                "sync_log_id": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "string"
+                },
+                "target_kb_id": {
+                    "type": "string"
+                },
+                "task_id": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "worker": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.RuntimeTaskState": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "active",
+                "scheduled",
+                "retry",
+                "archived",
+                "completed"
+            ],
+            "x-enum-varnames": [
+                "RuntimeTaskPending",
+                "RuntimeTaskActive",
+                "RuntimeTaskScheduled",
+                "RuntimeTaskRetry",
+                "RuntimeTaskArchived",
+                "RuntimeTaskCompleted"
+            ]
         },
         "github_com_Tencent_WeKnora_internal_types.S3EngineConfig": {
             "type": "object",
@@ -17233,6 +17869,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Tencent_WeKnora_internal_types.StarterSuggestionConfig": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "mode": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_Tencent_WeKnora_internal_types.StorageConfig": {
             "type": "object",
             "properties": {
@@ -17342,6 +17998,17 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.OrgMemberRole"
                         }
                     ]
+                }
+            }
+        },
+        "github_com_Tencent_WeKnora_internal_types.SuggestionAttribution": {
+            "type": "object",
+            "properties": {
+                "question_id": {
+                    "type": "string"
+                },
+                "suggestion_set_id": {
+                    "type": "string"
                 }
             }
         },
@@ -17891,6 +18558,14 @@ const docTemplate = `{
                     "description": "Base URL",
                     "type": "string"
                 },
+                "custom_instructions": {
+                    "description": "CustomInstructions adds KB-specific image interpretation guidance without\nreplacing the system-owned OCR and Markdown output contract.",
+                    "type": "string"
+                },
+                "description_language": {
+                    "description": "DescriptionLanguage controls the language used for generated image\ncaptions. Empty means follow the document/request language.",
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -18075,6 +18750,10 @@ const docTemplate = `{
         "github_com_Tencent_WeKnora_internal_types.WikiConfig": {
             "type": "object",
             "properties": {
+                "content_instructions": {
+                    "description": "ContentInstructions controls tone, structure and emphasis for generated\nsummary/entity/index prose. Citation and merge rules remain system-owned.",
+                    "type": "string"
+                },
                 "extraction_granularity": {
                     "description": "ExtractionGranularity controls how many candidate slugs Pass 0 extracts\nper document. Empty / unknown value is treated as WikiExtractionStandard.",
                     "allOf": [
@@ -18083,16 +18762,24 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "extraction_instructions": {
+                    "description": "ExtractionInstructions tells candidate extraction which domain concepts\nto emphasize without replacing the stable JSON/citation protocol.",
+                    "type": "string"
+                },
                 "ingest_batch_size": {
-                    "description": "IngestBatchSize controls how many pending ops a single batch\nprocesses before scheduling a follow-up. 0 falls back to the\nhard-coded default (5). Operators on large KBs (4w+ docs) can\nraise this to 10–20 to amortize the lock-acquire / index-rebuild\noverhead across more documents per round.",
+                    "description": "IngestBatchSize controls how many pending ops a single batch claims and\nprocesses before scheduling a follow-up. 0 falls back to the hard-coded\ndefault (5). Larger batches amortize per-batch setup and let more docs\nshare the batch-internal Map/Reduce fan-out; smaller batches spread a\nKB's backlog across more concurrent batches (finer scheduling grain).",
                     "type": "integer"
                 },
                 "ingest_map_parallel": {
-                    "description": "IngestMapParallel sets the errgroup limit for the Map phase\n(per-document extraction + summary + chunk citation). 0 falls\nback to 10. Bound by the LLM provider's concurrency limit and\nthe worker's outbound HTTP pool.",
+                    "description": "IngestMapParallel sets the errgroup limit for the Map phase\n(per-document extraction + summary + chunk citation) WITHIN one batch.\n0 falls back to 10. Bound by the LLM provider's concurrency limit and\nthe worker's outbound HTTP pool. Remember it multiplies with the number\nof concurrent batches (IngestMaxInflight).",
+                    "type": "integer"
+                },
+                "ingest_max_inflight": {
+                    "description": "IngestMaxInflight caps how many ingest batches for THIS KB may run\nconcurrently in the shared wiki worker pool (standard/Redis mode\nonly). 0 falls back to the hard-coded default (4). Since Phase 3\nremoved the exclusive per-KB lock, one KB's backlog could otherwise\nmonopolize the whole pool during a bulk import and starve other KBs;\nthis knob trades a single KB's peak throughput for cross-KB fairness.\nSet it \u003e= the wiki pool size to effectively disable the cap.",
                     "type": "integer"
                 },
                 "ingest_reduce_parallel": {
-                    "description": "IngestReduceParallel sets the errgroup limit for the Reduce phase\n(per-slug page write). 0 falls back to 10. Bound by the same\nLLM concurrency / HTTP pool considerations as the Map phase,\nplus DB connection pool size.",
+                    "description": "IngestReduceParallel sets the errgroup limit for the Reduce phase\n(per-slug page write) WITHIN one batch. 0 falls back to 10. Bound by the\nsame LLM concurrency / HTTP pool considerations as the Map phase, plus\nDB connection pool size. Same multiplier caveat as IngestMapParallel.",
                     "type": "integer"
                 },
                 "max_pages_per_ingest": {
@@ -18849,6 +19536,14 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.EnsureMessageSuggestionsRequest": {
+            "type": "object",
+            "properties": {
+                "regenerate": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_handler.EvaluationRequest": {
             "type": "object",
             "properties": {
@@ -19227,6 +19922,9 @@ const docTemplate = `{
                             "description": "Strategy / TokenLimit / Languages use pointer types so the\nhandler can distinguish \"field absent in payload\" (no change)\nfrom \"field present with empty/zero value\" (clear / disable).\nWithout that distinction, users could set strategy=\"auto\" once\nbut never reset it back to legacy / unset.",
                             "type": "string"
                         },
+                        "tableMetadataInstructions": {
+                            "type": "string"
+                        },
                         "tokenLimit": {
                             "type": "integer"
                         }
@@ -19252,6 +19950,9 @@ const docTemplate = `{
                     "description": "知识图谱配置",
                     "type": "object",
                     "properties": {
+                        "customInstructions": {
+                            "type": "string"
+                        },
                         "enabled": {
                             "type": "boolean"
                         },
@@ -19282,6 +19983,9 @@ const docTemplate = `{
                     "description": "问题生成配置",
                     "type": "object",
                     "properties": {
+                        "customInstructions": {
+                            "type": "string"
+                        },
                         "enabled": {
                             "type": "boolean"
                         },
@@ -19603,6 +20307,21 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.ResetUserPasswordRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "new_password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "new_password": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handler.RevokeSystemAdminRequest": {
             "type": "object",
             "required": [
@@ -19611,6 +20330,104 @@ const docTemplate = `{
             "properties": {
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_handler.RuntimeQueuesResponse": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "model_limiter_available": {
+                    "type": "boolean"
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_models_limiter.RuntimeStat"
+                    }
+                },
+                "parse_concurrency": {
+                    "description": "compatibility alias for upstream_concurrency",
+                    "type": "integer"
+                },
+                "pools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.RuntimeWorkerPool"
+                    }
+                },
+                "queues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.QueueStat"
+                    }
+                },
+                "timestamp": {
+                    "type": "integer"
+                },
+                "upstream_concurrency": {
+                    "type": "integer"
+                },
+                "wiki_concurrency": {
+                    "description": "compatibility field",
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_handler.RuntimeTasksResponse": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "has_more": {
+                    "type": "boolean"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.RuntimeTaskInfo"
+                    }
+                }
+            }
+        },
+        "internal_handler.RuntimeWorkerPool": {
+            "description": "Return every row in the system_settings table (system-scope, not tenant-scope). SystemAdmin only.",
+            "type": "object",
+            "properties": {
+                "active": {
+                    "description": "live workers assigned to this pool",
+                    "type": "integer"
+                },
+                "cluster_capacity": {
+                    "description": "sum of live server concurrency",
+                    "type": "integer"
+                },
+                "concurrency": {
+                    "description": "configured per instance",
+                    "type": "integer"
+                },
+                "instances": {
+                    "description": "live asynq server heartbeats",
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "queue_count": {
+                    "type": "integer"
+                },
+                "utilization": {
+                    "description": "Active / ClusterCapacity",
+                    "type": "number"
                 }
             }
         },
@@ -19701,6 +20518,24 @@ const docTemplate = `{
                 },
                 "name": {
                     "description": "\"local\", \"minio\", \"cos\", \"tos\", \"s3\", \"oss\", \"ks3\"",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handler.SuggestionEventRequest": {
+            "type": "object",
+            "required": [
+                "event_type",
+                "suggestion_set_id"
+            ],
+            "properties": {
+                "event_type": {
+                    "type": "string"
+                },
+                "question_id": {
+                    "type": "string"
+                },
+                "suggestion_set_id": {
                     "type": "string"
                 }
             }
@@ -20223,6 +21058,9 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "suggestion_attribution": {
+                    "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.SuggestionAttribution"
+                },
                 "summary_model_id": {
                     "description": "Optional summary model ID for this request (overrides session default)",
                     "type": "string"
@@ -20344,9 +21182,23 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "mentioned_items": {
+                    "description": "Optional scoped tag mentions",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler_session.MentionedItemRequest"
+                    }
+                },
                 "query": {
                     "description": "Query text to search for",
                     "type": "string"
+                },
+                "tag_ids": {
+                    "description": "Tag IDs for filtering within a single KB",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

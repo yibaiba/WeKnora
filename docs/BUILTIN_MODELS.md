@@ -2,14 +2,20 @@
 
 ## 概述
 
-内置模型是系统级别的模型配置，对所有租户可见，但敏感信息会被隐藏，且不可编辑或删除。内置模型通常用于提供系统默认的模型配置，确保所有租户都能使用统一的模型服务。
+内置模型是系统级别的模型配置，对所有租户可见。普通租户用户（包括租户管理员）看到的敏感信息会被隐藏，且不能修改；系统管理员可以在「模型管理」界面编辑配置和凭据。内置模型通常用于提供系统默认的模型配置，确保所有租户都能使用统一的模型服务。
 
 ## 内置模型特性
 
 - **所有租户可见**：内置模型对所有租户都可见，无需单独配置
-- **安全保护**：内置模型的敏感信息（API Key、Base URL）会被隐藏，无法查看详情
-- **只读保护**：内置模型不能被编辑或删除，只能设置为默认模型
-- **统一管理**：由系统管理员统一维护，确保配置一致性和安全性
+- **安全保护**：API Key 等凭据永远不会明文返回；只有系统管理员能看到 Base URL 等管理信息和凭据是否已配置
+- **权限保护**：普通租户用户只能查看；系统管理员可以编辑配置和凭据
+- **统一管理**：内置模型对所有租户生效；删除仍通过 YAML 或 SQL 管理，避免部署配置与运行时状态冲突
+
+## 在管理界面编辑
+
+系统管理员可直接在「设置 → 模型管理」中点击内置模型，修改模型参数或更新凭据。普通租户管理员仍然只能查看。
+
+首次通过管理界面保存 YAML 托管的内置模型后，该行会转为运行时托管（`managed_by` 清空），后续应用启动不会再用同 ID 的 YAML 条目覆盖它。这样可以保证界面保存的结果在重启后仍然有效。若希望重新交给 YAML 管理，需要由部署管理员在数据库中把该行的 `managed_by` 恢复为 `yaml`，或移除运行时覆盖后重新启动。
 
 ## 如何添加内置模型
 
@@ -21,7 +27,7 @@ WeKnora 支持两种方式添加内置模型：**推荐**使用 YAML 声明式�
 
 默认路径是 `config/builtin_models.yaml`（与 `config.yaml`、`builtin_agents.yaml` 同目录）。如需挂载到其他位置，设置环境变量 `BUILTIN_MODELS_CONFIG=/absolute/path/builtin_models.yaml` 覆盖。
 
-文件不存在时启动期会跳过、不报错；解析失败仅记录 Warning、不影响主流程。每次应用启动会重新读取并按 `id` 字段 UPSERT 到 `models` 表（保留 `created_at`，刷新其他字段）。
+文件不存在时启动期会跳过、不报错；解析失败仅记录 Warning、不影响主流程。每次应用启动会重新读取并按 `id` 字段 UPSERT 到 `models` 表（保留 `created_at`，刷新其他字段）。如果同 ID 模型已经由系统管理员在界面保存并转为运行时托管，则保留运行时配置，不再由 YAML 覆盖。
 
 #### Schema
 
@@ -161,7 +167,7 @@ services:
 
 ### 方式二：直接 SQL 插入
 
-支持的 provider：`generic`（自定义）、`openai`、`aliyun`、`zhipu`、`volcengine`、`hunyuan`、`deepseek`、`minimax`、`mimo`、`siliconflow`、`jina`、`openrouter`、`gemini`、`modelscope`、`moonshot`、`qianfan`、`qiniu`、`longcat`、`gpustack`
+支持的 provider：`generic`（自定义）、`openai`、`aliyun`、`zhipu`、`volcengine`、`hunyuan`、`deepseek`、`minimax`、`mimo`、`siliconflow`、`jina`、`openrouter`、`requesty`、`gemini`、`modelscope`、`moonshot`、`qianfan`、`qiniu`、`longcat`、`gpustack`
 
 ```sql
 -- 示例：LLM 内置模型

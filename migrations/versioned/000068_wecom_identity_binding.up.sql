@@ -1,11 +1,11 @@
--- Migration: 000066_wecom_identity_binding
+-- Migration: 000068_wecom_identity_binding
 -- Description: Store Enterprise WeChat identities, departments, memberships, and WeKnora user bindings.
 
 -- Merge repair: local enterprise branches previously used versions 000064
 -- and 000065 before upstream added principal_model and tenant_api_keys at
 -- those numbers. A database that already recorded the old versions would skip
 -- the upstream files, so keep the upstream schema changes idempotently here.
-DO $$ BEGIN RAISE NOTICE '[Migration 000066] Ensuring upstream 000064 principal model schema...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 000068] Ensuring upstream 000064 principal model schema...'; END $$;
 
 DO $$
 BEGIN
@@ -48,7 +48,7 @@ ALTER TABLE tenants
 ALTER TABLE sessions
     ALTER COLUMN user_id TYPE VARCHAR(512);
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000066] Ensuring upstream 000065 tenant_api_keys schema...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 000068] Ensuring upstream 000065 tenant_api_keys schema...'; END $$;
 
 CREATE TABLE IF NOT EXISTS tenant_api_keys (
     id BIGSERIAL PRIMARY KEY,
@@ -109,7 +109,7 @@ BEGIN
     END IF;
 END $$;
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000066] Creating WeCom identity binding tables...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 000068] Creating WeCom identity binding tables...'; END $$;
 
 CREATE TABLE IF NOT EXISTS wecom_identities (
     id BIGSERIAL PRIMARY KEY,
@@ -197,4 +197,4 @@ CREATE INDEX IF NOT EXISTS idx_wecom_user_bindings_wecom_userid ON wecom_user_bi
 CREATE INDEX IF NOT EXISTS idx_wecom_user_bindings_status ON wecom_user_bindings(status);
 CREATE INDEX IF NOT EXISTS idx_wecom_user_bindings_deleted_at ON wecom_user_bindings(deleted_at);
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000066] WeCom identity binding tables ready'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 000068] WeCom identity binding tables ready'; END $$;
