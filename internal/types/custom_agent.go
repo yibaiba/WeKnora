@@ -87,7 +87,7 @@ type CustomAgent struct {
 	DeletedAt gorm.DeletedAt `yaml:"deleted_at" json:"deleted_at" gorm:"index"`
 
 	// CreatorName 由 list handler 在返回前批量回填，作用同 KnowledgeBase.CreatorName：
-	// 让前端列表卡片区分「我创建」与「同租户其他成员创建」。不落库，内建 agent / 老数据
+	// 让前端列表卡片区分「我创建」与「同空间其他成员创建」。不落库，内建 agent / 老数据
 	// 仍可能为空。
 	CreatorName string `yaml:"-" json:"creator_name,omitempty" gorm:"-"`
 }
@@ -125,6 +125,9 @@ type CustomAgentConfig struct {
 	MaxCompletionTokens int `yaml:"max_completion_tokens" json:"max_completion_tokens"`
 	// Whether to enable thinking mode (for models that support extended thinking)
 	Thinking *bool `yaml:"thinking" json:"thinking"`
+	// Whether final answers include knowledge/web source citations. Nil defaults to true
+	// so agents saved before this option was introduced keep their existing behavior.
+	CitationEnabled *bool `yaml:"citation_enabled" json:"citation_enabled"`
 
 	// ===== Agent Mode Settings =====
 	// Maximum iterations for ReAct loop (only for agent type)
@@ -162,14 +165,14 @@ type CustomAgentConfig struct {
 	// ===== Image Upload / Multimodal Settings =====
 	// Whether image upload is enabled for this agent (default: false)
 	ImageUploadEnabled bool `yaml:"image_upload_enabled" json:"image_upload_enabled"`
-	// VLM model ID for image analysis (optional, falls back to tenant-level VLM)
+	// VLM model ID for image analysis (optional, falls back to workspace-level VLM)
 	VLMModelID string `yaml:"vlm_model_id" json:"vlm_model_id"`
 	// Whether audio upload (ASR transcription) is enabled for this agent (default: false)
 	AudioUploadEnabled bool `yaml:"audio_upload_enabled" json:"audio_upload_enabled"`
 	// ASR model ID for audio transcription (optional)
 	ASRModelID string `yaml:"asr_model_id" json:"asr_model_id"`
 	// Storage provider for image uploads: "local", "minio", "cos", "tos", "s3", "oss", "ks3".
-	// Empty means use the global/tenant default provider.
+	// Empty means use the global/workspace default provider.
 	ImageStorageProvider string `yaml:"image_storage_provider" json:"image_storage_provider"`
 
 	// ===== File Type Restriction Settings =====
@@ -177,6 +180,28 @@ type CustomAgentConfig struct {
 	// Empty means all file types are supported
 	// When set, only files with matching extensions can be used with this agent
 	SupportedFileTypes []string `yaml:"supported_file_types" json:"supported_file_types"`
+
+	// ===== Chat Attachment Parsing Settings =====
+	// ChatParserEngineRules selects parser engines for session-scoped chat
+	// attachments by file type. Takes precedence over the tenant-level
+	// ParserEngineConfig.ChatParserEngineRules; an explicit per-request
+	// parser_engine still overrides both.
+	ChatParserEngineRules []ParserEngineRule `yaml:"chat_parser_engine_rules" json:"chat_parser_engine_rules,omitempty"`
+	// AttachmentImageUnderstanding enables VLM OCR fallback for image-only /
+	// scanned documents (PDF/PPT whose pages are images). Disabled by default
+	// because it materially increases parse latency; only triggers when the
+	// extracted text is below a threshold and a VLM model is configured.
+	AttachmentImageUnderstanding bool `yaml:"attachment_image_understanding" json:"attachment_image_understanding"`
+	// AttachmentOCRMaxPages caps how many pages of a scanned / image-only
+	// document this agent sends to the VLM for OCR. 0 falls back to the global
+	// default (WEKNORA_CHAT_ATTACHMENT_OCR_MAX_PAGES). More pages means higher
+	// coverage but slower parsing and more VLM cost.
+	AttachmentOCRMaxPages int `yaml:"attachment_ocr_max_pages" json:"attachment_ocr_max_pages,omitempty"`
+	// AttachmentParseWaitTimeoutSec bounds, in seconds, how long a chat turn
+	// waits for this agent's still-parsing attachments before proceeding with
+	// only the finished ones. 0 falls back to the global default
+	// (WEKNORA_CHAT_ATTACHMENT_WAIT_TIMEOUT_SEC).
+	AttachmentParseWaitTimeoutSec int `yaml:"attachment_parse_wait_timeout_sec" json:"attachment_parse_wait_timeout_sec,omitempty"`
 
 	// ===== Data Analysis Settings =====
 	// Whether to run the legacy in-pipeline DuckDB SQL data-analysis stage when
@@ -199,7 +224,7 @@ type CustomAgentConfig struct {
 	// Maximum web search results
 	WebSearchMaxResults int `yaml:"web_search_max_results" json:"web_search_max_results"`
 	// WebSearchProviderID references a specific WebSearchProviderEntity.
-	// If empty, the tenant's default provider (is_default=true) is used.
+	// If empty, the workspace's default provider (is_default=true) is used.
 	WebSearchProviderID string `yaml:"web_search_provider_id" json:"web_search_provider_id,omitempty"`
 	// Whether to auto-fetch full page content for reranked web search results
 	WebFetchEnabled bool `yaml:"web_fetch_enabled" json:"web_fetch_enabled"`
@@ -377,6 +402,24 @@ func oneOf(value string, allowed ...string) bool {
 	return false
 }
 
+// ResolveChatParserEngine returns the agent-configured parser engine for a
+// chat attachment file type, or "" when no rule matches. Mirrors the tenant
+// resolver in ParserEngineConfig.ResolveChatParserEngine.
+func (c *CustomAgentConfig) ResolveChatParserEngine(fileType string) string {
+	if c == nil {
+		return ""
+	}
+	fileType = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fileType)), ".")
+	for _, rule := range c.ChatParserEngineRules {
+		for _, candidate := range rule.FileTypes {
+			if strings.TrimPrefix(strings.ToLower(strings.TrimSpace(candidate)), ".") == fileType {
+				return strings.TrimSpace(rule.Engine)
+			}
+		}
+	}
+	return ""
+}
+
 // Value implements driver.Valuer interface for CustomAgentConfig
 func (c CustomAgentConfig) Value() (driver.Value, error) {
 	return json.Marshal(c)
@@ -476,6 +519,12 @@ func (a *CustomAgent) EnsureDefaults() {
 	if a.Config.Thinking == nil {
 		disabled := false
 		a.Config.Thinking = &disabled
+	}
+	// Keep citations enabled for existing agents whose persisted config predates
+	// this field. An explicit false is always preserved.
+	if a.Config.CitationEnabled == nil {
+		enabled := true
+		a.Config.CitationEnabled = &enabled
 	}
 }
 

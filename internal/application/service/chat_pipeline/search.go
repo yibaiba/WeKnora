@@ -66,7 +66,11 @@ func (p *PluginSearch) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
 	// Check if we have search targets or web search enabled
-	hasKBTargets := len(chatManage.SearchTargets) > 0 || len(chatManage.KnowledgeBaseIDs) > 0 || len(chatManage.KnowledgeIDs) > 0
+	hasKBTargets := types.HasKnowledgeRetrievalScope(
+		chatManage.SearchTargets,
+		chatManage.KnowledgeBaseIDs,
+		chatManage.KnowledgeIDs,
+	)
 	if !hasKBTargets && !chatManage.WebSearchEnabled {
 		pipelineError(ctx, "Search", "kb_not_found", map[string]interface{}{
 			"session_id": chatManage.SessionID,
@@ -459,8 +463,7 @@ func (p *PluginSearch) searchByTargets(
 	return results
 }
 
-// searchSingleTarget handles the search logic for a single SearchTarget
-// with specific knowledge IDs, including direct chunk loading and HybridSearch.
+// searchSingleTarget performs hybrid retrieval inside one constrained target.
 func (p *PluginSearch) searchSingleTarget(
 	ctx context.Context,
 	chatManage *types.ChatManage,
@@ -472,7 +475,7 @@ func (p *PluginSearch) searchSingleTarget(
 ) {
 	searchKnowledgeIDs := t.KnowledgeIDs
 
-	if t.Type == types.SearchTargetTypeKnowledge && !t.DisableDirectLoad {
+	if t.Type == types.SearchTargetTypeKnowledge {
 		directResults, skippedIDs, err := p.tryDirectChunkLoading(ctx, chatManage.TenantID, t.KnowledgeIDs)
 		if err != nil {
 			pipelineWarn(ctx, "Search", "direct_load_error", map[string]interface{}{
@@ -507,13 +510,25 @@ func (p *PluginSearch) searchSingleTarget(
 		return
 	}
 
+	vectorThreshold, keywordThreshold := t.RecallThresholds(
+		chatManage.VectorThreshold,
+		chatManage.KeywordThreshold,
+	)
+	if t.DisableRecallThresholds {
+		pipelineInfo(ctx, "Search", "explicit_scope_threshold_override", map[string]interface{}{
+			"kb_id":              t.KnowledgeBaseID,
+			"knowledge_id_count": len(t.KnowledgeIDs),
+			"tag_id_count":       len(t.TagIDs),
+		})
+	}
 	params := types.SearchParams{
 		QueryText:             queryText,
 		QueryEmbedding:        queryEmbedding,
-		VectorThreshold:       chatManage.VectorThreshold,
-		KeywordThreshold:      chatManage.KeywordThreshold,
+		VectorThreshold:       vectorThreshold,
+		KeywordThreshold:      keywordThreshold,
 		MatchCount:            chatManage.EmbeddingTopK,
 		TagIDs:                t.TagIDs,
+		ScopeTagIDs:           t.ScopeTagIDs,
 		SkipContextEnrichment: true,
 	}
 	if t.Type == types.SearchTargetTypeKnowledge {

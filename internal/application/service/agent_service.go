@@ -50,10 +50,11 @@ func agentHasKnowledgeScope(config *types.AgentConfig) bool {
 	if config == nil {
 		return false
 	}
-	if len(config.KnowledgeBases) > 0 || len(config.KnowledgeIDs) > 0 {
-		return true
-	}
-	return len(config.SearchTargets) > 0
+	return types.HasKnowledgeRetrievalScope(
+		config.SearchTargets,
+		config.KnowledgeBases,
+		config.KnowledgeIDs,
+	)
 }
 
 // knowledgeBaseIDsForPrompt returns KB IDs to show in runtime_context metadata.
@@ -101,6 +102,7 @@ type agentService struct {
 	webSearchStateService interfaces.WebSearchStateService
 	wikiPageService       interfaces.WikiPageService
 	tenantService         interfaces.TenantService
+	storageResolver       interfaces.StorageBackendResolver
 	toolApprovalGate      approval.MCPApproval
 }
 
@@ -121,6 +123,7 @@ func NewAgentService(
 	webSearchStateService interfaces.WebSearchStateService,
 	wikiPageService interfaces.WikiPageService,
 	tenantService interfaces.TenantService,
+	storageResolver interfaces.StorageBackendResolver,
 	toolApprovalGate approval.MCPApproval,
 	sourceACLGuard interfaces.SourceACLGuardService,
 ) interfaces.AgentService {
@@ -141,6 +144,7 @@ func NewAgentService(
 		webSearchStateService: webSearchStateService,
 		wikiPageService:       wikiPageService,
 		tenantService:         tenantService,
+		storageResolver:       storageResolver,
 		toolApprovalGate:      toolApprovalGate,
 	}
 }
@@ -648,6 +652,7 @@ func (s *agentService) registerTools(
 				s.duckdb,
 				sessionID,
 				s.sourceACLGuard,
+				s.storageResolver,
 			)
 			logger.Infof(ctx, "Registered data_analysis tool for session: %s", sessionID)
 

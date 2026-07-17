@@ -11,7 +11,6 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
-	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -406,6 +405,7 @@ type DataTableSummaryService struct {
 	retrieveEngine       interfaces.RetrieveEngineRegistry
 	ownership            retriever.TenantStoreOwnership
 	sqlDB                *sql.DB
+	storageResolver      interfaces.StorageBackendResolver
 }
 
 // NewDataTableSummaryService creates a new DataTableSummaryService
@@ -419,6 +419,7 @@ func NewDataTableSummaryService(
 	retrieveEngine interfaces.RetrieveEngineRegistry,
 	ownership retriever.TenantStoreOwnership,
 	sqlDB *sql.DB,
+	storageResolver interfaces.StorageBackendResolver,
 ) interfaces.TaskHandler {
 	return &DataTableSummaryService{
 		modelService:         modelService,
@@ -430,6 +431,7 @@ func NewDataTableSummaryService(
 		retrieveEngine:       retrieveEngine,
 		ownership:            ownership,
 		sqlDB:                sqlDB,
+		storageResolver:      storageResolver,
 	}
 }
 
@@ -498,7 +500,7 @@ func (s *DataTableSummaryService) prepareResources(ctx context.Context, payload 
 		return nil, fmt.Errorf("unsupported file type: %s", fileType)
 	}
 
-	// 获取租户信息
+	// 获取空间信息
 	tenantInfo, err := s.tenantService.GetTenantByID(ctx, payload.TenantID)
 	if err != nil {
 		logger.Errorf(ctx, "failed to get tenant: %v", err)
@@ -559,24 +561,29 @@ func (s *DataTableSummaryService) resolveFileServiceForKnowledge(ctx context.Con
 	if resources == nil || resources.knowledge == nil {
 		return s.fileService
 	}
-	if resources.tenant == nil || resources.tenant.StorageEngineConfig == nil {
+	if resources.tenant == nil {
 		return s.fileService
 	}
 
 	provider := types.InferStorageFromFilePath(resources.knowledge.FilePath)
-	if provider == "" {
+	if provider == "" && resources.tenant.StorageEngineConfig != nil {
 		provider = strings.ToLower(strings.TrimSpace(resources.tenant.StorageEngineConfig.DefaultProvider))
-	}
-	if provider == "" {
-		return s.fileService
 	}
 
 	baseDir := strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR"))
-	resolvedSvc, resolvedProvider, err := filesvc.NewFileServiceFromStorageConfig(
-		provider,
-		resources.tenant.StorageEngineConfig,
-		baseDir,
-	)
+	backendID, _, _ := types.ParseStorageBackendPath(resources.knowledge.FilePath)
+	if backendID == "" && resources.knowledgeBase != nil && resources.knowledgeBase.StorageBackendID != nil {
+		backendID = strings.TrimSpace(*resources.knowledgeBase.StorageBackendID)
+	}
+
+	// New-model workspaces resolve via DefaultStorageBackendID even when no
+	// legacy StorageEngineConfig / provider is present, so gate on the resolver
+	// and a usable backendID/provider rather than requiring a non-empty provider.
+	if s.storageResolver == nil || (backendID == "" && provider == "") {
+		return s.fileService
+	}
+
+	resolvedSvc, resolvedProvider, err := s.storageResolver.ResolveFileService(ctx, resources.tenant, backendID, provider, baseDir)
 	if err != nil {
 		logger.Warnf(ctx, "[TableSummary] Failed to resolve file service for provider=%s, fallback to default: %v", provider, err)
 		return s.fileService
@@ -599,6 +606,7 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		s.sqlDB,
 		sessionID,
 		nil,
+		s.storageResolver,
 	)
 	defer duckdbTool.Cleanup(ctx)
 

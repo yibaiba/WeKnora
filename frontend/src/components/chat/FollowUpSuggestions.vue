@@ -1,28 +1,30 @@
 <template>
-  <div v-if="loading || suggestionSet?.status === 'ready'" class="follow-ups" aria-live="polite">
-    <div class="follow-ups__header">
-      <span>{{ t('chat.followUpQuestions') }}</span>
-      <div class="follow-ups__actions">
-        <button v-if="allowRegenerate" type="button" :disabled="loading" @click="emit('regenerate')">
-          <t-icon :name="loading ? 'loading' : 'refresh'" :class="{ 'is-spinning': loading }" />
-          <span>{{ t('chat.refreshSuggestedQuestions') }}</span>
-        </button>
-        <button type="button" :aria-label="t('common.close')" @click="dismiss">
-          <t-icon name="close" />
+  <transition name="follow-up-card">
+    <div v-if="suggestionSet?.status === 'ready'" class="follow-ups" aria-live="polite">
+      <div class="follow-ups__header">
+        <span class="follow-ups__title">
+          <t-icon name="lightbulb" />
+          <span>{{ t('chat.followUpQuestions') }}</span>
+        </span>
+        <div class="follow-ups__actions">
+          <button v-if="allowRegenerate" type="button" :disabled="loading" @click="emit('regenerate')">
+            <t-icon :name="loading ? 'loading' : 'refresh'" :class="{ 'is-spinning': loading }" />
+            <span>{{ t('chat.refreshSuggestedQuestions') }}</span>
+          </button>
+          <button type="button" :aria-label="t('common.close')" @click="dismiss">
+            <t-icon name="close" />
+          </button>
+        </div>
+      </div>
+      <div class="follow-ups__list">
+        <button v-for="item in suggestionSet?.questions || []" :key="item.id" type="button"
+          class="follow-ups__item" @click="emit('select', item)">
+          <span>{{ item.text }}</span>
+          <t-icon name="arrow-up-right" />
         </button>
       </div>
     </div>
-    <div v-if="loading && !suggestionSet?.questions?.length" class="follow-ups__skeletons">
-      <span v-for="n in 3" :key="n" :style="{ width: skeletonWidths[n - 1] }" />
-    </div>
-    <div v-else class="follow-ups__list">
-      <button v-for="item in suggestionSet?.questions || []" :key="item.id" type="button"
-        class="follow-ups__item" @click="emit('select', item)">
-        <span>{{ item.text }}</span>
-        <t-icon name="arrow-up-right" />
-      </button>
-    </div>
-  </div>
+  </transition>
 </template>
 
 <script setup lang="ts">
@@ -43,7 +45,6 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const impressed = new Set<string>()
-const skeletonWidths = ['92%', '78%', '85%']
 
 watch(
   () => props.suggestionSet,
@@ -62,9 +63,13 @@ const dismiss = () => {
 </script>
 
 <style scoped lang="less">
+@import (reference) '../css/suggested-questions.less';
+
 .follow-ups {
-  max-width: 760px;
-  margin: -4px 0 28px 46px;
+  width: 100%;
+  max-width: 720px;
+  margin: -4px 0 28px;
+  margin-right: auto;
   padding: 12px;
   border: 1px solid var(--td-component-stroke);
   border-radius: 12px;
@@ -78,6 +83,17 @@ const dismiss = () => {
   color: var(--td-text-color-secondary);
   font-size: 13px;
   font-weight: 600;
+}
+.follow-ups__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.follow-ups__title .t-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--td-text-color-placeholder);
+  font-size: 14px;
 }
 .follow-ups__actions { display: flex; gap: 4px; }
 .follow-ups__actions button {
@@ -108,37 +124,42 @@ const dismiss = () => {
   gap: 12px;
   width: 100%;
   padding: 9px 11px;
-  border: 1px solid transparent;
+  border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
   background: var(--td-bg-color-container);
   color: var(--td-text-color-primary);
   text-align: left;
   cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
 }
-.follow-ups__item { transition: border-color .2s, box-shadow .2s, transform .2s; }
 .follow-ups__item:hover {
-  border-color: var(--td-brand-color);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .12);
-  transform: translateY(-1px);
+  .suggestion-chip-hover();
 }
-.follow-ups__item:hover .t-icon { color: var(--td-brand-color); }
-.follow-ups__skeletons { display: flex; flex-direction: column; gap: 6px; }
-.follow-ups__skeletons span {
-  height: 38px;
-  border-radius: 8px;
-  background: linear-gradient(
-    100deg,
-    var(--td-bg-color-component) 30%,
-    var(--td-bg-color-container-hover, rgba(255, 255, 255, .35)) 50%,
-    var(--td-bg-color-component) 70%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 3s ease-in-out infinite;
-}
+.follow-ups__item:hover .t-icon { color: var(--td-text-color-secondary); }
 .is-spinning { animation: spin 1s linear infinite; }
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.follow-up-card-enter-active {
+  transform-origin: left top;
+  transition:
+    opacity .22s ease .04s,
+    transform .28s cubic-bezier(.22, .61, .36, 1) .04s,
+    clip-path .28s cubic-bezier(.22, .61, .36, 1) .04s;
+  will-change: opacity, transform, clip-path;
+}
+.follow-up-card-enter-from {
+  opacity: 0;
+  transform: translateY(-7px) scale(.985);
+  clip-path: inset(0 0 55% 0 round 12px);
+}
+.follow-up-card-enter-to {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  clip-path: inset(0 0 0 0 round 12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .follow-up-card-enter-active { transition: none; }
+}
 </style>

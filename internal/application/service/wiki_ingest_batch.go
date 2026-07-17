@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -378,15 +379,18 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// so the next trigger can re-claim within seconds instead of waiting out
 	// wikiClaimStaleAfter (~90m). On the normal path claimsSettled flips true
 	// once the rows reach their terminal state, making this a no-op. Uses a
-	// background context because ctx may already be cancelled on the timeout
-	// path. Lite mode peeks without claiming, so there is nothing to release.
+	// bounded detached cleanup context because ctx may already be cancelled on
+	// the timeout path. Lite mode peeks without claiming, so there is nothing
+	// to release.
 	claimsSettled := false
 	if s.redisClient != nil && len(peekedIDs) > 0 {
 		defer func() {
 			if claimsSettled {
 				return
 			}
-			if err := s.pendingRepo.ReleaseByIDs(context.Background(), peekedIDs); err != nil {
+			releaseCtx, releaseCancel := wikiIngestCleanupContext(ctx)
+			defer releaseCancel()
+			if err := s.pendingRepo.ReleaseByIDs(releaseCtx, peekedIDs); err != nil {
 				logger.Warnf(ctx, "wiki ingest: failed to release %d claims on abnormal exit for KB %s: %v", len(peekedIDs), payload.KnowledgeBaseID, err)
 				return
 			}
@@ -614,6 +618,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				return reduceErr
 			})
 			if lockErr != nil {
+				collectUnapplied(updates)
 				// ctx cancelled (batch timeout / shutdown) — stop quietly.
 				return nil
 			}
@@ -660,6 +665,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	}
 	_ = egReduce.Wait()
 
+	tailCtx, tailCancel := wikiIngestCleanupContext(ctx)
+	defer tailCancel()
+
 	// Sanitize the doc summary pages produced by this batch BEFORE we
 	// build log entries / rebuild the index. The summary LLM (run during
 	// map) was free to inject [[entity/foo|name]] links to every slug it
@@ -667,7 +675,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// those slugs into actual pages. Rewrite those dead links to plain
 	// text so the summary doesn't contain unresolvable references.
 	if len(failedAdditionSlugs) > 0 && len(docResults) > 0 {
-		s.sanitizeDeadSummaryLinks(ctx, payload.KnowledgeBaseID, docResults, failedAdditionSlugs, batchCtx)
+		s.sanitizeDeadSummaryLinks(tailCtx, payload.KnowledgeBaseID, docResults, failedAdditionSlugs, batchCtx)
 	}
 
 	totalPagesAffected = len(allPagesAffected)
@@ -688,7 +696,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		if len(slugs) == 0 {
 			return nil
 		}
-		titles := batchCtx.SlugTitleMany(ctx, slugs)
+		titles := batchCtx.SlugTitleMany(tailCtx, slugs)
 		out := make([]types.WikiLogPageRef, 0, len(slugs))
 		for _, slug := range slugs {
 			out = append(out, types.WikiLogPageRef{Slug: slug, Title: titles[slug]})
@@ -719,7 +727,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		logEntries = append(logEntries, s.buildLogEntry(payload.TenantID, payload.KnowledgeBaseID, "ingest", r.KnowledgeID, r.DocTitle, r.Summary, pages))
 	}
 	if len(logEntries) > 0 && s.logEntrySvc != nil {
-		if err := s.logEntrySvc.AppendBatch(ctx, logEntries); err != nil {
+		if err := s.logEntrySvc.AppendBatch(tailCtx, logEntries); err != nil {
 			logger.Warnf(ctx, "wiki ingest: failed to append %d log entries: %v", len(logEntries), err)
 		}
 	}
@@ -729,7 +737,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// written, not after the debounce window. This is a cheap status flip.
 	if len(allPagesAffected) > 0 {
 		logger.Infof(ctx, "wiki ingest: publishing draft pages")
-		s.publishDraftPages(ctx, payload.KnowledgeBaseID, allPagesAffected)
+		s.publishDraftPages(tailCtx, payload.KnowledgeBaseID, allPagesAffected)
 	}
 
 	// Defer KB-global convergence (index-intro rebuild + dead-link cleanup +
@@ -770,7 +778,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				})
 			}
 		}
-		s.enqueueFinalize(ctx, payload, allPagesAffected, freshTitleBySlug, changes)
+		s.enqueueFinalize(tailCtx, payload, allPagesAffected, freshTitleBySlug, changes)
 	}
 
 	// Close postprocess.wiki spans for every successfully-mapped doc.
@@ -782,6 +790,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// actually landed (vs. dropped because reduce-phase generation
 	// failed).
 	failedAdditionSlugCount := len(failedAdditionSlugs)
+	spanCtx, spanCancel := wikiIngestCleanupContext(ctx)
 	for _, r := range docResults {
 		if r == nil {
 			continue
@@ -829,8 +838,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		for k, v := range r.MapStats {
 			output[k] = v
 		}
-		s.tracker().EndSpan(ctx, r.WikiSpan, output)
+		s.tracker().EndSpan(spanCtx, r.WikiSpan, output)
 	}
+	spanCancel()
 	// Failed-map docs already had FailSpan called inside
 	// mapOneDocument (the failedOps path returns before reaching
 	// docResults). Nothing extra to do here for them.
@@ -876,14 +886,21 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		}
 		trimIDs = append(trimIDs, id)
 	}
-	s.trimPendingList(ctx, trimIDs)
+	settleCtx, settleCancel := wikiIngestCleanupContext(ctx)
+	trimErr := s.trimPendingList(settleCtx, trimIDs)
 
 	// Process failed ops: increment fail_count and dead-letter once
 	// the cap is hit. Must come AFTER trim so successful siblings are
 	// already gone from the queue — otherwise a follow-up batch could
 	// re-pick them up.
+	var requeueErr error
 	if len(failedOps) > 0 {
-		s.requeueFailedOps(ctx, payload, failedOps)
+		requeueErr = s.requeueFailedOps(settleCtx, payload, failedOps)
+	}
+	settleCancel()
+	if err := errors.Join(trimErr, requeueErr); err != nil {
+		exitStatus = "settle_failed"
+		return fmt.Errorf("wiki ingest: settle claimed rows: %w", err)
 	}
 	// All claimed rows have now reached a terminal state (deleted on success,
 	// released for retry, or dead-lettered), so disarm the abnormal-exit
@@ -899,7 +916,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		followUpDelay = wikiRateLimitBackoff
 		logger.Warnf(ctx, "wiki ingest: KB %s hit upstream rate limiting, backing off follow-up to %s", payload.KnowledgeBaseID, followUpDelay)
 	}
-	followUpScheduled = s.scheduleFollowUp(ctx, payload, followUpDelay)
+	followCtx, followCancel := wikiIngestCleanupContext(ctx)
+	followUpScheduled = s.scheduleFollowUp(followCtx, payload, followUpDelay)
+	followCancel()
 	return nil
 }
 
@@ -1019,7 +1038,12 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	// KB flipped away from wiki (deleted / type change) — drain the lane so the
 	// rows don't accumulate, then stop.
 	if !kb.IsWikiEnabled() {
-		s.trimPendingList(ctx, ids)
+		drainCtx, drainCancel := wikiIngestCleanupContext(ctx)
+		err := s.trimPendingList(drainCtx, ids)
+		drainCancel()
+		if err != nil {
+			return fmt.Errorf("wiki finalize: trim disabled lane: %w", err)
+		}
 		return nil
 	}
 
@@ -1060,7 +1084,12 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	// Drain the processed rows. Best-effort convergence mirrors the legacy
 	// in-batch behaviour: a failed index rebuild is logged (not retried),
 	// so we delete regardless to avoid re-doing the whole pass forever.
-	s.trimPendingList(ctx, ids)
+	drainCtx, drainCancel := wikiIngestCleanupContext(ctx)
+	err = s.trimPendingList(drainCtx, ids)
+	drainCancel()
+	if err != nil {
+		return fmt.Errorf("wiki finalize: trim pending rows: %w", err)
+	}
 
 	// If more finalize rows landed while we were working, reschedule so they
 	// get their own convergence pass.

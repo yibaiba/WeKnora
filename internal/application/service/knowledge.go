@@ -55,6 +55,7 @@ type knowledgeService struct {
 	tagRepo         interfaces.KnowledgeTagRepository
 	tagService      interfaces.KnowledgeTagService
 	fileSvc         interfaces.FileService
+	storageResolver interfaces.StorageBackendResolver
 	modelService    interfaces.ModelService
 	task            interfaces.TaskEnqueuer
 	taskInspector   interfaces.TaskInspector
@@ -99,6 +100,7 @@ func NewKnowledgeService(
 	tagRepo interfaces.KnowledgeTagRepository,
 	tagService interfaces.KnowledgeTagService,
 	fileSvc interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver,
 	modelService interfaces.ModelService,
 	task interfaces.TaskEnqueuer,
 	taskInspector interfaces.TaskInspector,
@@ -126,6 +128,7 @@ func NewKnowledgeService(
 		tagRepo:         tagRepo,
 		tagService:      tagService,
 		fileSvc:         fileSvc,
+		storageResolver: storageResolver,
 		modelService:    modelService,
 		task:            task,
 		taskInspector:   taskInspector,
@@ -419,11 +422,11 @@ func (s *knowledgeService) isKnowledgeAborted(
 // checkStorageEngineConfigured verifies that the knowledge base has a storage engine configured
 // (either at the KB level or via the tenant default).
 //
-// 内部版兜底语义：当 KB 与租户都未配置 storage provider 时，如果服务实例持有
+// 内部版兜底语义：当 KB 与空间都未配置 storage provider 时，如果服务实例持有
 // 全局 FileService（由容器按 STORAGE_TYPE 注入，默认 local），允许直接落到该
 // 全局 fileSvc 上，不再硬性阻断。这与 resolveFileService / resolveFileServiceForPath
 // 在 provider 为空时回退到 s.fileSvc 的行为保持一致，避免上层闸门和下游解析口径不一。
-// 仅当 KB/租户/全局三处都拿不到任何可用 FileService 时才报错。
+// 仅当 KB/空间/全局三处都拿不到任何可用 FileService 时才报错。
 func (s *knowledgeService) checkStorageEngineConfigured(ctx context.Context, kb *types.KnowledgeBase) error {
 	provider := kb.GetStorageProvider()
 	if provider == "" {
@@ -503,7 +506,7 @@ func (s *knowledgeService) GetOwningKBCreatorID(ctx context.Context, knowledgeID
 	// minimal and tenant-scoped.
 	tenantID, ok := ctx.Value(types.TenantIDContextKey).(uint64)
 	if !ok {
-		return "", werrors.NewUnauthorizedError("Tenant ID not found in context")
+		return "", werrors.NewUnauthorizedError("Workspace ID not found in context")
 	}
 	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
 	if err != nil {
@@ -800,11 +803,11 @@ func (s *knowledgeService) UpdateKnowledgeTagBatch(ctx context.Context, authoriz
 	}
 	tenantIDVal := ctx.Value(types.TenantIDContextKey)
 	if tenantIDVal == nil {
-		return werrors.NewUnauthorizedError("tenant ID not found in context")
+		return werrors.NewUnauthorizedError("workspace ID not found in context")
 	}
 	tenantID, ok := tenantIDVal.(uint64)
 	if !ok {
-		return werrors.NewUnauthorizedError("invalid tenant ID in context")
+		return werrors.NewUnauthorizedError("invalid workspace ID in context")
 	}
 
 	// Get all knowledge items in batch
@@ -891,7 +894,7 @@ func (s *knowledgeService) UpdateKnowledgeTagBatch(ctx context.Context, authoriz
 func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error) {
 	tenantID, ok := ctx.Value(types.TenantIDContextKey).(uint64)
 	if !ok {
-		return nil, false, 0, werrors.NewUnauthorizedError("Tenant ID not found in context")
+		return nil, false, 0, werrors.NewUnauthorizedError("Workspace ID not found in context")
 	}
 
 	scopes := make([]types.KnowledgeSearchScope, 0)

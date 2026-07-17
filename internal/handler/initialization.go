@@ -63,6 +63,7 @@ type InitializationHandler struct {
 	ollamaService    *ollama.OllamaService
 	documentReader   interfaces.DocumentReader
 	pooler           embedding.EmbedderPooler
+	storageResolver  interfaces.StorageBackendResolver
 }
 
 // NewInitializationHandler 创建初始化处理器
@@ -76,6 +77,7 @@ func NewInitializationHandler(
 	ollamaService *ollama.OllamaService,
 	documentReader interfaces.DocumentReader,
 	pooler embedding.EmbedderPooler,
+	storageResolver interfaces.StorageBackendResolver,
 ) *InitializationHandler {
 	return &InitializationHandler{
 		config:           config,
@@ -87,6 +89,7 @@ func NewInitializationHandler(
 		ollamaService:    ollamaService,
 		documentReader:   documentReader,
 		pooler:           pooler,
+		storageResolver:  storageResolver,
 	}
 }
 
@@ -123,7 +126,8 @@ type KBModelConfigRequest struct {
 	} `json:"multimodal"`
 
 	// 存储引擎选择（"local" | "minio" | "cos"），影响文档上传与文档内图片存储，参数从全局设置读取
-	StorageProvider string `json:"storageProvider"`
+	StorageProvider  string `json:"storageProvider"`
+	StorageBackendID string `json:"storageBackendId"`
 
 	// 知识图谱配置
 	NodeExtract struct {
@@ -362,7 +366,30 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 		kb.VLMConfig.CustomInstructions = strings.TrimSpace(req.VLMConfig.CustomInstructions)
 	}
 
-	// 存储引擎：仅写入 provider 到新字段，参数从租户全局 StorageEngineConfig 读取
+	// Bind the concrete storage instance. Provider remains a compatibility
+	// projection for older clients and historical rows.
+	if strings.TrimSpace(req.StorageBackendID) != "" {
+		tenant, _ := types.TenantInfoFromContext(ctx)
+		backend, resolveErr := h.storageResolver.ResolveBackend(ctx, tenant, req.StorageBackendID, "")
+		if resolveErr != nil || backend == nil {
+			c.Error(errors.NewBadRequestError("Storage backend is unavailable"))
+			return
+		}
+		oldID := ""
+		if kb.StorageBackendID != nil {
+			oldID = *kb.StorageBackendID
+		}
+		if oldID != "" && oldID != backend.ID {
+			knowledgeList, listErr := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx, kbIdStr, &types.Pagination{Page: 1, PageSize: 1}, types.KnowledgeListFilter{})
+			if listErr == nil && knowledgeList != nil && knowledgeList.Total > 0 {
+				c.Error(errors.NewBadRequestError("Storage backend cannot be changed while the knowledge base contains files; migrate storage first"))
+				return
+			}
+		}
+		kb.StorageBackendID = &backend.ID
+		req.StorageProvider = backend.Provider
+	}
+	// Legacy provider projection.
 	provider := strings.ToLower(strings.TrimSpace(req.StorageProvider))
 	if provider == "" {
 		provider = "local"
@@ -1696,7 +1723,7 @@ func (h *InitializationHandler) buildTestModel(
 	}
 }
 
-// resolveTenantWeKnoraCloudCreds 从当前租户上下文里取出 WeKnoraCloud 凭证，
+// resolveTenantWeKnoraCloudCreds 从当前空间上下文里取出 WeKnoraCloud 凭证，
 // 供测试连接端点补齐 appID/appSecret。与 service.resolveWeKnoraCloudCredentials
 // 对应，但因为 handler 还没有被注入 tenantService（历史原因），暂时从
 // TenantInfoFromContext 读取，等效果相同。
@@ -1751,7 +1778,7 @@ func (h *InitializationHandler) CheckRemoteModel(c *gin.Context) {
 	appID, appSecret, ok := h.resolveTenantWeKnoraCloudCreds(ctx)
 	if !ok {
 		logger.Error(ctx, "Tenant info not found")
-		c.Error(errors.NewBadRequestError("租户信息未找到"))
+		c.Error(errors.NewBadRequestError("空间信息未找到"))
 		return
 	}
 
@@ -1825,7 +1852,7 @@ func (h *InitializationHandler) TestEmbeddingModel(c *gin.Context) {
 	appID, appSecret, ok := h.resolveTenantWeKnoraCloudCreds(ctx)
 	if !ok {
 		logger.Error(ctx, "Tenant info not found")
-		c.Error(errors.NewBadRequestError("租户信息未找到"))
+		c.Error(errors.NewBadRequestError("空间信息未找到"))
 		return
 	}
 
@@ -1977,7 +2004,7 @@ func (h *InitializationHandler) CheckRerankModel(c *gin.Context) {
 	appID, appSecret, ok := h.resolveTenantWeKnoraCloudCreds(ctx)
 	if !ok {
 		logger.Error(ctx, "Tenant info not found")
-		c.Error(errors.NewBadRequestError("租户信息未找到"))
+		c.Error(errors.NewBadRequestError("空间信息未找到"))
 		return
 	}
 
