@@ -28,7 +28,10 @@ func (s *DataSourceService) handleACLOnlyFetchedItem(
 	existing, err := repo.FindByMetadataKey(ctx, ds.TenantID, ds.KnowledgeBaseID, "external_id", item.ExternalID)
 	if err != nil {
 		result.Failed++
-		result.Errors = append(result.Errors, fmt.Sprintf("%s: source ACL existing knowledge lookup failed: %v", item.Title, err))
+		recordSyncError(result, types.SyncItemError{
+			Title:   item.Title,
+			Message: fmt.Sprintf("source ACL existing knowledge lookup failed: %v", err),
+		})
 		return true
 	}
 	if existing == nil {
@@ -36,7 +39,7 @@ func (s *DataSourceService) handleACLOnlyFetchedItem(
 	}
 	if err := s.upsertItemSourceACL(ctx, ds, item, existing); err != nil {
 		result.Failed++
-		result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", item.Title, err))
+		recordSyncError(result, types.SyncItemError{Title: item.Title, Message: err.Error()})
 		return true
 	}
 	result.Updated++

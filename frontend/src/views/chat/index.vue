@@ -314,7 +314,7 @@ const fetchSuggestedQuestions = async () => {
     try {
         const agentId = useSettingsStoreInstance.selectedAgentId;
         if (!agentId) return;
-        const res = await getSuggestedQuestions(agentId, useSettingsStoreInstance.getSuggestedQuestionsParams(6));
+        const res = await getSuggestedQuestions(agentId, useSettingsStoreInstance.getSuggestedQuestionsParams());
         if (fetchId === suggestedQuestionsFetchId) {
             suggestedQuestions.value = res?.data?.questions || [];
         }
@@ -664,6 +664,9 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
     isReplying.value = true;
     loading.value = true;
     const selectedAgentId = props.embeddedMode ? props.agentId : (useSettingsStoreInstance.selectedAgentId || '');
+    const selectedAgentSourceTenantId = props.embeddedMode
+        ? undefined
+        : (useSettingsStoreInstance.selectedAgentSourceTenantId || undefined);
 
     // Images are unified with the attachment pipeline: on the authenticated web
     // client they upload as temporary documents (understood in the background by
@@ -690,7 +693,9 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
                 continue;
             }
             try {
-                const upload = await uploadTemporaryAttachment(session_id.value, file, selectedAgentId, 'auto');
+                const upload = await uploadTemporaryAttachment(
+                    session_id.value, file, selectedAgentId, selectedAgentSourceTenantId, 'auto'
+                );
                 imageAttachmentIds.push(upload.data.id);
             } catch (e) {
                 console.error('[Image] Temporary image upload failed, falling back to inline:', e);
@@ -710,7 +715,7 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
             await Promise.all(localAttachments.map(async (attachment) => {
                 attachment.status = 'uploading';
                 const upload = await uploadTemporaryAttachment(
-                    session_id.value, attachment.file, selectedAgentId, 'auto'
+                    session_id.value, attachment.file, selectedAgentId, selectedAgentSourceTenantId, 'auto'
                 );
                 attachment.documentId = upload.data.id;
                 attachment.status = upload.data.status;
@@ -781,13 +786,6 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
     // Get web search status from settings store
     const webSearchEnabled = props.embeddedMode ? false : useSettingsStoreInstance.isWebSearchEnabled;
 
-    // Memory toggle is now a server-side per-user preference (see PUT
-    // /auth/me/preferences). For the normal logged-in chat we leave the
-    // field unset so the backend reads `user.preferences.enable_memory`;
-    // for embedded widgets we still send an explicit `false` so a user's
-    // personal "memory on" setting doesn't leak into a KB-embed context.
-    const enableMemoryOverride = props.embeddedMode ? false : undefined;
-
     // Get knowledge_base_ids from settings store (selected by user via KnowledgeBaseSelector)
     // Merge @mentioned KB/file IDs so retrieval uses the same targets user @mentioned (including shared KBs)
     const sidebarKbIds = props.embeddedMode ? props.kbIds : (useSettingsStoreInstance.settings.selectedKnowledgeBases || []);
@@ -825,8 +823,8 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
         knowledge_ids: knowledgeIds,
         agent_enabled: agentEnabled,
         agent_id: selectedAgentId,
+        agent_source_tenant_id: selectedAgentSourceTenantId,
         web_search_enabled: webSearchEnabled,
-        enable_memory: enableMemoryOverride,
         summary_model_id: modelId,
         mcp_service_ids: requestMcpServiceIds,
         skill_names: requestSkillNames,

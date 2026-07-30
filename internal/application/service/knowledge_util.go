@@ -22,7 +22,7 @@ import (
 // isValidFileType checks if a file type is supported
 func isValidFileType(filename string) bool {
 	switch strings.ToLower(getFileType(filename)) {
-	case "pdf", "txt", "docx", "doc", "epub", "mhtml", "md", "markdown", "png", "jpg", "jpeg", "gif", "csv", "xlsx", "xls", "pptx", "ppt", "json",
+	case "pdf", "txt", "docx", "doc", "epub", "html", "htm", "mhtml", "md", "markdown", "png", "jpg", "jpeg", "gif", "csv", "xlsx", "xls", "pptx", "ppt", "json",
 		"mp3", "wav", "m4a", "flac", "ogg":
 		return true
 	default:
@@ -310,6 +310,24 @@ func (s *knowledgeService) resolveFileService(ctx context.Context, kb *types.Kno
 // the provider inferred from the file path. This protects historical data when
 // tenant/KB config changes but files were stored under the old provider.
 func (s *knowledgeService) resolveFileServiceForPath(ctx context.Context, kb *types.KnowledgeBase, filePath string) interfaces.FileService {
+	// A resource:// reference belongs to the tenant that registered it. Shared
+	// KB requests use the viewer's effective tenant in ctx, which can otherwise
+	// select the wrong storage backend and pass the resource URL to local disk.
+	if _, ok := types.ParseResourcePath(filePath); ok && s.resourceCatalog != nil && s.storageResolver != nil && s.tenantRepo != nil {
+		resource, err := s.resourceCatalog.Resolve(ctx, filePath)
+		if err == nil && resource != nil {
+			ownerTenant, tenantErr := s.tenantRepo.GetTenantByID(ctx, resource.TenantID)
+			if tenantErr == nil && ownerTenant != nil {
+				baseDir := strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR"))
+				if resolved, _, resolveErr := s.storageResolver.ResolveFileService(ctx, ownerTenant, resource.StorageBackendID, resource.Provider, baseDir); resolveErr == nil && resolved != nil {
+					return resolved
+				} else if resolveErr != nil {
+					logger.Warnf(ctx, "[storage] failed to resolve resource owner backend: resource=%s tenant=%d err=%v", resource.Handle, resource.TenantID, resolveErr)
+				}
+			}
+		}
+	}
+
 	if backendID, inner, ok := types.ParseStorageBackendPath(filePath); ok && s.storageResolver != nil {
 		tenant, _ := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
 		if tenant != nil {
