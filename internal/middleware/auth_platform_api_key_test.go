@@ -64,6 +64,7 @@ func TestAttachTargetedPlatformAPIKeyKeepsPlatformPrincipal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/knowledge-bases", nil)
+	c.Request.Header.Set("X-Actor-User-ID", "user-42")
 	key := &types.TenantAPIKey{
 		ID:         27,
 		ScopeType:  types.APIKeyScopePlatform,
@@ -91,5 +92,12 @@ func TestAttachTargetedPlatformAPIKeyKeepsPlatformPrincipal(t *testing.T) {
 	user, ok := c.Request.Context().Value(types.UserContextKey).(*types.User)
 	if !ok || user.ID != "api_platform:27" || user.TenantID != 42 {
 		t.Fatalf("user = %#v, ok=%v", user, ok)
+	}
+	if !types.ServiceKeyCallFromContext(c.Request.Context()) {
+		t.Fatal("targeted platform API key must be marked as a service-key call")
+	}
+	actorID, ok := types.SourceACLActorUserIDFromContext(c.Request.Context())
+	if !ok || actorID != "user-42" {
+		t.Fatalf("source ACL actor = %q, ok=%v", actorID, ok)
 	}
 }

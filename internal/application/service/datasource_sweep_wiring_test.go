@@ -97,7 +97,7 @@ func TestIngestItem_ReplacesSubtreeSweepsStaleChildrenAfterCreate(t *testing.T) 
 		ReplacesSubtree: true,
 	}
 
-	if _, err := s.ingestItem(context.Background(), ds, item, nil); err != nil {
+	if _, err := s.ingestItem(context.Background(), ds, item, nil, nil); err != nil {
 		t.Fatalf("ingestItem error: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func TestIngestItem_ReplacesSubtreeSweepsOnDuplicateParent(t *testing.T) {
 
 	// ingestItem surfaces the dup error to the caller (applyFetchedItem counts it
 	// Skipped), but the sweep must still have run.
-	_, err := s.ingestItem(context.Background(), ds, item, nil)
+	_, err := s.ingestItem(context.Background(), ds, item, nil, nil)
 	var dupErr *types.DuplicateKnowledgeError
 	if !errors.As(err, &dupErr) {
 		t.Fatalf("want DuplicateKnowledgeError, got %v", err)
@@ -182,7 +182,7 @@ func TestIngestItem_NoSweepWhenDuplicateIsDifferentNode(t *testing.T) {
 		ReplacesSubtree: true,
 	}
 
-	_, err := s.ingestItem(context.Background(), ds, item, nil)
+	_, err := s.ingestItem(context.Background(), ds, item, nil, nil)
 	var dupErr *types.DuplicateKnowledgeError
 	if !errors.As(err, &dupErr) {
 		t.Fatalf("want DuplicateKnowledgeError, got %v", err)
@@ -224,7 +224,7 @@ func TestIngestItem_SubtreeKeepPreservesPresentChild(t *testing.T) {
 		SubtreeKeep: []string{"nt-parent#file#present"},
 	}
 
-	if _, err := s.ingestItem(context.Background(), ds, item, nil); err != nil {
+	if _, err := s.ingestItem(context.Background(), ds, item, nil, nil); err != nil {
 		t.Fatalf("ingestItem error: %v", err)
 	}
 	if len(ks.deleted) != 1 || ks.deleted[0] != "child-gone" {
@@ -247,7 +247,7 @@ func TestIngestItem_NoSweepWhenFlagUnset(t *testing.T) {
 		// ReplacesSubtree deliberately false
 	}
 
-	if _, err := s.ingestItem(context.Background(), ds, item, nil); err != nil {
+	if _, err := s.ingestItem(context.Background(), ds, item, nil, nil); err != nil {
 		t.Fatalf("ingestItem error: %v", err)
 	}
 	if len(repo.prefixCalls) != 0 {
@@ -282,7 +282,7 @@ func TestApplyFetchedItem_EmbeddedImageIngestFailureCountsAsSkip(t *testing.T) {
 	sImg := &DataSourceService{knowledgeService: ksImg}
 	resImg := &types.SyncResult{}
 	sImg.applyFetchedItem(context.Background(), ds,
-		newItem("nt#image#x", map[string]string{"embedded_image": "true"}), nil, resImg)
+		newItem("nt#image#x", map[string]string{"embedded_image": "true"}), nil, resImg, nil)
 	if resImg.Skipped != 1 || resImg.Failed != 0 {
 		t.Fatalf("embedded image failure: Skipped=%d Failed=%d, want Skipped=1 Failed=0",
 			resImg.Skipped, resImg.Failed)
@@ -292,7 +292,7 @@ func TestApplyFetchedItem_EmbeddedImageIngestFailureCountsAsSkip(t *testing.T) {
 	ksDoc := &sweepFakeKS{repo: &sweepFakeRepo{}, createErr: ingestErr}
 	sDoc := &DataSourceService{knowledgeService: ksDoc}
 	resDoc := &types.SyncResult{}
-	sDoc.applyFetchedItem(context.Background(), ds, newItem("nt-doc", nil), nil, resDoc)
+	sDoc.applyFetchedItem(context.Background(), ds, newItem("nt-doc", nil), nil, resDoc, nil)
 	if resDoc.Failed != 1 || resDoc.Skipped != 0 {
 		t.Fatalf("non-image failure: Failed=%d Skipped=%d, want Failed=1 Skipped=0",
 			resDoc.Failed, resDoc.Skipped)

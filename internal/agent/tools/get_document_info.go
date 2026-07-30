@@ -184,26 +184,6 @@ func (t *GetDocumentInfoTool) Execute(ctx context.Context, args json.RawMessage)
 				return
 			}
 
-			// Verify the knowledge's KB is in searchTargets (permission check)
-			if !t.searchTargets.ContainsKB(knowledge.KnowledgeBaseID) {
-				mu.Lock()
-				results[id] = &docInfo{
-					err: fmt.Errorf("knowledge base %s is not accessible", knowledge.KnowledgeBaseID),
-				}
-				mu.Unlock()
-				return
-			}
-			allowed, scopeErr := searchTargetsAllowKnowledgeID(ctx, t.searchTargets, knowledge.ID, knowledge.KnowledgeBaseID, t.knowledgeService)
-			if scopeErr != nil || !allowed {
-				mu.Lock()
-				if scopeErr != nil {
-					results[id] = &docInfo{err: fmt.Errorf("failed to validate document scope: %v", scopeErr)}
-				} else {
-					results[id] = &docInfo{err: fmt.Errorf("document %s is not within the current @mention scope", knowledge.ID)}
-				}
-				mu.Unlock()
-				return
-			}
 			if err := t.requireSourceACLRead(ctx, knowledge, "agent_get_document_info"); err != nil {
 				mu.Lock()
 				results[id] = &docInfo{

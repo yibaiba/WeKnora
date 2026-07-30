@@ -851,7 +851,7 @@ func fetchFailureSyncError(item *types.FetchedItem, rawMsg string) types.SyncIte
 func (s *DataSourceService) applyFetchedItem(
 	ctx context.Context, ds *types.DataSource, item *types.FetchedItem,
 	tagIDs []string, result *types.SyncResult,
-	processOverrides ...*types.KnowledgeProcessOverrides,
+	processOverrides *types.KnowledgeProcessOverrides,
 ) {
 	if item.IsDeleted {
 		if ds.SyncDeletions {
@@ -879,11 +879,7 @@ func (s *DataSourceService) applyFetchedItem(
 		return
 	}
 
-	var overrides *types.KnowledgeProcessOverrides
-	if len(processOverrides) > 0 {
-		overrides = processOverrides[0]
-	}
-	isUpdate, err := s.ingestItem(ctx, ds, item, tagIDs, overrides)
+	isUpdate, err := s.ingestItem(ctx, ds, item, tagIDs, processOverrides)
 	if err != nil {
 		var dupErr *types.DuplicateKnowledgeError
 		switch {
@@ -1246,13 +1242,9 @@ func (s *DataSourceService) ingestItem(
 	ds *types.DataSource,
 	item *types.FetchedItem,
 	tagIDs []string,
-	overrideOptions ...*types.KnowledgeProcessOverrides,
+	processOverrides *types.KnowledgeProcessOverrides,
 ) (bool, error) {
 	channel := ds.Type // e.g. "feishu", "notion"
-	var processOverrides *types.KnowledgeProcessOverrides
-	if len(overrideOptions) > 0 {
-		processOverrides = overrideOptions[0]
-	}
 
 	metadata := map[string]string{
 		"external_id":        item.ExternalID,

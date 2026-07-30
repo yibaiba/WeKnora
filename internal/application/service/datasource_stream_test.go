@@ -97,6 +97,34 @@ func TestStreamHandler_EmitAbortsOnCanceledContext(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+func TestStreamHandler_EmitForwardsProcessOverrides(t *testing.T) {
+	knowledgeService := &captureKnowledgeService{repo: &captureKnowledgeRepository{}}
+	overrides := &types.KnowledgeProcessOverrides{}
+	result := &types.SyncResult{}
+	h := &streamSyncHandler{
+		svc: &DataSourceService{knowledgeService: knowledgeService},
+		ds: &types.DataSource{
+			ID:              "ds-1",
+			TenantID:        7,
+			KnowledgeBaseID: "kb-1",
+			Type:            types.ConnectorTypeFeishu,
+		},
+		result:           result,
+		syncLog:          &types.SyncLog{},
+		processOverrides: overrides,
+	}
+
+	err := h.Emit(context.Background(), types.FetchedItem{
+		ExternalID: "doc-1",
+		Title:      "Doc",
+		FileName:   "doc.md",
+		Content:    []byte("# doc"),
+	})
+	require.NoError(t, err)
+	assert.Same(t, overrides, knowledgeService.fileOverrides)
+	assert.Equal(t, 1, result.Created)
+}
+
 // Checkpoint persists the connector cursor onto the data source so a crash
 // after it keeps the progress made so far.
 func TestStreamHandler_CheckpointPersistsCursor(t *testing.T) {

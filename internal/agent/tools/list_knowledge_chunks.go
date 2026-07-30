@@ -128,26 +128,6 @@ func (t *ListKnowledgeChunksTool) Execute(ctx context.Context, args json.RawMess
 		}, err
 	}
 
-	// Verify the knowledge's KB is in searchTargets (permission check)
-	if !t.searchTargets.ContainsKB(knowledge.KnowledgeBaseID) {
-		return &types.ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("Knowledge base %s is not accessible", knowledge.KnowledgeBaseID),
-		}, fmt.Errorf("knowledge base not in search targets")
-	}
-	allowed, err := searchTargetsAllowKnowledgeID(ctx, t.searchTargets, knowledge.ID, knowledge.KnowledgeBaseID, t.knowledgeService)
-	if err != nil {
-		return &types.ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to validate knowledge scope: %v", err),
-		}, err
-	}
-	if !allowed {
-		return &types.ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("Knowledge %s is not within the current @mention scope", knowledge.ID),
-		}, fmt.Errorf("knowledge not in search target scope")
-	}
 	if err := t.requireSourceACLRead(ctx, knowledge, "agent_list_knowledge_chunks"); err != nil {
 		return &types.ToolResult{
 			Success: false,
