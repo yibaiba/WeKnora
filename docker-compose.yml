@@ -31,6 +31,9 @@ services:
       dockerfile: docker/Dockerfile.app
       args:
         - APK_MIRROR_ARG=${APK_MIRROR_ARG:-}
+        - GOPROXY_ARG=${GOPROXY:-https://proxy.golang.org,direct}
+        - GOSUMDB_ARG=${GOSUMDB:-sum.golang.org}
+        - PYPI_INDEX_URL=${PYPI_INDEX_URL:-https://pypi.org/simple}
     container_name: WeKnora-app
     ports:
       - "${APP_PORT:-8080}:8080"
@@ -372,6 +375,10 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.sandbox
+      args:
+        - APT_MIRROR=${APT_MIRROR:-}
+        - PYPI_INDEX_URL=${PYPI_INDEX_URL:-https://pypi.org/simple}
+        - NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}
     profiles:
       - full
     command: ["true"]
@@ -384,6 +391,7 @@ services:
       dockerfile: docker/Dockerfile.docreader
       args:
         - APT_MIRROR=${APT_MIRROR:-}
+        - PYPI_INDEX_URL=${PYPI_INDEX_URL:-https://pypi.org/simple}
     container_name: WeKnora-docreader
     # docreader gRPC ships without auth/TLS and is only consumed by the app
     # container over the WeKnora-network (DOCREADER_ADDR defaults to
@@ -487,6 +495,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.odl-hybrid
+      args:
+        - APT_MIRROR=${APT_MIRROR:-}
+        - PYPI_INDEX_URL=${PYPI_INDEX_URL:-https://pypi.org/simple}
     image: weknora-odl-hybrid:local
     container_name: WeKnora-odl-hybrid
     profiles:

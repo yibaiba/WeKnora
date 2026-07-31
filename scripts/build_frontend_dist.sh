@@ -14,5 +14,7 @@ fi
 export VITE_IS_DOCKER="${VITE_IS_DOCKER:-true}"
 
 cd "$PROJECT_ROOT/frontend"
-npm ci
+npm ci \
+	--registry="${NPM_REGISTRY:-https://registry.npmmirror.com}" \
+	--replace-registry-host=always
 npm run build

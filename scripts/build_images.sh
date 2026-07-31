@@ -137,7 +137,9 @@ build_app_image() {
         --platform $PLATFORM \
         --build-arg GOPRIVATE_ARG=${GOPRIVATE:-""} \
         --build-arg GOPROXY_ARG=${GOPROXY:-"https://goproxy.cn,direct"} \
-        --build-arg GOSUMDB_ARG=${GOSUMDB:-"off"} \
+        --build-arg GOSUMDB_ARG=${GOSUMDB:-"sum.golang.org"} \
+        --build-arg PYPI_INDEX_URL=${PYPI_INDEX_URL:-"https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"} \
+        --build-arg APK_MIRROR_ARG=${APK_MIRROR_ARG:-"mirrors.tencent.com"} \
         --build-arg VERSION_ARG="$VERSION" \
         --build-arg COMMIT_ID_ARG="$COMMIT_ID" \
         --build-arg BUILD_TIME_ARG="$BUILD_TIME" \
@@ -165,7 +167,8 @@ build_docreader_image() {
         --platform $PLATFORM \
         --build-arg PLATFORM=$PLATFORM \
         --build-arg TARGETARCH=$TARGETARCH \
-        --build-arg APT_MIRROR=${APT_MIRROR:-} \
+        --build-arg APT_MIRROR=${APT_MIRROR:-"https://mirrors.tuna.tsinghua.edu.cn"} \
+        --build-arg PYPI_INDEX_URL=${PYPI_INDEX_URL:-"https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"} \
         -f docker/Dockerfile.docreader \
         -t wechatopenai/weknora-docreader:latest \
         .
@@ -189,7 +192,9 @@ build_frontend_image() {
     get_version_info
 
     log_info "构建前端静态资源..."
-    VITE_IS_DOCKER=true VITE_FRONTEND_COMMIT="$COMMIT_ID" "$SCRIPT_DIR/build_frontend_dist.sh"
+    NPM_REGISTRY=${NPM_REGISTRY:-"https://registry.npmmirror.com"} \
+        VITE_IS_DOCKER=true VITE_FRONTEND_COMMIT="$COMMIT_ID" \
+        "$SCRIPT_DIR/build_frontend_dist.sh"
 
     docker build \
         --platform $PLATFORM \
@@ -214,6 +219,9 @@ build_sandbox_image() {
 
     docker build \
         --platform $PLATFORM \
+        --build-arg APT_MIRROR=${APT_MIRROR:-"https://mirrors.tuna.tsinghua.edu.cn"} \
+        --build-arg PYPI_INDEX_URL=${PYPI_INDEX_URL:-"https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"} \
+        --build-arg NPM_REGISTRY=${NPM_REGISTRY:-"https://registry.npmmirror.com"} \
         -f docker/Dockerfile.sandbox \
         -t wechatopenai/weknora-sandbox:latest \
         .
@@ -363,6 +371,13 @@ fi
 
 # 检测平台
 check_platform
+
+# 构建参数与 Compose 共用项目根目录的 .env。
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 
 # 执行清理操作
 if [ "$CLEAN_IMAGES" = true ]; then

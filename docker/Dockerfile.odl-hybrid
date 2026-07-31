@@ -7,6 +7,15 @@
 # ODL_HYBRID_EXTRA_ARGS="--force-ocr" (requires extra system/Python deps).
 FROM python:3.10.18-bookworm
 
+ARG APT_MIRROR=""
+ARG PYPI_INDEX_URL="https://pypi.org/simple"
+ENV PIP_INDEX_URL=${PYPI_INDEX_URL}
+
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i -E "s@https?://deb.debian.org@${APT_MIRROR}@g; s@https?://security.debian.org@${APT_MIRROR}@g" \
+            /etc/apt/sources.list.d/debian.sources; \
+    fi
+
 # Docling table/layout models import cv2 (OpenCV), which needs libGL at runtime
 # even when hybrid runs with --no-ocr.
 RUN apt-get update && apt-get install -y --no-install-recommends \

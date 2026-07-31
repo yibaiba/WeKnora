@@ -6,7 +6,7 @@ WORKDIR /app
 # 通过构建参数接收敏感信息
 ARG GOPRIVATE_ARG
 ARG GOPROXY_ARG
-ARG GOSUMDB_ARG=off
+ARG GOSUMDB_ARG=sum.golang.org
 ARG APK_MIRROR_ARG
 
 # 设置Go环境变量
@@ -53,6 +53,8 @@ FROM debian:12.12-slim
 WORKDIR /app
 
 ARG APK_MIRROR_ARG
+ARG PYPI_INDEX_URL=https://pypi.org/simple
+ENV PIP_INDEX_URL=${PYPI_INDEX_URL}
 
 # Create a non-root user first
 RUN useradd -m -s /bin/bash appuser
