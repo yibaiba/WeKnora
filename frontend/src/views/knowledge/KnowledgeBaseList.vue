@@ -225,6 +225,10 @@
                         <span>{{ $t('knowledgeList.menu.duplicate') }}</span>
                       </div>
                       <template v-if="canManageKBCard(kb)">
+                        <div v-if="!authStore.isLiteMode" class="popup-menu-item" @click.stop="handleShare(kb)">
+                          <t-icon class="menu-icon" name="share" />
+                          <span>{{ $t('organization.share.title') }}</span>
+                        </div>
                         <div class="popup-menu-item" @click.stop="handleSettingsById(kb.id)">
                           <t-icon class="menu-icon" name="setting" />
                           <span>{{ $t('knowledgeBase.settings') }}</span>
@@ -458,6 +462,10 @@
                         <span>{{ $t('knowledgeList.menu.duplicate') }}</span>
                       </div>
                       <template v-if="canManageKBCard(kb)">
+                        <div v-if="!authStore.isLiteMode" class="popup-menu-item" @click.stop="handleShare(kb)">
+                          <t-icon class="menu-icon" name="share" />
+                          <span>{{ $t('organization.share.title') }}</span>
+                        </div>
                         <div class="popup-menu-item" @click.stop="handleSettings(kb)">
                           <t-icon class="menu-icon" name="setting" />
                           <span>{{ $t('knowledgeBase.settings') }}</span>
