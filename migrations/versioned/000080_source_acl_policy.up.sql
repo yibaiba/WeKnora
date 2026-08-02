@@ -1,6 +1,6 @@
--- Migration: 000072_source_acl_policy
+-- Migration: 000080_source_acl_policy
 -- Description: Store normalized source ACL snapshots and entries for source-backed knowledge.
-DO $$ BEGIN RAISE NOTICE '[Migration 000072] Creating source ACL policy tables...'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 000080] Creating source ACL policy tables...'; END $$;
 
 CREATE TABLE IF NOT EXISTS source_acl_snapshots (
     id BIGSERIAL PRIMARY KEY,
@@ -56,4 +56,4 @@ CREATE INDEX IF NOT EXISTS idx_source_acl_entries_provider ON source_acl_entries
 CREATE UNIQUE INDEX IF NOT EXISTS idx_source_acl_entries_unique_subject
     ON source_acl_entries(snapshot_id, subject_type, subject_id, permission);
 
-DO $$ BEGIN RAISE NOTICE '[Migration 000072] Source ACL policy tables ready'; END $$;
+DO $$ BEGIN RAISE NOTICE '[Migration 000080] Source ACL policy tables ready'; END $$;
