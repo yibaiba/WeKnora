@@ -25,12 +25,13 @@ import (
 // Provides functionality for creating, retrieving, updating, and deleting tenants
 // through the REST API endpoints
 type TenantHandler struct {
-	service       interfaces.TenantService
-	apiKeyService interfaces.TenantAPIKeyService
-	userService   interfaces.UserService
-	memberService interfaces.TenantMemberService
-	kbService     interfaces.KnowledgeBaseService
-	config        *config.Config
+	service        interfaces.TenantService
+	apiKeyService  interfaces.TenantAPIKeyService
+	userService    interfaces.UserService
+	memberService  interfaces.TenantMemberService
+	kbService      interfaces.KnowledgeBaseService
+	kbShareService interfaces.KBShareService
+	config         *config.Config
 	// systemSettingSvc resolves runtime tenant policies and limits.
 	// Reading goes DB > ENV >
 	// in-code default, so a SystemAdmin's UI override applies on the
@@ -61,6 +62,7 @@ func NewTenantHandler(
 	userService interfaces.UserService,
 	memberService interfaces.TenantMemberService,
 	kbService interfaces.KnowledgeBaseService,
+	kbShareService interfaces.KBShareService,
 	config *config.Config,
 	systemSettingSvc interfaces.SystemSettingService,
 ) *TenantHandler {
@@ -70,6 +72,7 @@ func NewTenantHandler(
 		userService:      userService,
 		memberService:    memberService,
 		kbService:        kbService,
+		kbShareService:   kbShareService,
 		config:           config,
 		systemSettingSvc: systemSettingSvc,
 	}
@@ -154,6 +157,21 @@ type tenantAPIKeyResponse struct {
 	LastUsedAt       *time.Time            `json:"last_used_at,omitempty"`
 	ExpiresAt        *time.Time            `json:"expires_at,omitempty"`
 	CreatedAt        time.Time             `json:"created_at"`
+	KeyKind          string                `json:"key_kind"`
+	OwnerUserID      *string               `json:"owner_user_id,omitempty"`
+	Owner            *tenantAPIKeyOwner    `json:"owner,omitempty"`
+}
+
+type tenantAPIKeyOwner struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
+type personalAPIKeyCreateRequest struct {
+	Name             string   `json:"name"`
+	KnowledgeBaseIDs []string `json:"knowledge_base_ids"`
+	ExpiresAt        *int64   `json:"expires_at_unix"`
 }
 
 type tenantAPIKeyCreateResponse struct {
@@ -660,11 +678,192 @@ func (h *TenantHandler) ListAPIKeys(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("Failed to list API keys").WithDetails(err.Error()))
 		return
 	}
+	owners := h.resolveAPIKeyOwners(ctx, keys)
 	resp := make([]tenantAPIKeyResponse, 0, len(keys))
 	for _, key := range keys {
-		resp = append(resp, tenantAPIKeyForResponse(key))
+		exposeSecret := key.OwnerUserID == nil
+		resp = append(resp, tenantAPIKeyForResponseWithOptions(key, exposeSecret, owners))
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
+func (h *TenantHandler) resolveAPIKeyOwners(
+	ctx context.Context, keys []*types.TenantAPIKey,
+) map[string]*types.User {
+	ownerIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, key := range keys {
+		if key == nil || key.OwnerUserID == nil || *key.OwnerUserID == "" {
+			continue
+		}
+		if _, exists := seen[*key.OwnerUserID]; exists {
+			continue
+		}
+		seen[*key.OwnerUserID] = struct{}{}
+		ownerIDs = append(ownerIDs, *key.OwnerUserID)
+	}
+	if len(ownerIDs) == 0 {
+		return map[string]*types.User{}
+	}
+	owners, err := h.userService.GetUsersByIDs(ctx, ownerIDs)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to resolve personal API key owners: %v", err)
+		return map[string]*types.User{}
+	}
+	return owners
+}
+
+func (h *TenantHandler) ListPersonalAPIKeys(c *gin.Context) {
+	tenantID, caller, ok := h.personalAPIKeyCaller(c)
+	if !ok {
+		return
+	}
+	keys, err := h.apiKeyService.ListPersonalAPIKeys(c.Request.Context(), tenantID, caller.ID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("Failed to list personal API keys").WithDetails(err.Error()))
+		return
+	}
+	owners := map[string]*types.User{caller.ID: caller}
+	resp := make([]tenantAPIKeyResponse, 0, len(keys))
+	for _, key := range keys {
+		resp = append(resp, tenantAPIKeyForResponseWithOptions(key, true, owners))
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
+func (h *TenantHandler) CreatePersonalAPIKey(c *gin.Context) {
+	tenantID, caller, ok := h.personalAPIKeyCaller(c)
+	if !ok {
+		return
+	}
+	var req personalAPIKeyCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("Invalid request data").WithDetails(err.Error()))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	kbIDs, validationErr := h.validatePersonalAPIKeyRequest(c.Request.Context(), tenantID, name, req)
+	if validationErr != nil {
+		c.Error(validationErr)
+		return
+	}
+	expiresAt, expirationErr := futureExpiration(req.ExpiresAt)
+	if expirationErr != nil {
+		c.Error(expirationErr)
+		return
+	}
+	result, err := h.apiKeyService.CreateAPIKey(c.Request.Context(), interfaces.TenantAPIKeyCreateRequest{
+		TenantID:         tenantID,
+		OwnerUserID:      &caller.ID,
+		Name:             name,
+		FullAccess:       false,
+		KnowledgeBaseIDs: kbIDs,
+		Capabilities:     []string{string(types.APIKeyCapabilityRetrieve), string(types.APIKeyCapabilityChat)},
+		ExpiresAt:        expiresAt,
+	})
+	if err != nil {
+		c.Error(errors.NewInternalServerError("Failed to create personal API key").WithDetails(err.Error()))
+		return
+	}
+	owners := map[string]*types.User{caller.ID: caller}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": tenantAPIKeyCreateResponse{
+		tenantAPIKeyResponse: tenantAPIKeyForResponseWithOptions(result.APIKey, true, owners),
+		Token:                result.Token,
+	}})
+}
+
+func (h *TenantHandler) DeletePersonalAPIKey(c *gin.Context) {
+	tenantID, caller, ok := h.personalAPIKeyCaller(c)
+	if !ok {
+		return
+	}
+	keyID, err := strconv.ParseUint(c.Param("key_id"), 10, 64)
+	if err != nil || keyID == 0 {
+		c.Error(errors.NewBadRequestError("Invalid API key ID"))
+		return
+	}
+	if err := h.apiKeyService.RevokePersonalAPIKey(c.Request.Context(), tenantID, caller.ID, keyID); err != nil {
+		c.Error(errors.NewNotFoundError("Personal API key not found"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func (h *TenantHandler) personalAPIKeyCaller(c *gin.Context) (uint64, *types.User, bool) {
+	tenantID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || tenantID == 0 {
+		c.Error(errors.NewBadRequestError("Invalid workspace ID"))
+		return 0, nil, false
+	}
+	caller, err := h.userService.GetCurrentUser(c.Request.Context())
+	if err != nil || caller == nil {
+		c.Error(errors.NewUnauthorizedError("authentication required"))
+		return 0, nil, false
+	}
+	return tenantID, caller, true
+}
+
+func (h *TenantHandler) validatePersonalAPIKeyRequest(
+	ctx context.Context, tenantID uint64, name string, req personalAPIKeyCreateRequest,
+) ([]string, *errors.AppError) {
+	if name == "" {
+		return nil, errors.NewValidationError("name is required")
+	}
+	kbIDs := uniqueNonEmptyStrings(req.KnowledgeBaseIDs)
+	if len(kbIDs) == 0 {
+		return nil, errors.NewValidationError("knowledge_base_ids must contain at least one accessible knowledge base")
+	}
+	for _, kbID := range kbIDs {
+		allowed, err := h.canReadKnowledgeBase(ctx, tenantID, kbID)
+		if err != nil {
+			return nil, errors.NewInternalServerError("Failed to validate knowledge base access").WithDetails(err.Error())
+		}
+		if !allowed {
+			return nil, errors.NewForbiddenError("knowledge_base_ids contains an inaccessible knowledge base")
+		}
+	}
+	return kbIDs, nil
+}
+
+func (h *TenantHandler) canReadKnowledgeBase(ctx context.Context, tenantID uint64, kbID string) (bool, error) {
+	kb, err := h.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+	if err != nil || kb == nil {
+		return false, nil
+	}
+	if kb.TenantID == tenantID {
+		return true, nil
+	}
+	return h.kbShareService.HasTenantKBPermission(
+		ctx, kbID, tenantID, types.TenantRoleFromContext(ctx), types.OrgRoleViewer,
+	)
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func futureExpiration(unixSeconds *int64) (*time.Time, *errors.AppError) {
+	if unixSeconds == nil {
+		return nil, nil
+	}
+	expiresAt := time.Unix(*unixSeconds, 0).UTC()
+	if !expiresAt.After(time.Now().UTC()) {
+		return nil, errors.NewValidationError("expires_at_unix must be in the future")
+	}
+	return &expiresAt, nil
 }
 
 func (h *TenantHandler) CreateAPIKey(c *gin.Context) {
@@ -733,21 +932,49 @@ func (h *TenantHandler) DeleteAPIKey(c *gin.Context) {
 }
 
 func tenantAPIKeyForResponse(key *types.TenantAPIKey) tenantAPIKeyResponse {
+	return tenantAPIKeyForResponseWithOptions(key, true, nil)
+}
+
+func tenantAPIKeyForResponseWithOptions(
+	key *types.TenantAPIKey, exposeSecret bool, owners map[string]*types.User,
+) tenantAPIKeyResponse {
 	if key == nil {
 		return tenantAPIKeyResponse{}
+	}
+	keyKind := "tenant"
+	apiKey := key.APIKey
+	var owner *tenantAPIKeyOwner
+	if key.OwnerUserID != nil {
+		keyKind = "personal"
+		if !exposeSecret {
+			apiKey = maskAPIKey(key.APIKey)
+		}
+		if user := owners[*key.OwnerUserID]; user != nil {
+			owner = &tenantAPIKeyOwner{ID: user.ID, Username: user.Username, Email: user.Email}
+		}
 	}
 	return tenantAPIKeyResponse{
 		ID:               key.ID,
 		ScopeType:        types.NormalizeAPIKeyScopeType(key.ScopeType),
 		Name:             key.Name,
-		APIKey:           key.APIKey,
+		APIKey:           apiKey,
 		FullAccess:       key.FullAccess,
 		KnowledgeBaseIDs: key.KnowledgeBaseIDs,
 		Capabilities:     types.NormalizeAPIKeyCapabilities(key.Capabilities),
 		LastUsedAt:       key.LastUsedAt,
 		ExpiresAt:        key.ExpiresAt,
 		CreatedAt:        key.CreatedAt,
+		KeyKind:          keyKind,
+		OwnerUserID:      key.OwnerUserID,
+		Owner:            owner,
 	}
+}
+
+func maskAPIKey(token string) string {
+	if len(token) <= 8 {
+		return "********"
+	}
+	return token[:5] + "…" + token[len(token)-4:]
 }
 
 func validateTenantAPIKeyRequest(
