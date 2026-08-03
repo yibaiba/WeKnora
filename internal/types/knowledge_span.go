@@ -8,7 +8,7 @@ import "time"
 //   - SpanKindRoot     — the per-(knowledge, attempt) trace root. Always
 //     the parent_span_id ancestor of every other span
 //     in that attempt. UI uses it for total elapsed.
-//   - SpanKindStage    — one of the 5 canonical stages (DocReader, etc.).
+//   - SpanKindStage    — one of the 6 canonical stages (DocReader, etc.).
 //     UI renders these as the timeline segments.
 //   - SpanKindSubSpan  — anything inside a stage (e.g. multimodal.image[i]).
 //     UI shows them as collapsible children.

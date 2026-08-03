@@ -2329,7 +2329,9 @@ func (s *knowledgeService) ReparseKnowledge(
 			return nil, werrors.NewBadRequestError("无法获取手工知识内容")
 		}
 
-		resetKnowledgeForReparse(existing, kb)
+		if err := resetKnowledgeForReparse(existing, kb); err != nil {
+			return nil, err
+		}
 
 		if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
 			logger.Errorf(ctx, "Failed to update knowledge status before reparse: %v", err)
@@ -2360,7 +2362,9 @@ func (s *knowledgeService) ReparseKnowledge(
 	}
 
 	// Step 2: Update knowledge status and metadata
-	resetKnowledgeForReparse(existing, kb)
+	if err := resetKnowledgeForReparse(existing, kb); err != nil {
+		return nil, err
+	}
 
 	if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
 		logger.Errorf(ctx, "Failed to update knowledge status before reparse: %v", err)
@@ -2543,7 +2547,10 @@ func (s *knowledgeService) ReparseKnowledge(
 // resetKnowledgeForReparse makes the top-level knowledge state describe the
 // new processing attempt rather than retaining terminal state from the
 // previous one.
-func resetKnowledgeForReparse(knowledge *types.Knowledge, kb *types.KnowledgeBase) {
+func resetKnowledgeForReparse(knowledge *types.Knowledge, kb *types.KnowledgeBase) error {
+	if err := knowledge.SetIngestionAnalysis(nil); err != nil {
+		return fmt.Errorf("清除旧文档分析结果失败: %w", err)
+	}
 	knowledge.ParseStatus = types.ParseStatusPending
 	knowledge.EnableStatus = "disabled"
 	knowledge.Description = ""
@@ -2553,6 +2560,7 @@ func resetKnowledgeForReparse(knowledge *types.Knowledge, kb *types.KnowledgeBas
 	// UpdateKnowledge deliberately omits pending_subtasks_count, so callers
 	// must still persist this reset through an explicit column update.
 	knowledge.PendingSubtasksCount = 0
+	return nil
 }
 
 // CancelKnowledgeParse marks an in-progress parse as cancelled by the user.

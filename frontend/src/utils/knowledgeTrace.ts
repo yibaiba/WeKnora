@@ -115,7 +115,7 @@ export function groupPostprocessGraphSpans(
 }
 
 /**
- * Counts leaf postprocess spans so the UI can distinguish the five main
+ * Counts leaf postprocess spans so the UI can distinguish the six main
  * pipeline stages from asynchronous enrichment work.
  */
 export function summarizePostprocessTasks(

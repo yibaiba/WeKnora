@@ -717,7 +717,7 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 	// Pick attempt: explicit ?attempt=N wins; otherwise pull the
 	// latest attempt from the spans table. Lite-mode / fresh installs
 	// with zero rows fall through to attempt=0, in which case we
-	// return a placeholder tree (5 pending stages, no root, no
+	// return a placeholder tree (6 pending stages, no root, no
 	// children) so the UI still renders.
 	requestedAttempt := 0
 	if v := strings.TrimSpace(c.Query("attempt")); v != "" {
@@ -837,7 +837,7 @@ func knowledgeSpansLastError(
 // a fresh knowledge before the pipeline starts), the placeholder status
 // is inferred from parseStatus: completed → done, failed → failed,
 // otherwise pending. Without this, every historical knowledge would
-// render as "all 5 stages pending" forever despite having actually
+// render as "all 6 stages pending" forever despite having actually
 // completed parsing.
 func buildSpanTree(knowledgeID string, attempt int, rows []types.KnowledgeProcessingSpan, parseStatus string) (
 	root *types.SpanTreeNode, currentStage string, lastFailure *types.KnowledgeProcessingSpan,
@@ -869,7 +869,7 @@ func buildSpanTree(knowledgeID string, attempt int, rows []types.KnowledgeProces
 
 	// Pick the synthesized stage status from parse_status. Without this,
 	// historical knowledge that completed before span tracking was wired
-	// would render as "5 pending stages" forever — the rows simply
+	// would render as "6 pending stages" forever — the rows simply
 	// weren't recorded, but parse_status correctly reads "completed".
 	// The synthesized stages don't carry duration/timing data; they
 	// just communicate the inferred terminal state.
@@ -926,22 +926,24 @@ func buildSpanTree(knowledgeID string, attempt int, rows []types.KnowledgeProces
 	}
 
 	// Synthesize missing stage rows as children of root so the timeline
-	// always shows every segment. Status mirrors the synthesized root —
-	// pending while the pipeline is still running, done/failed for
-	// historical knowledge whose terminal state we know but whose
-	// per-stage timing was never recorded. Appended in AllStages order
-	// so the canonical stage layout is deterministic regardless of
-	// which rows are missing.
+	// always shows every segment. Historical stages mirror the synthesized
+	// root, except document_analysis: a missing analysis row is skipped once
+	// the attempt is terminal or downstream work proves a pre-advisor trace.
+	// Appended in AllStages order so layout stays deterministic.
 	for _, name := range types.AllStages {
 		if _, ok := stageRowByName[name]; ok {
 			continue
+		}
+		status := syntheticStatus
+		if name == types.StageDocumentAnalysis && synthesizedAnalysisWasSkipped(parseStatus, stageRowByName) {
+			status = types.SpanStatusSkipped
 		}
 		placeholder := types.KnowledgeProcessingSpan{
 			KnowledgeID: knowledgeID,
 			Attempt:     attempt,
 			Name:        name,
 			Kind:        types.SpanKindStage,
-			Status:      syntheticStatus,
+			Status:      status,
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		}
@@ -949,6 +951,25 @@ func buildSpanTree(knowledgeID string, attempt int, rows []types.KnowledgeProces
 	}
 
 	return root, currentStage, lastFailure
+}
+
+func synthesizedAnalysisWasSkipped(
+	parseStatus string,
+	stageRows map[string]*types.KnowledgeProcessingSpan,
+) bool {
+	for _, name := range []string{
+		types.StageChunking,
+		types.StageEmbedding,
+		types.StageMultimodal,
+		types.StagePostProcess,
+	} {
+		if _, ok := stageRows[name]; ok {
+			return true
+		}
+	}
+	return parseStatus == types.ParseStatusCompleted ||
+		parseStatus == types.ParseStatusFailed ||
+		parseStatus == types.ParseStatusCancelled
 }
 
 // ListKnowledge godoc

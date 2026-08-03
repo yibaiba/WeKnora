@@ -484,7 +484,7 @@ const retryingMode = ref<'default' | IngestionAdvisorMode | null>(null)
 const documentAnalysisFailed = computed(() => {
   if (data.value?.parse_status !== 'failed') return false
   const stageFailed = stages.value.some(stage =>
-    stage.name === 'document_analysis' && stage.status === 'failed',
+    stage.name === 'document_analysis' && stage.status === 'failed' && !!stage.span_id,
   )
   return stageFailed || data.value.last_error?.error_code === 'DOCUMENT_ANALYSIS_FAILED'
 })
@@ -1373,6 +1373,7 @@ function asIngestionAnalysis(value: unknown): IngestionAnalysis | null {
 const selectedIngestionAnalysis = computed<IngestionAnalysis | null>(() => {
   const row = selectedRow.value
   if (!row?.isStage || row.node.name !== 'document_analysis') return null
+  if (row.node.status === 'skipped') return null
   const spanAnalysis = asIngestionAnalysis(row.node.output)
   if (spanAnalysis) return spanAnalysis
   return viewingLatestAttempt.value ? ingestionAnalysis.value : null
