@@ -48,13 +48,16 @@ func TestTenantAPIKeyServiceCreatesAndScopesPersonalKey(t *testing.T) {
 		OwnerUserID:      &ownerUserID,
 		Name:             "personal",
 		KnowledgeBaseIDs: []string{"kb-1"},
-		Capabilities:     []string{"retrieve", "chat"},
+		Capabilities:     []string{"manage_models", "message_history"},
 	})
 	if err != nil {
 		t.Fatalf("CreateAPIKey() error = %v", err)
 	}
 	if !ownerMatches(created.APIKey, ownerUserID) || created.APIKey.FullAccess {
 		t.Fatalf("created personal key has unexpected scope: %+v", created.APIKey)
+	}
+	if strings.Join(created.APIKey.Capabilities, ",") != "retrieve,chat" {
+		t.Fatalf("personal capabilities = %v, want retrieve+chat", created.APIKey.Capabilities)
 	}
 
 	keys, err := svc.ListPersonalAPIKeys(context.Background(), 7, ownerUserID)
@@ -63,6 +66,17 @@ func TestTenantAPIKeyServiceCreatesAndScopesPersonalKey(t *testing.T) {
 	}
 	if err := svc.RevokePersonalAPIKey(context.Background(), 7, "user-2", created.APIKey.ID); err == nil {
 		t.Fatal("another owner unexpectedly revoked personal key")
+	}
+}
+
+func TestTenantAPIKeyServiceRejectsUnscopedPersonalKey(t *testing.T) {
+	ownerUserID := "user-1"
+	_, err := NewTenantAPIKeyService(newFakeTenantAPIKeyRepo()).CreateAPIKey(
+		context.Background(),
+		interfaces.TenantAPIKeyCreateRequest{TenantID: 7, OwnerUserID: &ownerUserID, Name: "unscoped"},
+	)
+	if err == nil {
+		t.Fatal("CreateAPIKey() accepted personal key without explicit knowledge bases")
 	}
 }
 

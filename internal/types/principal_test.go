@@ -45,6 +45,19 @@ func TestSessionOwnerIDFromContextUsesAPIExternalPrincipal(t *testing.T) {
 	}
 }
 
+func TestAPIMemberPrincipalHasIndependentStableSessionOwner(t *testing.T) {
+	principal := APIMemberPrincipal(42, "member-1")
+	ctx := WithPrincipal(context.Background(), principal)
+	ctx = context.WithValue(ctx, UserIDContextKey, "member-1")
+
+	if got := SessionOwnerIDFromContext(ctx); got != "api_member:42:member-1" {
+		t.Fatalf("session owner = %q", got)
+	}
+	if !IsAPISessionOwnerID(principal.StorageID()) {
+		t.Fatalf("api-member session owner was not classified as API traffic: %q", principal.StorageID())
+	}
+}
+
 func TestSessionOwnerIDFromContextFallsBackToUserID(t *testing.T) {
 	ctx := context.WithValue(context.Background(), UserIDContextKey, "system-7")
 

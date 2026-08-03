@@ -73,7 +73,7 @@ func TestAttachTargetedPlatformAPIKeyKeepsPlatformPrincipal(t *testing.T) {
 			string(types.APIKeyCapabilityRetrieve),
 		},
 	}
-	attachAPIKeyAuthContext(c, &fakeTenantService{tenant: &types.Tenant{ID: 42}}, nil, 42, key)
+	attachAPIKeyAuthContext(c, &fakeTenantService{tenant: &types.Tenant{ID: 42}}, nil, nil, 42, key)
 	if c.IsAborted() {
 		t.Fatal("targeted platform API key context unexpectedly aborted")
 	}

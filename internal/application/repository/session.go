@@ -191,13 +191,15 @@ func (r *sessionRepository) QueryPaged(
 		case types.SessionSourceAPI:
 			// Tenant-wide view of API-key sessions. Requests without an
 			// external identity use an api_tenant_key owner; requests with a
-			// direct-header or signed-token identity use api_external_user.
+			// direct-header or signed-token identity use api_external_user;
+			// personal member keys use api_member.
 			// The service layer already enforced Admin+ and cleared the
 			// per-user scope for this source.
 			return db.Where(
-				"(s.user_id LIKE ? OR s.user_id LIKE ?)",
+				"(s.user_id LIKE ? OR s.user_id LIKE ? OR s.user_id LIKE ?)",
 				types.SessionOwnerAPITenantKeyPrefix+"%",
 				types.SessionOwnerAPIExternalUserPrefix+"%",
+				types.SessionOwnerAPIMemberPrefix+"%",
 			)
 		case "web":
 			// User web chats only — exclude embed-widget sessions (same IM-null
@@ -206,10 +208,11 @@ func (r *sessionRepository) QueryPaged(
 			// visible, since "col NOT LIKE ?" is unknown (not true) for NULL.
 			return db.Where(
 				"ics.id IS NULL AND (s.description = '' OR s.description NOT LIKE ?) "+
-					"AND (s.user_id IS NULL OR (s.user_id NOT LIKE ? AND s.user_id NOT LIKE ?))",
+					"AND (s.user_id IS NULL OR (s.user_id NOT LIKE ? AND s.user_id NOT LIKE ? AND s.user_id NOT LIKE ?))",
 				embedPrefix+"%",
 				types.SessionOwnerAPITenantKeyPrefix+"%",
 				types.SessionOwnerAPIExternalUserPrefix+"%",
+				types.SessionOwnerAPIMemberPrefix+"%",
 			)
 		case "embed":
 			return db.Where("ics.id IS NULL AND s.description LIKE ?", embedPrefix+"%")

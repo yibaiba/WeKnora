@@ -257,6 +257,7 @@ func TestSessionRepositoryQueryPagedWebExcludesAPIKeySessions(t *testing.T) {
 	legacy := createSessionForTest(t, db, 1, "") // legacy tenant web row
 	_ = createSessionForTest(t, db, 1, types.SessionOwnerAPITenantKeyPrefix+"1:10")
 	_ = createSessionForTest(t, db, 1, types.SessionOwnerAPIExternalUserPrefix+"1:alice")
+	_ = createSessionForTest(t, db, 1, types.SessionOwnerAPIMemberPrefix+"1:member-1")
 
 	items, _, err := repo.QueryPaged(ctx, &types.SessionListQuery{
 		TenantID: 1, UserID: "", Source: "web", Page: 1, PageSize: 50,
@@ -302,9 +303,11 @@ func TestSessionRepositoryQueryPagedAPISourceReturnsAllTenantAPIKeySessions(t *t
 	key2 := createSessionForTest(t, db, 1, types.SessionOwnerAPITenantKeyPrefix+"1:20")
 	directHeader := createSessionForTest(t, db, 1, types.SessionOwnerAPIExternalUserPrefix+"1:alice")
 	signedToken := createSessionForTest(t, db, 1, types.SessionOwnerAPIExternalUserPrefix+"1:bob")
+	personal := createSessionForTest(t, db, 1, types.SessionOwnerAPIMemberPrefix+"1:member-1")
 	_ = createSessionForTest(t, db, 1, "alice")
 	_ = createSessionForTest(t, db, 2, types.SessionOwnerAPITenantKeyPrefix+"2:30")
 	_ = createSessionForTest(t, db, 2, types.SessionOwnerAPIExternalUserPrefix+"2:mallory")
+	_ = createSessionForTest(t, db, 2, types.SessionOwnerAPIMemberPrefix+"2:member-2")
 
 	// The admin view clears UserID, so every API-key session in the tenant is
 	// returned regardless of which key created it.
@@ -312,10 +315,10 @@ func TestSessionRepositoryQueryPagedAPISourceReturnsAllTenantAPIKeySessions(t *t
 		TenantID: 1, UserID: "", Source: types.SessionSourceAPI, Page: 1, PageSize: 50,
 	})
 	require.NoError(t, err)
-	require.EqualValues(t, 4, total)
+	require.EqualValues(t, 5, total)
 	require.ElementsMatch(
 		t,
-		[]string{key1.ID, key2.ID, directHeader.ID, signedToken.ID},
+		[]string{key1.ID, key2.ID, directHeader.ID, signedToken.ID, personal.ID},
 		listItemIDsForTest(items),
 	)
 }

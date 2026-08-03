@@ -10,6 +10,7 @@ const (
 	PrincipalWebUser         = "web_user"
 	PrincipalAPITenant       = "api_tenant"
 	PrincipalAPIPlatform     = "api_platform"
+	PrincipalAPIMember       = "api_member"
 	PrincipalAPIExternalUser = "api_external_user"
 	PrincipalIMUser          = "im_user"
 	PrincipalEmbedChannel    = "embed_channel"
@@ -31,12 +32,18 @@ const SessionOwnerAPITenantKeyPrefix = "api_tenant_key:"
 // remainder is "<tenantID>:<externalUserID>".
 const SessionOwnerAPIExternalUserPrefix = PrincipalAPIExternalUser + ":"
 
+// SessionOwnerAPIMemberPrefix prefixes sessions.user_id for rows created by
+// personal API keys. The remainder is "<tenantID>:<userID>", so all personal
+// keys owned by one member share API history without exposing Web history.
+const SessionOwnerAPIMemberPrefix = PrincipalAPIMember + ":"
+
 // IsAPISessionOwnerID reports whether a stored session owner was produced by
 // a tenant API-key request, with or without an external-user identity.
 func IsAPISessionOwnerID(ownerID string) bool {
 	ownerID = strings.TrimSpace(ownerID)
 	return strings.HasPrefix(ownerID, SessionOwnerAPITenantKeyPrefix) ||
-		strings.HasPrefix(ownerID, SessionOwnerAPIExternalUserPrefix)
+		strings.HasPrefix(ownerID, SessionOwnerAPIExternalUserPrefix) ||
+		strings.HasPrefix(ownerID, SessionOwnerAPIMemberPrefix)
 }
 
 // Principal represents the terminal caller for per-subject isolation features.
@@ -122,6 +129,15 @@ func EmbedVisitorPrincipal(tenantID uint64, channelID, visitorID string) Princip
 	}
 }
 
+// APIMemberPrincipal identifies one member's personal API activity in a
+// workspace. It is independent from the member's Web principal by design.
+func APIMemberPrincipal(tenantID uint64, userID string) Principal {
+	return Principal{
+		Type: PrincipalAPIMember,
+		ID:   fmt.Sprintf("%d:%s", tenantID, strings.TrimSpace(userID)),
+	}
+}
+
 // ValidateEmbedVisitorID checks the client-supplied anonymous visitor id.
 func ValidateEmbedVisitorID(id string) error {
 	id = strings.TrimSpace(id)
@@ -178,7 +194,7 @@ func MCPOAuthPrincipalFromContext(ctx context.Context) Principal {
 func SessionOwnerIDFromContext(ctx context.Context) string {
 	if p, ok := PrincipalFromContext(ctx); ok {
 		switch p.Type {
-		case PrincipalAPIExternalUser, PrincipalEmbedSession:
+		case PrincipalAPIMember, PrincipalAPIExternalUser, PrincipalEmbedSession:
 			return p.StorageID()
 		case PrincipalAPITenant:
 			if scope, ok := TenantAPIKeyScopeFromContext(ctx); ok && scope.KeyID > 0 {

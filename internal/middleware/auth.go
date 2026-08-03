@@ -163,7 +163,7 @@ func Auth(
 				c.Abort()
 				return
 			}
-			if authenticateAPIKeyRequest(c, tenantService, userService, apiKeyService, apiKey) {
+			if authenticateAPIKeyRequest(c, tenantService, userService, memberService, apiKeyService, apiKey) {
 				c.Next()
 			}
 			return
@@ -371,6 +371,7 @@ func authenticateAPIKeyRequest(
 	c *gin.Context,
 	tenantService interfaces.TenantService,
 	userService interfaces.UserService,
+	memberService interfaces.TenantMemberService,
 	apiKeyService interfaces.TenantAPIKeyService,
 	apiKey string,
 ) bool {
@@ -403,7 +404,7 @@ func authenticateAPIKeyRequest(
 				c.Abort()
 				return false
 			}
-			attachAPIKeyAuthContext(c, tenantService, userService, targetTenantID, key)
+			attachAPIKeyAuthContext(c, tenantService, userService, memberService, targetTenantID, key)
 		}
 	} else {
 		tenantID := key.TenantIDValue()
@@ -427,7 +428,7 @@ func authenticateAPIKeyRequest(
 				return false
 			}
 		}
-		attachAPIKeyAuthContext(c, tenantService, userService, tenantID, key)
+		attachAPIKeyAuthContext(c, tenantService, userService, memberService, tenantID, key)
 	}
 	if c.IsAborted() {
 		return false
@@ -488,6 +489,7 @@ func attachAPIKeyAuthContext(
 	c *gin.Context,
 	tenantService interfaces.TenantService,
 	userService interfaces.UserService,
+	memberService interfaces.TenantMemberService,
 	tenantID uint64,
 	key *types.TenantAPIKey,
 ) {
@@ -501,12 +503,33 @@ func attachAPIKeyAuthContext(
 
 	var user *types.User
 	var principal types.Principal
+	personalKey := key != nil && key.OwnerUserID != nil
 	if key != nil && key.IsPlatform() {
 		// A platform key keeps one stable machine identity while selecting the
 		// target workspace through X-Tenant-ID. Tenant API-principal modes and
 		// tenant-owned synthetic users must not rewrite that identity.
 		principal, user = platformAPIKeyIdentity(key)
 		user.TenantID = tenantID
+	} else if personalKey {
+		personalScope := (types.TenantAPIKeyScope{KnowledgeBaseIDs: key.KnowledgeBaseIDs}).Normalize()
+		if len(personalScope.KnowledgeBaseIDs) == 0 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized: personal API key has no knowledge base scope"})
+			c.Abort()
+			return
+		}
+		principal, user, err = resolvePersonalAPIKeyIdentity(personalAPIKeyIdentityRequest{
+			Context:       c.Request.Context(),
+			UserService:   userService,
+			MemberService: memberService,
+			TenantID:      tenantID,
+			OwnerUserID:   *key.OwnerUserID,
+		})
+		if err != nil {
+			logger.Warnf(c.Request.Context(), "[auth] personal API key owner rejected: tenant=%d key=%d err=%v", tenantID, key.ID, err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized: personal API key owner is inactive"})
+			c.Abort()
+			return
+		}
 	} else {
 		user, err = userService.GetUserByTenantID(c.Request.Context(), tenantID)
 		if err != nil || user == nil {
@@ -534,7 +557,7 @@ func attachAPIKeyAuthContext(
 	// RequireRole short-circuits API-key principals. The API key's real
 	// authority is FullAccess + Capabilities + KnowledgeBaseIDs.
 	apiKeyTenantRoleContext := types.TenantRoleViewer
-	fullAccess := key != nil && key.FullAccess && !key.IsPlatform()
+	fullAccess := key != nil && key.FullAccess && !key.IsPlatform() && !personalKey
 	if fullAccess {
 		apiKeyTenantRoleContext = types.TenantRoleOwner
 	}
@@ -552,15 +575,51 @@ func attachAPIKeyAuthContext(
 		session.Extra[types.SourceACLActorUserIDContextKey] = actorUserID
 	}
 	if key != nil {
+		ownerUserID := ""
+		capabilities := key.Capabilities
+		if key.OwnerUserID != nil {
+			ownerUserID = *key.OwnerUserID
+			capabilities = types.StringArray{
+				string(types.APIKeyCapabilityRetrieve),
+				string(types.APIKeyCapabilityChat),
+			}
+		}
 		session.APIKeyScope = &types.TenantAPIKeyScope{
 			KeyID:            key.ID,
 			ScopeType:        key.ScopeType,
+			OwnerUserID:      ownerUserID,
 			FullAccess:       fullAccess,
 			KnowledgeBaseIDs: key.KnowledgeBaseIDs,
-			Capabilities:     key.Capabilities,
+			Capabilities:     capabilities,
 		}
 	}
 	applyAuthSession(c, session)
+}
+
+type personalAPIKeyIdentityRequest struct {
+	Context       context.Context
+	UserService   interfaces.UserService
+	MemberService interfaces.TenantMemberService
+	TenantID      uint64
+	OwnerUserID   string
+}
+
+func resolvePersonalAPIKeyIdentity(req personalAPIKeyIdentityRequest) (types.Principal, *types.User, error) {
+	ownerUserID := strings.TrimSpace(req.OwnerUserID)
+	if ownerUserID == "" || req.UserService == nil || req.MemberService == nil {
+		return types.Principal{}, nil, errors.New("personal API key owner is invalid")
+	}
+	user, err := req.UserService.GetUserByID(req.Context, ownerUserID)
+	if err != nil || user == nil || !user.IsActive {
+		return types.Principal{}, nil, errors.New("personal API key owner is not active")
+	}
+	membership, err := req.MemberService.GetMembership(req.Context, ownerUserID, req.TenantID)
+	if err != nil || membership == nil || membership.Status != types.TenantMemberStatusActive {
+		return types.Principal{}, nil, errors.New("personal API key membership is not active")
+	}
+	memberUser := *user
+	memberUser.TenantID = req.TenantID
+	return types.APIMemberPrincipal(req.TenantID, ownerUserID), &memberUser, nil
 }
 
 func resolveAPIPrincipal(ctx context.Context, tenant *types.Tenant, header http.Header) (types.Principal, error) {

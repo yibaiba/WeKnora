@@ -46,6 +46,16 @@ func (s *tenantAPIKeyService) CreateAPIKey(
 		return nil, errors.New("personal API keys must be tenant-scoped and cannot have full access")
 	}
 	capabilities := types.NormalizeAPIKeyCapabilities(types.StringArray(req.Capabilities))
+	knowledgeBaseIDs := normalizeAPIKeyIDs(req.KnowledgeBaseIDs)
+	if ownerUserID != nil {
+		if len(knowledgeBaseIDs) == 0 {
+			return nil, errors.New("personal API keys require an explicit knowledge base scope")
+		}
+		capabilities = types.StringArray{
+			string(types.APIKeyCapabilityRetrieve),
+			string(types.APIKeyCapabilityChat),
+		}
+	}
 	if scopeType == types.APIKeyScopePlatform && len(capabilities) == 0 {
 		return nil, errors.New("platform API keys require at least one capability")
 	}
@@ -74,7 +84,7 @@ func (s *tenantAPIKeyService) CreateAPIKey(
 		KeyHash:          hashTenantAPIKey(token),
 		APIKey:           token,
 		FullAccess:       req.FullAccess,
-		KnowledgeBaseIDs: normalizeAPIKeyIDs(req.KnowledgeBaseIDs),
+		KnowledgeBaseIDs: knowledgeBaseIDs,
 		Capabilities:     capabilities,
 		ExpiresAt:        expiresAt,
 	}

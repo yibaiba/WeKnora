@@ -32,6 +32,10 @@ func TestSessionRequiresAdminConsoleRead(t *testing.T) {
 	if !SessionRequiresAdminConsoleRead(apiExternalUser, "") {
 		t.Fatal("external-user API session should require admin")
 	}
+	apiMember := &Session{UserID: SessionOwnerAPIMemberPrefix + "1:member-1"}
+	if !SessionRequiresAdminConsoleRead(apiMember, "") {
+		t.Fatal("personal API session should require admin")
+	}
 
 	embed := &Session{Description: EmbedSessionMarkerPrefix + "ch-1"}
 	if !SessionRequiresAdminConsoleRead(embed, "") {
