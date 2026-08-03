@@ -143,6 +143,41 @@ func TestSpanTracker_FailSpan_CascadesDownstream(t *testing.T) {
 	_ = postprocess
 }
 
+func TestSpanTracker_DocumentAnalysisFailureCancelsChunkingAndEmbedding(t *testing.T) {
+	tracker, db := setupSpanTrackerTest(t)
+	ctx := context.Background()
+	_, attempt, err := tracker.OpenAttempt(ctx, "analysis-kid", "")
+	require.NoError(t, err)
+
+	docreader := tracker.BeginStage(ctx, "analysis-kid", attempt, types.StageDocReader, nil)
+	tracker.EndSpan(ctx, docreader, nil)
+	analysis := tracker.BeginStage(ctx, "analysis-kid", attempt, types.StageDocumentAnalysis, nil)
+	tracker.BeginStage(ctx, "analysis-kid", attempt, types.StageChunking, nil)
+	tracker.BeginStage(ctx, "analysis-kid", attempt, types.StageEmbedding, nil)
+	tracker.BeginStage(ctx, "analysis-kid", attempt, types.StageMultimodal, nil)
+	tracker.BeginStage(ctx, "analysis-kid", attempt, types.StagePostProcess, nil)
+
+	tracker.FailSpan(ctx, analysis, "DOCUMENT_ANALYSIS_FAILED", "invalid response", errors.New("invalid response"))
+
+	statusBy := map[string]string{}
+	type stageStatus struct{ Name, Status string }
+	var rows []stageStatus
+	require.NoError(t, db.Table("knowledge_processing_spans").
+		Select("name, status").
+		Where("knowledge_id = ? AND attempt = ? AND kind = ?", "analysis-kid", attempt, types.SpanKindStage).
+		Find(&rows).Error)
+	for _, row := range rows {
+		statusBy[row.Name] = row.Status
+	}
+
+	require.Equal(t, types.SpanStatusDone, statusBy[types.StageDocReader])
+	require.Equal(t, types.SpanStatusFailed, statusBy[types.StageDocumentAnalysis])
+	require.Equal(t, types.SpanStatusCancelled, statusBy[types.StageChunking])
+	require.Equal(t, types.SpanStatusCancelled, statusBy[types.StageEmbedding])
+	require.Equal(t, types.SpanStatusCancelled, statusBy[types.StageMultimodal])
+	require.Equal(t, types.SpanStatusCancelled, statusBy[types.StagePostProcess])
+}
+
 // TestSpanTracker_LookupStage_FindsAcrossProcesses simulates the
 // cross-process bridge an asynq worker uses: the upstream pipeline
 // creates the multimodal stage span, then a separate worker process
