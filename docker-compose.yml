@@ -38,7 +38,7 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
-      - data-files:/data/files
+      - ./data/files:/data/files
       - docreader-tmp:/tmp/docreader:ro
       - ./config/config.yaml:/app/config/config.yaml
       # Optional: mount custom skills directory (allows adding skills without rebuilding image)
@@ -1020,7 +1020,6 @@ networks:
 
 volumes:
   postgres-data:
-  data-files:
   docreader-tmp:
   minio_data:
   neo4j-data:
