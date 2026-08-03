@@ -827,7 +827,10 @@ func (h *TenantHandler) validatePersonalAPIKeyRequest(
 
 func (h *TenantHandler) canReadKnowledgeBase(ctx context.Context, tenantID uint64, kbID string) (bool, error) {
 	kb, err := h.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
-	if err != nil || kb == nil {
+	if err != nil {
+		return false, err
+	}
+	if kb == nil {
 		return false, nil
 	}
 	if kb.TenantID == tenantID {

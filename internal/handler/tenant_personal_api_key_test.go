@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,12 +70,13 @@ func (s *personalKeyUserServiceStub) GetCurrentUser(context.Context) (*types.Use
 type personalKeyKBServiceStub struct {
 	interfaces.KnowledgeBaseService
 	knowledgeBases map[string]*types.KnowledgeBase
+	err            error
 }
 
 func (s *personalKeyKBServiceStub) GetKnowledgeBaseByIDOnly(
 	_ context.Context, id string,
 ) (*types.KnowledgeBase, error) {
-	return s.knowledgeBases[id], nil
+	return s.knowledgeBases[id], s.err
 }
 
 type personalKeyShareServiceStub struct {
@@ -155,6 +157,18 @@ func TestCreatePersonalAPIKeyRequiresExplicitAccessibleKnowledgeBases(t *testing
 				t.Fatalf("expected %d, got %d: %s", tc.want, recorder.Code, recorder.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreatePersonalAPIKeySurfacesKnowledgeBaseLookupFailure(t *testing.T) {
+	handler := personalKeyTestHandler(&personalKeyServiceStub{})
+	handler.kbService = &personalKeyKBServiceStub{err: errors.New("database unavailable")}
+	recorder := performPersonalKeyRequest(
+		t, personalKeyTestRouter(handler), http.MethodPost, "/tenants/42/me/api-keys",
+		map[string]any{"name": "restricted", "knowledge_base_ids": []string{"own-kb"}},
+	)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
 
