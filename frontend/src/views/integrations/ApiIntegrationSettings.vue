@@ -1,5 +1,6 @@
 <template>
-  <div class="api-integration">
+  <PersonalAPIIntegrationSettings v-if="!isOwnerMode" />
+  <div v-else class="api-integration">
     <div v-if="loading" class="state-row">
       <t-loading size="small" />
       <span>{{ $t('integrations.api.loading') }}</span>
@@ -124,6 +125,9 @@
                     <tr v-for="key in apiKeys" :key="key.id">
                       <td>
                         <span class="api-key-name">{{ key.name }}</span>
+                        <small v-if="key.key_kind === 'personal'" class="api-key-owner">
+                          {{ $t('integrations.api.personalOwner') }}：{{ key.owner?.username || key.owner?.email || key.owner_user_id }}
+                        </small>
                       </td>
                       <td>
                         <code class="api-key-fingerprint">{{ formatKeyMaskedValue(key) }}</code>
@@ -158,6 +162,7 @@
                       <td>
                         <div class="api-key-table__actions">
                           <t-button
+                            v-if="key.key_kind !== 'personal'"
                             shape="square"
                             variant="text"
                             :title="$t('integrations.api.copy')"
@@ -565,6 +570,8 @@ import { useI18n } from 'vue-i18n'
 import { getCurrentUser } from '@/api/auth'
 import { listAgents, BUILTIN_SMART_REASONING_ID, type CustomAgent } from '@/api/agent'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import PersonalAPIIntegrationSettings from './PersonalAPIIntegrationSettings.vue'
+import { useAuthStore } from '@/stores/auth'
 import {
   createTenantAPIKey,
   deleteTenantAPIKey,
@@ -588,6 +595,9 @@ import {
 } from '@/config/apiKeyCapabilities'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
+const isOwnerMode = computed(() => authStore.currentTenantRole === 'owner')
+const ownerSettingsLoaded = ref(false)
 
 const DEFAULT_DIRECT_HEADER_NAME = 'X-External-User-ID'
 const DEFAULT_TOKEN_HEADER_NAME = 'X-External-User-Token'
@@ -1011,8 +1021,9 @@ async function loadAPIKeys() {
       throw new Error(resp.message || t('integrations.api.loadApiKeysFailed'))
     }
     apiKeys.value = resp.data || []
-    if (!apiKey.value && apiKeys.value.length > 0) {
-      apiKey.value = apiKeys.value[0].api_key || ''
+    const tenantKey = apiKeys.value.find((key) => key.key_kind !== 'personal')
+    if (!apiKey.value && tenantKey) {
+      apiKey.value = tenantKey.api_key || ''
     }
   } catch (err: any) {
     MessagePlugin.error(err?.message || t('integrations.api.loadApiKeysFailed'))
@@ -1358,6 +1369,7 @@ function formatKeyKnowledgeScope(ids: string[] = []) {
 function formatKeyMaskedValue(key: TenantAPIKey) {
   const value = key.api_key || ''
   if (!value) return '-'
+  if (key.key_kind === 'personal') return value
   return maskAPIKey(value)
 }
 
@@ -1550,11 +1562,19 @@ function stopPlayground() {
   playgroundController.value?.abort()
 }
 
-onMounted(async () => {
+async function loadOwnerSettings() {
+  if (ownerSettingsLoaded.value || !isOwnerMode.value) return
+  ownerSettingsLoaded.value = true
   await tryLoadWailsApiBaseURL()
   await loadDesktopApiPrefs()
   await load()
+}
+
+watch(isOwnerMode, (owner) => {
+  if (owner) void loadOwnerSettings()
 })
+
+onMounted(loadOwnerSettings)
 onBeforeUnmount(stopPlayground)
 </script>
 
@@ -2427,6 +2447,13 @@ onBeforeUnmount(stopPlayground)
     font-size: 13px;
     line-height: 1.5;
   }
+}
+
+.api-key-owner {
+  display: block;
+  margin-top: 4px;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
 }
 
 .row-control,

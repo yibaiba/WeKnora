@@ -104,6 +104,13 @@ export interface TenantAPIKey {
   last_used_at?: string
   expires_at?: string
   created_at: string
+  key_kind?: 'tenant' | 'personal'
+  owner_user_id?: string
+  owner?: {
+    id: string
+    username: string
+    email: string
+  }
 }
 
 export interface CreatedTenantAPIKey extends TenantAPIKey {
@@ -116,6 +123,27 @@ export interface CreateTenantAPIKeyPayload {
   knowledge_base_ids?: string[]
   capabilities?: TenantAPIKeyCapability[]
   expires_at_unix?: number
+}
+
+export interface CreatePersonalAPIKeyPayload {
+  name: string
+  knowledge_base_ids: string[]
+  expires_at_unix?: number
+}
+
+export interface PersonalAPISession {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonalAPIMessage {
+  id: string
+  session_id: string
+  role: string
+  content: string
+  created_at: string
 }
 
 // 搜索空间参数
@@ -240,6 +268,78 @@ export async function deleteTenantAPIKey(
       message: error.message || t('error.tenant.deleteApiKeyFailed'),
     }
   }
+}
+
+export async function listPersonalAPIKeys(
+  tenantId: number,
+): Promise<{ success: boolean; data?: TenantAPIKey[]; message?: string }> {
+  try {
+    return await get(`/api/v1/tenants/${tenantId}/me/api-keys`) as unknown as {
+      success: boolean
+      data?: TenantAPIKey[]
+      message?: string
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || t('error.tenant.listApiKeysFailed') }
+  }
+}
+
+export async function createPersonalAPIKey(
+  tenantId: number,
+  payload: CreatePersonalAPIKeyPayload,
+): Promise<{ success: boolean; data?: CreatedTenantAPIKey; message?: string }> {
+  try {
+    return await post(`/api/v1/tenants/${tenantId}/me/api-keys`, payload) as unknown as {
+      success: boolean
+      data?: CreatedTenantAPIKey
+      message?: string
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || t('error.tenant.createApiKeyFailed') }
+  }
+}
+
+export async function deletePersonalAPIKey(
+  tenantId: number,
+  keyId: number,
+): Promise<{ success: boolean; message?: string }> {
+  try {
+    return await del(`/api/v1/tenants/${tenantId}/me/api-keys/${keyId}`) as unknown as {
+      success: boolean
+      message?: string
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || t('error.tenant.deleteApiKeyFailed') }
+  }
+}
+
+export async function listPersonalAPISessions(
+  tenantId: number,
+  params: { page?: number; page_size?: number; keyword?: string } = {},
+): Promise<{ success: boolean; data?: PersonalAPISession[]; total?: number; page?: number; page_size?: number }> {
+  const query = new URLSearchParams()
+  query.set('page', String(params.page || 1))
+  query.set('page_size', String(params.page_size || 20))
+  if (params.keyword?.trim()) query.set('keyword', params.keyword.trim())
+  return await get(`/api/v1/tenants/${tenantId}/me/api-sessions?${query.toString()}`) as unknown as {
+    success: boolean
+    data?: PersonalAPISession[]
+    total?: number
+    page?: number
+    page_size?: number
+  }
+}
+
+export async function listPersonalAPISessionMessages(
+  tenantId: number,
+  sessionId: string,
+  page = 1,
+  pageSize = 100,
+): Promise<{ success: boolean; data?: PersonalAPIMessage[] }> {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  return await get(
+    `/api/v1/tenants/${tenantId}/me/api-sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`,
+  ) as unknown as { success: boolean; data?: PersonalAPIMessage[] }
 }
 
 /**
