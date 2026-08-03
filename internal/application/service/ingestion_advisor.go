@@ -172,24 +172,40 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 }
 
 func validateAdvisorModelResponse(response advisorModelResponse) error {
-	if _, ok := allowedDocumentKinds[response.DocumentKind]; !ok {
-		return fmt.Errorf("document_kind %q 不受支持", response.DocumentKind)
+	return ValidateIngestionAnalysis(&types.IngestionAnalysis{
+		DocumentKind:           response.DocumentKind,
+		Confidence:             response.Confidence,
+		RecommendedContentMode: response.RecommendedContentMode,
+		ReasonCodes:            response.ReasonCodes,
+		Summary:                response.Summary,
+		RecommendedChunking:    response.RecommendedChunking,
+	})
+}
+
+// ValidateIngestionAnalysis protects the pipeline from both remote model
+// responses and injected advisor implementations.
+func ValidateIngestionAnalysis(analysis *types.IngestionAnalysis) error {
+	if analysis == nil {
+		return fmt.Errorf("文档分析结果为空")
 	}
-	if response.Confidence < 0 || response.Confidence > 1 {
+	if _, ok := allowedDocumentKinds[analysis.DocumentKind]; !ok {
+		return fmt.Errorf("document_kind %q 不受支持", analysis.DocumentKind)
+	}
+	if analysis.Confidence < 0 || analysis.Confidence > 1 {
 		return fmt.Errorf("confidence 必须在 0 到 1 之间")
 	}
-	if _, ok := allowedContentModes[response.RecommendedContentMode]; !ok {
-		return fmt.Errorf("recommended_content_mode %q 不受支持", response.RecommendedContentMode)
+	if _, ok := allowedContentModes[analysis.RecommendedContentMode]; !ok {
+		return fmt.Errorf("recommended_content_mode %q 不受支持", analysis.RecommendedContentMode)
 	}
-	if len(response.ReasonCodes) == 0 || strings.TrimSpace(response.Summary) == "" {
+	if len(analysis.ReasonCodes) == 0 || strings.TrimSpace(analysis.Summary) == "" {
 		return fmt.Errorf("reason_codes 和 summary 不能为空")
 	}
-	for _, code := range response.ReasonCodes {
+	for _, code := range analysis.ReasonCodes {
 		if strings.TrimSpace(code) == "" {
 			return fmt.Errorf("reason_codes 不能包含空值")
 		}
 	}
-	return ValidateIngestionChunkingRecommendation(response.RecommendedChunking)
+	return ValidateIngestionChunkingRecommendation(analysis.RecommendedChunking)
 }
 
 func ValidateIngestionChunkingRecommendation(value types.IngestionChunkingRecommendation) error {

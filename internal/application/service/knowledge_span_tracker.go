@@ -672,8 +672,8 @@ func (t *spanTracker) cascadeDependentStages(ctx context.Context, failedStage *S
 
 // stagesDependingOn returns the transitive closure of stages that have
 // `stage` as an upstream dependency (direct or indirect). Computed by
-// reverse-walking StageDependencies; the result is bounded to 5 since
-// AllStages has five members, so a naive O(N²) walk is fine.
+// reverse-walking StageDependencies; the result is bounded by the small
+// canonical stage set, so a naive O(N²) walk is fine.
 func stagesDependingOn(stage string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -708,9 +708,9 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
-// isMainPipelineStage reports whether stage is one of the 5 mandatory
-// pipeline stages (docreader / chunking / embedding / multimodal /
-// postprocess). A failure in any of these terminally invalidates the
+// isMainPipelineStage reports whether stage is one of the mandatory
+// pipeline stages (docreader / document analysis / chunking / embedding /
+// multimodal / postprocess). A failure in any of these terminally invalidates the
 // attempt and must close the root as failed. Optional downstream stages
 // added later (summary, question, wiki, graph) do NOT match — those
 // can fail individually without poisoning the parse result.

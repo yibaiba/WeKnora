@@ -23,6 +23,10 @@ const (
 	// error (encoding, corrupted file, OCR engine crash, ...).
 	ErrCodeDocReaderParseFailed = "DOCREADER_PARSE_FAILED"
 
+	// ErrCodeDocumentAnalysisFailed — the smart ingestion model could not
+	// produce a valid, bounded chunking recommendation.
+	ErrCodeDocumentAnalysisFailed = "DOCUMENT_ANALYSIS_FAILED"
+
 	// ErrCodeChunkingFailed — text chunking step itself failed (rare;
 	// usually only on extreme-size inputs).
 	ErrCodeChunkingFailed = "CHUNKING_FAILED"

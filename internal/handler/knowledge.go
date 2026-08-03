@@ -691,9 +691,9 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 // @Success      200       {object}  map[string]interface{}
 // @Router       /api/v1/knowledge/{id}/spans [get]
 //
-// Always returns the canonical 5-stage timeline; missing stage rows are
-// synthesized as "pending" so the frontend timeline always renders five
-// segments. Subspans (multimodal.image[i], generation.*) ride along under
+// Always returns the canonical stage timeline; missing stage rows are
+// synthesized as "pending" so the frontend always renders every segment.
+// Subspans (multimodal.image[i], generation.*) ride along under
 // each stage as children when present.
 func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -754,7 +754,7 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 	// Build tree: index by SpanID, then attach to parents. Stages
 	// missing from the DB are synthesized as "pending" placeholders
 	// under a synthetic (or real, if present) root so the timeline
-	// always renders five segments. parse_status threads through so
+	// always renders every segment. parse_status threads through so
 	// pre-tracker historical knowledge (no rows but parse_status is
 	// already terminal) renders as done/failed instead of pending —
 	// otherwise legacy completed documents would forever look like
@@ -828,7 +828,7 @@ func knowledgeSpansLastError(
 // buildSpanTree assembles a flat list of span rows into a parent-child
 // tree rooted at the (knowledge, attempt)'s root span. Missing canonical
 // stages are filled in with pending placeholders so the UI always renders
-// the five timeline segments. Returns the root, the current_stage name
+// the canonical timeline segments. Returns the root, the current_stage name
 // (the running stage if any), and the most recent failed span if one
 // exists.
 //
@@ -926,7 +926,7 @@ func buildSpanTree(knowledgeID string, attempt int, rows []types.KnowledgeProces
 	}
 
 	// Synthesize missing stage rows as children of root so the timeline
-	// always shows 5 segments. Status mirrors the synthesized root —
+	// always shows every segment. Status mirrors the synthesized root —
 	// pending while the pipeline is still running, done/failed for
 	// historical knowledge whose terminal state we know but whose
 	// per-stage timing was never recorded. Appended in AllStages order

@@ -35,23 +35,25 @@ const (
 	SpanStatusCancelled = "cancelled" // not run because an upstream span failed
 )
 
-// Stage names — the closed set the UI builds its 5-segment timeline from.
+// Stage names — the closed set the UI builds its processing timeline from.
 // Adding a stage requires a coordinated frontend release. SubSpan names
 // are free-form (e.g. "multimodal.image[0]") and don't go through this
 // list.
 const (
-	StageDocReader   = "docreader"
-	StageChunking    = "chunking"
-	StageEmbedding   = "embedding"
-	StageMultimodal  = "multimodal"
-	StagePostProcess = "postprocess"
+	StageDocReader        = "docreader"
+	StageDocumentAnalysis = "document_analysis"
+	StageChunking         = "chunking"
+	StageEmbedding        = "embedding"
+	StageMultimodal       = "multimodal"
+	StagePostProcess      = "postprocess"
 )
 
 // AllStages is the canonical, ordered stage list. Used by the API layer
-// to synthesize "pending" placeholders so the timeline always renders five
+// to synthesize "pending" placeholders so the timeline always renders all
 // segments even before parsing starts.
 var AllStages = []string{
 	StageDocReader,
+	StageDocumentAnalysis,
 	StageChunking,
 	StageEmbedding,
 	StageMultimodal,
@@ -68,11 +70,12 @@ var AllStages = []string{
 // regardless of vector indexing config). PostProcess joins both before
 // running its handlers.
 var StageDependencies = map[string][]string{
-	StageDocReader:   nil,
-	StageChunking:    {StageDocReader},
-	StageEmbedding:   {StageChunking},
-	StageMultimodal:  {StageChunking},
-	StagePostProcess: {StageEmbedding, StageMultimodal},
+	StageDocReader:        nil,
+	StageDocumentAnalysis: {StageDocReader},
+	StageChunking:         {StageDocumentAnalysis},
+	StageEmbedding:        {StageChunking},
+	StageMultimodal:       {StageChunking},
+	StagePostProcess:      {StageEmbedding, StageMultimodal},
 }
 
 // KnowledgeProcessingSpan is one row in knowledge_processing_spans.

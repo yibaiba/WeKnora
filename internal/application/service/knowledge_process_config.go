@@ -156,6 +156,9 @@ func ValidateProcessOverrides(
 	if overrides == nil {
 		return nil
 	}
+	if err := ValidateIngestionAdvisorConfig(overrides.IngestionAdvisor); err != nil {
+		return werrors.NewBadRequestError(err.Error())
+	}
 
 	hasImage := false
 	hasAudio := false

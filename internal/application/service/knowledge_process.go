@@ -2267,7 +2267,7 @@ func (s *knowledgeService) ReparseKnowledge(
 
 	// Allocate a fresh span tree attempt up front. Doing this BEFORE
 	// the cleanup + enqueue means: (a) the UI immediately sees a new
-	// attempt with all five stages back to "pending" instead of the
+	// attempt with all canonical stages back to "pending" instead of the
 	// previous run's "failed" badge lingering; (b) the worker's
 	// fallback path won't double-allocate when payload.Attempt is
 	// already set on the queued task.
@@ -3257,6 +3257,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		}
 	} else if len(payload.Passages) > 0 {
 		// Text passage import - direct chunking, no conversion needed
+		s.skipStage(ctx, knowledge.ID, types.StageDocumentAnalysis, "passage import")
 		passageChunks := make([]types.ParsedChunk, 0, len(payload.Passages))
 		start, end := 0, 0
 		for i, p := range payload.Passages {
@@ -3370,6 +3371,19 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		}
 
 		logger.Infof(ctx, "Resolved %d total images for knowledge %s", len(storedImages), knowledge.ID)
+	}
+
+	// Step 2.5: Smart document analysis owns only the chunking fields it
+	// recommends. Parser, VLM, ASR, enrichment and language/token settings
+	// remain in the previously resolved effective config.
+	eff, err = s.applyIngestionAdvisor(ctx, ingestionAdvisorRun{
+		Knowledge: knowledge,
+		KB:        kb,
+		Content:   convertResult.MarkdownContent,
+		Effective: eff,
+	})
+	if err != nil {
+		return nil
 	}
 
 	// Step 3: Split into chunks using Go chunker

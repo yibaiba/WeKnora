@@ -61,7 +61,7 @@ func TestBuildSpanTree_AssemblesParentChild(t *testing.T) {
 
 // TestBuildSpanTree_NoRows_SynthesizesPlaceholderRoot ensures the API
 // keeps a stable shape for fresh / never-parsed knowledge: the frontend
-// always gets a `trace` with five pending stage children, never a
+// always gets a `trace` with all pending stage children, never a
 // nil/empty response.
 func TestBuildSpanTree_NoRows_SynthesizesPlaceholderRoot(t *testing.T) {
 	tree, currentStage, lastFail := buildSpanTree("kid-empty", 0, nil, "")

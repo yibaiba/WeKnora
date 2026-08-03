@@ -386,7 +386,10 @@ func (p ManualKnowledgePayload) IsDraft() bool {
 	return p.Status == "" || p.Status == ManualKnowledgeStatusDraft
 }
 
-const metadataKeyProcessOverrides = "process_overrides"
+const (
+	metadataKeyProcessOverrides  = "process_overrides"
+	metadataKeyIngestionAnalysis = "ingestion_analysis"
+)
 
 // ProcessOverrides parses process config overrides from knowledge metadata.
 func (k *Knowledge) ProcessOverrides() (*KnowledgeProcessOverrides, error) {
@@ -439,6 +442,61 @@ func (k *Knowledge) SetProcessOverrides(o *KnowledgeProcessOverrides) error {
 		return err
 	}
 	k.Metadata = JSON(bytes)
+	return nil
+}
+
+// IngestionAnalysis parses the most recent successful smart-ingestion result.
+func (k *Knowledge) IngestionAnalysis() (*IngestionAnalysis, error) {
+	if k == nil || len(k.Metadata) == 0 {
+		return nil, nil
+	}
+	metadataMap, err := k.Metadata.Map()
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := metadataMap[metadataKeyIngestionAnalysis]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var analysis IngestionAnalysis
+	if err := json.Unmarshal(data, &analysis); err != nil {
+		return nil, err
+	}
+	return &analysis, nil
+}
+
+// SetIngestionAnalysis merges or removes ingestion_analysis while preserving
+// caller metadata and per-upload process overrides.
+func (k *Knowledge) SetIngestionAnalysis(analysis *IngestionAnalysis) error {
+	if k == nil {
+		return nil
+	}
+	metadataMap, err := k.Metadata.Map()
+	if err != nil {
+		return err
+	}
+	if analysis == nil {
+		delete(metadataMap, metadataKeyIngestionAnalysis)
+	} else {
+		data, err := json.Marshal(analysis)
+		if err != nil {
+			return err
+		}
+		var value interface{}
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		metadataMap[metadataKeyIngestionAnalysis] = value
+	}
+	data, err := json.Marshal(metadataMap)
+	if err != nil {
+		return err
+	}
+	k.Metadata = JSON(data)
 	return nil
 }
 
