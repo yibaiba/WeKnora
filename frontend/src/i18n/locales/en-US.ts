@@ -683,10 +683,17 @@ export default {
     processConfig: {
       title: 'Parse config for this run',
       kbDefault: 'Using knowledge base defaults',
-      graph: 'Knowledge graph'
+      graph: 'Knowledge graph',
+      advisor: 'Ingestion advisor',
+      advisorSmart: 'Smart analysis',
+      advisorOff: 'Knowledge base settings'
     },
     attempt: 'Attempt {n}',
     retry: 'Retry parsing',
+    smartRetry: 'Smart retry',
+    kbRetry: 'Retry with KB settings',
+    retrySubmitted: 'Reparse submitted',
+    retryFailed: 'Failed to submit reparse',
     refresh: 'Refresh now',
     copy: 'Copy',
     copyDetails: 'Copy details',
@@ -747,8 +754,53 @@ export default {
       hideJson: 'Collapse JSON',
       includingChildren: 'incl. children'
     },
+    analysis: {
+      title: 'Document analysis result',
+      documentKindLabel: 'Document profile',
+      confidenceLabel: 'Confidence',
+      contentModeLabel: 'Content mode label',
+      modelLabel: 'Model',
+      promptVersionLabel: 'Prompt version',
+      reasonCodesLabel: 'Decision reasons',
+      chunkingComparison: 'Recommended and applied chunking',
+      parameter: 'Parameter',
+      recommended: 'Recommended',
+      applied: 'Applied',
+      documentKind: {
+        policy_manual: 'Policy / manual',
+        faq: 'FAQ',
+        tabular_data: 'Tabular data',
+        report: 'Report',
+        meeting_notes: 'Meeting notes',
+        presentation: 'Presentation',
+        short_article: 'Short article',
+        mixed_document: 'Mixed document'
+      },
+      contentMode: {
+        document: 'Document',
+        faq_candidate: 'FAQ candidate',
+        wiki_candidate: 'Wiki candidate'
+      },
+      strategy: {
+        auto: 'Auto',
+        heading: 'Heading-aware',
+        heuristic: 'Heuristic',
+        legacy: 'Legacy',
+        recursive: 'Recursive'
+      },
+      chunking: {
+        strategy: 'Strategy',
+        chunk_size: 'Chunk size',
+        chunk_overlap: 'Overlap',
+        enable_parent_child: 'Parent-child',
+        parent_chunk_size: 'Parent chunk size',
+        child_chunk_size: 'Child chunk size',
+        separators: 'Separators'
+      }
+    },
     stage: {
       docreader: 'Document parsing',
+      document_analysis: 'Document analysis',
       chunking: 'Chunking',
       embedding: 'Vectorization',
       multimodal: 'Multimodal recognition',
@@ -764,6 +816,8 @@ export default {
       cancelled: 'Cancelled'
     },
     errorCode: {
+      DOCUMENT_ANALYSIS_FAILED: 'Document analysis failed',
+      DOCUMENT_ANALYSIS_FAILED_SUGGESTION: 'Review the raw error below. Fix the model configuration and retry smart analysis, or use the knowledge base chunking settings.',
       UNKNOWN_SUGGESTION: 'Check the application logs for details.'
     }
   },

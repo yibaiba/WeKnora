@@ -66,6 +66,28 @@ export interface IngestionAdvisorConfig {
   prompt_version?: 'v1'
 }
 
+export interface IngestionChunkingRecommendation {
+  strategy: string
+  chunk_size: number
+  chunk_overlap: number
+  enable_parent_child: boolean
+  parent_chunk_size: number
+  child_chunk_size: number
+  separators: string[]
+}
+
+export interface IngestionAnalysis {
+  document_kind: string
+  confidence: number
+  recommended_content_mode: string
+  reason_codes: string[]
+  summary: string
+  recommended_chunking: IngestionChunkingRecommendation
+  applied_chunking: IngestionChunkingRecommendation
+  model_id: string
+  prompt_version: string
+}
+
 export interface KnowledgeProcessOverrides {
   ingestion_advisor?: IngestionAdvisorConfig
   parser_engine_rules?: ParserEngineRule[]

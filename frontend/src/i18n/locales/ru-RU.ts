@@ -5012,6 +5012,10 @@ export default {
     root: 'Обработка знаний',
     attempt: 'Попытка {n}',
     retry: 'Повторить парсинг',
+    smartRetry: 'Умный повтор',
+    kbRetry: 'Повтор с настройками базы',
+    retrySubmitted: 'Повторный разбор запущен',
+    retryFailed: 'Не удалось запустить повторный разбор',
     refresh: 'Refresh now',
     copy: 'Copy',
     copyDetails: 'Скопировать детали',
@@ -5033,6 +5037,8 @@ export default {
     totalDuration: 'Всего: {d}',
     total: 'Всего {d}',
     errorCode: {
+      DOCUMENT_ANALYSIS_FAILED: 'Ошибка интеллектуального анализа документа',
+      DOCUMENT_ANALYSIS_FAILED_SUGGESTION: 'Проверьте исходную ошибку ниже. Исправьте настройку модели и выполните умный повтор или используйте настройки разбиения базы знаний.',
       UNKNOWN_SUGGESTION: 'Проверьте логи приложения для подробностей.'
     },
     status: {
@@ -5046,6 +5052,7 @@ export default {
     },
     stage: {
       docreader: 'Парсинг документа',
+      document_analysis: 'Интеллектуальный анализ',
       chunking: 'Разбиение',
       embedding: 'Векторизация',
       multimodal: 'Мультимодальное распознавание',
@@ -5079,6 +5086,50 @@ export default {
       hideJson: 'Скрыть JSON',
       includingChildren: 'incl. children'
     },
+    analysis: {
+      title: 'Результат анализа документа',
+      documentKindLabel: 'Профиль документа',
+      confidenceLabel: 'Уверенность',
+      contentModeLabel: 'Метка режима содержимого',
+      modelLabel: 'Модель',
+      promptVersionLabel: 'Версия Prompt',
+      reasonCodesLabel: 'Основания решения',
+      chunkingComparison: 'Рекомендуемые и применённые параметры разбиения',
+      parameter: 'Параметр',
+      recommended: 'Рекомендовано',
+      applied: 'Применено',
+      documentKind: {
+        policy_manual: 'Регламент / руководство',
+        faq: 'FAQ',
+        tabular_data: 'Табличные данные',
+        report: 'Отчёт',
+        meeting_notes: 'Протокол встречи',
+        presentation: 'Презентация',
+        short_article: 'Короткая статья',
+        mixed_document: 'Смешанный документ'
+      },
+      contentMode: {
+        document: 'Документ',
+        faq_candidate: 'Кандидат FAQ',
+        wiki_candidate: 'Кандидат Wiki'
+      },
+      strategy: {
+        auto: 'Авто',
+        heading: 'По заголовкам',
+        heuristic: 'Эвристическая',
+        legacy: 'Традиционная',
+        recursive: 'Рекурсивная'
+      },
+      chunking: {
+        strategy: 'Стратегия',
+        chunk_size: 'Размер чанка',
+        chunk_overlap: 'Перекрытие',
+        enable_parent_child: 'Родительско-дочернее',
+        parent_chunk_size: 'Размер родительского чанка',
+        child_chunk_size: 'Размер дочернего чанка',
+        separators: 'Разделители'
+      }
+    },
     tab: {
       overview: 'Overview',
       raw: 'Raw JSON'
@@ -5094,7 +5145,10 @@ export default {
     processConfig: {
       title: 'Конфигурация обработки',
       kbDefault: 'Используются настройки базы знаний по умолчанию',
-      graph: 'Граф знаний'
+      graph: 'Граф знаний',
+      advisor: 'Советник загрузки',
+      advisorSmart: 'Интеллектуальный анализ',
+      advisorOff: 'Настройки базы знаний'
     }
   },
   uploadConfirm: {

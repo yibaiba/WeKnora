@@ -5012,6 +5012,10 @@ export default {
     root: '知识处理',
     attempt: '第 {n} 次尝试',
     retry: '重新解析',
+    smartRetry: '智能重试',
+    kbRetry: '按知识库配置重试',
+    retrySubmitted: '已提交重新解析',
+    retryFailed: '提交重新解析失败',
     refresh: '立即刷新',
     copy: '复制',
     copyDetails: '复制详情',
@@ -5033,6 +5037,8 @@ export default {
     totalDuration: '总耗时：{d}',
     total: '总耗时 {d}',
     errorCode: {
+      DOCUMENT_ANALYSIS_FAILED: '文档智能分析失败',
+      DOCUMENT_ANALYSIS_FAILED_SUGGESTION: '查看下方原始错误；修复模型配置后智能重试，或改用知识库切分配置。',
       UNKNOWN_SUGGESTION: '请查看应用日志获取详细信息。'
     },
     status: {
@@ -5046,6 +5052,7 @@ export default {
     },
     stage: {
       docreader: '文档解析',
+      document_analysis: '文档智能分析',
       chunking: '分块',
       embedding: '向量化',
       multimodal: '多模态识别',
@@ -5079,6 +5086,50 @@ export default {
       hideJson: '收起 JSON',
       includingChildren: '含子任务'
     },
+    analysis: {
+      title: '文档分析结果',
+      documentKindLabel: '文档画像',
+      confidenceLabel: '置信度',
+      contentModeLabel: '内容模式标注',
+      modelLabel: '模型',
+      promptVersionLabel: 'Prompt 版本',
+      reasonCodesLabel: '判断依据',
+      chunkingComparison: '推荐参数与实际应用参数',
+      parameter: '参数',
+      recommended: '推荐',
+      applied: '实际应用',
+      documentKind: {
+        policy_manual: '制度 / 手册',
+        faq: 'FAQ 型',
+        tabular_data: '表格数据',
+        report: '报告',
+        meeting_notes: '会议记录',
+        presentation: '演示材料',
+        short_article: '短文',
+        mixed_document: '混合文档'
+      },
+      contentMode: {
+        document: '文档',
+        faq_candidate: 'FAQ 候选',
+        wiki_candidate: 'Wiki 候选'
+      },
+      strategy: {
+        auto: '自动',
+        heading: '按标题',
+        heuristic: '启发式',
+        legacy: '传统',
+        recursive: '递归'
+      },
+      chunking: {
+        strategy: '切分策略',
+        chunk_size: '块大小',
+        chunk_overlap: '重叠',
+        enable_parent_child: '父子块',
+        parent_chunk_size: '父块大小',
+        child_chunk_size: '子块大小',
+        separators: '分隔符'
+      }
+    },
     tab: {
       overview: '概览',
       raw: '原始 JSON'
@@ -5094,7 +5145,10 @@ export default {
     processConfig: {
       title: '本次解析配置',
       kbDefault: '使用知识库默认配置',
-      graph: '知识图谱'
+      graph: '知识图谱',
+      advisor: '智能入库',
+      advisorSmart: '智能分析',
+      advisorOff: '知识库配置'
     }
   },
   uploadConfirm: {

@@ -5012,6 +5012,10 @@ export default {
     root: '지식 처리',
     attempt: '{n}번째 시도',
     retry: '다시 파싱',
+    smartRetry: '스마트 재시도',
+    kbRetry: '지식베이스 설정으로 재시도',
+    retrySubmitted: '재파싱이 제출되었습니다',
+    retryFailed: '재파싱 제출 실패',
     refresh: '지금 새로고침',
     copy: '복사',
     copyDetails: '세부정보 복사',
@@ -5033,6 +5037,8 @@ export default {
     totalDuration: '총 소요시간: {d}',
     total: '총 {d}',
     errorCode: {
+      DOCUMENT_ANALYSIS_FAILED: '문서 스마트 분석 실패',
+      DOCUMENT_ANALYSIS_FAILED_SUGGESTION: '아래 원본 오류를 확인하세요. 모델 설정을 수정한 뒤 스마트 재시도하거나 지식베이스 청킹 설정을 사용하세요.',
       UNKNOWN_SUGGESTION: '자세한 내용은 애플리케이션 로그를 확인하세요.'
     },
     status: {
@@ -5046,6 +5052,7 @@ export default {
     },
     stage: {
       docreader: '문서 파싱',
+      document_analysis: '문서 스마트 분석',
       chunking: '청킹',
       embedding: '벡터화',
       multimodal: '멀티모달 인식',
@@ -5079,6 +5086,50 @@ export default {
       hideJson: 'JSON 접기',
       includingChildren: '하위 작업 포함'
     },
+    analysis: {
+      title: '문서 분석 결과',
+      documentKindLabel: '문서 프로필',
+      confidenceLabel: '신뢰도',
+      contentModeLabel: '콘텐츠 모드 라벨',
+      modelLabel: '모델',
+      promptVersionLabel: 'Prompt 버전',
+      reasonCodesLabel: '판단 근거',
+      chunkingComparison: '권장 및 실제 적용 청킹 매개변수',
+      parameter: '매개변수',
+      recommended: '권장',
+      applied: '실제 적용',
+      documentKind: {
+        policy_manual: '정책 / 매뉴얼',
+        faq: 'FAQ형',
+        tabular_data: '표 데이터',
+        report: '보고서',
+        meeting_notes: '회의록',
+        presentation: '프레젠테이션',
+        short_article: '짧은 글',
+        mixed_document: '혼합 문서'
+      },
+      contentMode: {
+        document: '문서',
+        faq_candidate: 'FAQ 후보',
+        wiki_candidate: 'Wiki 후보'
+      },
+      strategy: {
+        auto: '자동',
+        heading: '제목 기준',
+        heuristic: '휴리스틱',
+        legacy: '기존 방식',
+        recursive: '재귀'
+      },
+      chunking: {
+        strategy: '청킹 전략',
+        chunk_size: '청크 크기',
+        chunk_overlap: '겹침',
+        enable_parent_child: '부모-자식',
+        parent_chunk_size: '부모 청크 크기',
+        child_chunk_size: '자식 청크 크기',
+        separators: '구분자'
+      }
+    },
     tab: {
       overview: '개요',
       raw: '원본 JSON'
@@ -5094,7 +5145,10 @@ export default {
     processConfig: {
       title: '이번 파싱 설정',
       kbDefault: '지식 베이스 기본 설정 사용',
-      graph: '지식 그래프'
+      graph: '지식 그래프',
+      advisor: '스마트 입고',
+      advisorSmart: '스마트 분석',
+      advisorOff: '지식베이스 설정'
     }
   },
   uploadConfirm: {

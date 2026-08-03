@@ -10,7 +10,13 @@ import {
   type KnowledgeTraceNode,
 } from '@/utils/knowledgeTrace'
 import { resolveTimelineHeaderStatus } from '@/utils/knowledgeProcessingStatus'
-import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
+import KnowledgeIngestionAnalysisDetail from './knowledge-ingestion-analysis-detail.vue'
+import type {
+  IngestionAnalysis,
+  IngestionAdvisorMode,
+  IngestionChunkingRecommendation,
+  KnowledgeProcessOverrides,
+} from '@/types/knowledgeProcess'
 
 type SpanNode = KnowledgeTraceNode
 
@@ -80,11 +86,12 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const STAGES = ['docreader', 'chunking', 'embedding', 'multimodal', 'postprocess'] as const
+const STAGES = ['docreader', 'document_analysis', 'chunking', 'embedding', 'multimodal', 'postprocess'] as const
 const POLL_INTERVAL_MS = 2000
 
 const data = ref<SpansResponse | null>(null)
 const processOverrides = ref<KnowledgeProcessOverrides | null>(null)
+const ingestionAnalysis = ref<IngestionAnalysis | null>(null)
 const currentKnowledgeFileType = ref('')
 const loading = ref(false)
 const refreshing = ref(false)
@@ -154,8 +161,21 @@ const stages = computed<SpanNode[]>(() => {
       byName.set(c.name, c.name === 'postprocess' ? groupPostprocessGraphSpans(c) : c)
     }
   }
-  return STAGES.map((n) => byName.get(n) || ({ name: n, kind: 'stage', status: 'pending' } as SpanNode))
+  return STAGES.map((name) => {
+    const existing = byName.get(name)
+    if (existing) return existing
+    const status = name === 'document_analysis' && shouldShowAnalysisAsSkipped(byName)
+      ? 'skipped'
+      : 'pending'
+    return { name, kind: 'stage', status } as SpanNode
+  })
 })
+
+function shouldShowAnalysisAsSkipped(byName: Map<string, SpanNode>): boolean {
+  const downstreamStarted = ['chunking', 'embedding', 'multimodal', 'postprocess']
+    .some(name => byName.has(name))
+  return downstreamStarted || isHardTerminal(data.value?.parse_status)
+}
 
 const currentStageLabel = computed(() => {
   const running = stages.value.find((s) => s.status === 'running')
@@ -459,17 +479,59 @@ async function copySpan(node: SpanNode) {
   await copyValue(node)
 }
 
-async function onRetry() {
-  if (!props.knowledgeId) return
+const retryingMode = ref<'default' | IngestionAdvisorMode | null>(null)
+
+const documentAnalysisFailed = computed(() => {
+  if (data.value?.parse_status !== 'failed') return false
+  const stageFailed = stages.value.some(stage =>
+    stage.name === 'document_analysis' && stage.status === 'failed',
+  )
+  return stageFailed || data.value.last_error?.error_code === 'DOCUMENT_ANALYSIS_FAILED'
+})
+
+function buildAdvisorRetryOverrides(mode: IngestionAdvisorMode): KnowledgeProcessOverrides {
+  const source = processOverrides.value
+  const overrides: KnowledgeProcessOverrides = source ? { ...source } : {}
+  if (mode === 'off') delete overrides.chunking_config
+  overrides.ingestion_advisor = { mode, prompt_version: 'v1' }
+  return overrides
+}
+
+async function submitRetry(
+  mode: 'default' | IngestionAdvisorMode,
+  overrides?: KnowledgeProcessOverrides,
+) {
+  if (!props.knowledgeId || retryingMode.value) return
+  retryingMode.value = mode
   try {
-    await reparseKnowledge(props.knowledgeId)
+    await reparseKnowledge(
+      props.knowledgeId,
+      overrides ? { process_config: overrides } : undefined,
+    )
+    if (overrides) processOverrides.value = overrides
+    ingestionAnalysis.value = null
     selectedAttempt.value = undefined
     attemptStatuses.clear()
     selectedSpanId.value = null
+    MessagePlugin.success(t('knowledgeStages.retrySubmitted'))
     await fetchSpans()
-  } catch {
-    // ignore
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('knowledgeStages.retryFailed'))
+  } finally {
+    retryingMode.value = null
   }
+}
+
+async function onRetry() {
+  await submitRetry('default')
+}
+
+async function onSmartRetry() {
+  await submitRetry('smart', buildAdvisorRetryOverrides('smart'))
+}
+
+async function onKnowledgeBaseRetry() {
+  await submitRetry('off', buildAdvisorRetryOverrides('off'))
 }
 
 async function onManualRefresh() {
@@ -520,6 +582,7 @@ watch(
     selectedAttempt.value = undefined
     data.value = null
     processOverrides.value = null
+    ingestionAnalysis.value = null
     currentKnowledgeFileType.value = ''
     expandedRows.value = new Set(['__root__'])
     selectedSpanId.value = null
@@ -542,12 +605,14 @@ async function fetchProcessOverrides() {
     const res: any = await getKnowledgeDetails(props.knowledgeId)
     if (res?.success && res.data) {
       processOverrides.value = res.data.metadata?.process_overrides ?? null
+      ingestionAnalysis.value = asIngestionAnalysis(res.data.metadata?.ingestion_analysis)
       currentKnowledgeFileType.value = normalizeFileType(
         res.data.file_type || getFileTypeFromName(res.data.file_name || res.data.title || ''),
       )
     }
   } catch {
     processOverrides.value = null
+    ingestionAnalysis.value = null
     currentKnowledgeFileType.value = ''
   }
 }
@@ -1275,6 +1340,44 @@ const traceMetadata = computed(() => {
   return hasContent(m) ? m : null
 })
 
+function isChunkingRecommendation(value: unknown): value is IngestionChunkingRecommendation {
+  if (!value || typeof value !== 'object') return false
+  const chunking = value as Record<string, unknown>
+  return typeof chunking.strategy === 'string' &&
+    typeof chunking.chunk_size === 'number' &&
+    typeof chunking.chunk_overlap === 'number' &&
+    typeof chunking.enable_parent_child === 'boolean' &&
+    typeof chunking.parent_chunk_size === 'number' &&
+    typeof chunking.child_chunk_size === 'number' &&
+    Array.isArray(chunking.separators) &&
+    chunking.separators.every(separator => typeof separator === 'string')
+}
+
+function asIngestionAnalysis(value: unknown): IngestionAnalysis | null {
+  if (!value || typeof value !== 'object') return null
+  const analysis = value as Record<string, unknown>
+  if (typeof analysis.document_kind !== 'string' ||
+    typeof analysis.confidence !== 'number' ||
+    !Number.isFinite(analysis.confidence) ||
+    typeof analysis.recommended_content_mode !== 'string' ||
+    !Array.isArray(analysis.reason_codes) ||
+    !analysis.reason_codes.every(reason => typeof reason === 'string') ||
+    typeof analysis.summary !== 'string' ||
+    typeof analysis.model_id !== 'string' ||
+    typeof analysis.prompt_version !== 'string') return null
+  if (!isChunkingRecommendation(analysis.recommended_chunking) ||
+    !isChunkingRecommendation(analysis.applied_chunking)) return null
+  return analysis as unknown as IngestionAnalysis
+}
+
+const selectedIngestionAnalysis = computed<IngestionAnalysis | null>(() => {
+  const row = selectedRow.value
+  if (!row?.isStage || row.node.name !== 'document_analysis') return null
+  const spanAnalysis = asIngestionAnalysis(row.node.output)
+  if (spanAnalysis) return spanAnalysis
+  return viewingLatestAttempt.value ? ingestionAnalysis.value : null
+})
+
 watch([selectedSpanId, detailTab], () => {
   if (detailTab.value === 'metadata' && !tabHasContent('metadata')) {
     detailTab.value = 'overview'
@@ -1365,8 +1468,15 @@ const processConfigLines = computed<string[]>(() => {
   const o = processOverrides.value
   if (!o) return [t('knowledgeStages.processConfig.kbDefault')]
   const k = (s: string) => `knowledgeStages.processConfig.${s}`
-  const onOff = (v: boolean) => (v ? t(k('on')) : t(k('off')))
+  const onOff = (v: boolean) => (v ? t('uploadConfirm.statusOn') : t('uploadConfirm.statusOff'))
   const lines: string[] = []
+
+  if (o.ingestion_advisor) {
+    const mode = o.ingestion_advisor.mode === 'smart'
+      ? t(k('advisorSmart'))
+      : t(k('advisorOff'))
+    lines.push(`${t(k('advisor'))}: ${mode}`)
+  }
 
   const cc = o.chunking_config
   if (cc) {
@@ -1479,8 +1589,18 @@ const processConfigLines = computed<string[]>(() => {
                   <t-icon :name="cancelling ? 'loading' : 'close-circle'" size="15px" />
                 </button>
               </t-popconfirm>
-              <t-button v-if="data?.parse_status === 'failed'" size="small" theme="primary" variant="outline"
-                @click="onRetry">
+              <div v-if="documentAnalysisFailed" class="kp-retry-actions">
+                <t-button size="small" theme="primary" :loading="retryingMode === 'smart'"
+                  :disabled="retryingMode !== null" @click="onSmartRetry">
+                  {{ t('knowledgeStages.smartRetry') }}
+                </t-button>
+                <t-button size="small" theme="default" variant="outline" :loading="retryingMode === 'off'"
+                  :disabled="retryingMode !== null" @click="onKnowledgeBaseRetry">
+                  {{ t('knowledgeStages.kbRetry') }}
+                </t-button>
+              </div>
+              <t-button v-else-if="data?.parse_status === 'failed'" size="small" theme="primary" variant="outline"
+                :loading="retryingMode === 'default'" :disabled="retryingMode !== null" @click="onRetry">
                 <t-icon name="refresh" size="14px" />
                 <span style="margin-left: 4px">{{ t('knowledgeStages.retry') }}</span>
               </t-button>
@@ -1726,6 +1846,11 @@ const processConfigLines = computed<string[]>(() => {
                   </div>
                 </div>
 
+                <KnowledgeIngestionAnalysisDetail
+                  v-if="selectedIngestionAnalysis"
+                  :analysis="selectedIngestionAnalysis"
+                />
+
                 <div v-if="traceMetadata" class="kp-section">
                   <div class="kp-section-title">{{ t('knowledgeStages.detail.traceMetadata') }}</div>
                   <p class="kp-section-desc">{{ t('knowledgeStages.detail.metadataHint') }}</p>
@@ -1960,6 +2085,12 @@ const processConfigLines = computed<string[]>(() => {
   gap: 4px;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+.kp-retry-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .kp-head-meta {
