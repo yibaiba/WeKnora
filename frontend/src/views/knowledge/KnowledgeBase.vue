@@ -1562,6 +1562,15 @@ const executeUrlImport = async (
   }
 };
 
+const withoutIngestionAdvisor = (
+  processConfig?: KnowledgeProcessOverrides,
+): KnowledgeProcessOverrides | undefined => {
+  if (!processConfig) return undefined;
+  const urlProcessConfig = { ...processConfig };
+  delete urlProcessConfig.ingestion_advisor;
+  return urlProcessConfig;
+};
+
 const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
   if (result.mode === 'manual') {
     return;
@@ -1583,8 +1592,9 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
     await executeUploadBatch(files, { processConfig, tagIds });
   }
 
+  const urlProcessConfig = withoutIngestionAdvisor(processConfig);
   for (const url of urls) {
-    await executeUrlImport(url, processConfig, tagIds);
+    await executeUrlImport(url, urlProcessConfig, tagIds);
   }
 };
 
@@ -1710,12 +1720,16 @@ const confirmRebuildKnowledge = async (index: number, item: KnowledgeCard) => {
   let processOverrides: KnowledgeProcessOverrides | null = item.metadata?.process_overrides ?? null;
   let fileName = item.file_name || item.title || '';
   let fileType = item.file_type || '';
+  let knowledgeType = item.type || '';
+  let isDatasource = Object.prototype.hasOwnProperty.call(item.metadata || {}, 'datasource_id');
   try {
     const detail: any = await getKnowledgeDetails(item.id);
     if (detail?.success && detail.data) {
       processOverrides = detail.data.metadata?.process_overrides ?? processOverrides;
       fileName = detail.data.file_name || detail.data.title || fileName;
       fileType = detail.data.file_type || fileType;
+      knowledgeType = detail.data.type || knowledgeType;
+      isDatasource = Object.prototype.hasOwnProperty.call(detail.data.metadata || {}, 'datasource_id');
     }
   } catch {
     // fall back to the list item's fields
@@ -1725,7 +1739,14 @@ const confirmRebuildKnowledge = async (index: number, item: KnowledgeCard) => {
     const result = await uploadConfirmStore.open({
       mode: 'reparse',
       kbInfo: kbInfo.value,
-      reparse: { knowledgeId: item.id, fileName, fileType, processOverrides },
+      reparse: {
+        knowledgeId: item.id,
+        fileName,
+        fileType,
+        knowledgeType,
+        isDatasource,
+        processOverrides,
+      },
     });
     if (result.mode === 'reparse' && result.reparse) {
       await submitReparse(result.reparse.knowledgeId, result.processConfig);

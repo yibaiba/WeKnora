@@ -822,7 +822,7 @@ const advisorModeAvailable = computed(() => {
   if (props.mode === 'file') return localFiles.value.length > 0
   if (props.mode !== 'reparse') return false
   const source = props.reparsePreview
-  return !!source?.fileName && (source.fileType || '').toLowerCase() !== 'html'
+  return source?.knowledgeType === 'file' && !source.isDatasource
 })
 
 const isSmartAnalysis = computed(() => {
