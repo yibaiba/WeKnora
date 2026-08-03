@@ -38,6 +38,50 @@ func TestTenantAPIKeyServiceCreateAPIKeyUsesSKPrefix(t *testing.T) {
 	}
 }
 
+func TestTenantAPIKeyServiceCreatesAndScopesPersonalKey(t *testing.T) {
+	repo := newFakeTenantAPIKeyRepo()
+	svc := NewTenantAPIKeyService(repo)
+	ownerUserID := "user-1"
+
+	created, err := svc.CreateAPIKey(context.Background(), interfaces.TenantAPIKeyCreateRequest{
+		TenantID:         7,
+		OwnerUserID:      &ownerUserID,
+		Name:             "personal",
+		KnowledgeBaseIDs: []string{"kb-1"},
+		Capabilities:     []string{"retrieve", "chat"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIKey() error = %v", err)
+	}
+	if !ownerMatches(created.APIKey, ownerUserID) || created.APIKey.FullAccess {
+		t.Fatalf("created personal key has unexpected scope: %+v", created.APIKey)
+	}
+
+	keys, err := svc.ListPersonalAPIKeys(context.Background(), 7, ownerUserID)
+	if err != nil || len(keys) != 1 || keys[0].ID != created.APIKey.ID {
+		t.Fatalf("ListPersonalAPIKeys() = (%+v, %v), want created key", keys, err)
+	}
+	if err := svc.RevokePersonalAPIKey(context.Background(), 7, "user-2", created.APIKey.ID); err == nil {
+		t.Fatal("another owner unexpectedly revoked personal key")
+	}
+}
+
+func TestTenantAPIKeyServiceRejectsFullAccessPersonalKey(t *testing.T) {
+	ownerUserID := "user-1"
+	_, err := NewTenantAPIKeyService(newFakeTenantAPIKeyRepo()).CreateAPIKey(
+		context.Background(),
+		interfaces.TenantAPIKeyCreateRequest{
+			TenantID:    7,
+			OwnerUserID: &ownerUserID,
+			Name:        "invalid",
+			FullAccess:  true,
+		},
+	)
+	if err == nil {
+		t.Fatal("CreateAPIKey() accepted full-access personal key")
+	}
+}
+
 func newFakeTenantAPIKeyRepo() *fakeTenantAPIKeyRepo {
 	return &fakeTenantAPIKeyRepo{byHash: map[string]*types.TenantAPIKey{}, nextID: 1}
 }
@@ -74,6 +118,19 @@ func (r *fakeTenantAPIKeyRepo) ListAPIKeys(_ context.Context, tenantID uint64) (
 	return out, nil
 }
 
+func (r *fakeTenantAPIKeyRepo) ListPersonalAPIKeys(
+	_ context.Context, tenantID uint64, ownerUserID string,
+) ([]*types.TenantAPIKey, error) {
+	out := []*types.TenantAPIKey{}
+	for _, key := range r.byHash {
+		if key.TenantIDValue() == tenantID && ownerMatches(key, ownerUserID) && key.RevokedAt == nil {
+			cp := *key
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeTenantAPIKeyRepo) ListPlatformAPIKeys(_ context.Context) ([]*types.TenantAPIKey, error) {
 	out := []*types.TenantAPIKey{}
 	for _, key := range r.byHash {
@@ -94,6 +151,35 @@ func (r *fakeTenantAPIKeyRepo) RevokeAPIKey(_ context.Context, tenantID uint64, 
 		}
 	}
 	return apprepo.ErrTenantAPIKeyNotFound
+}
+
+func (r *fakeTenantAPIKeyRepo) RevokePersonalAPIKey(
+	_ context.Context, tenantID uint64, ownerUserID string, id uint64,
+) error {
+	now := time.Now()
+	for _, key := range r.byHash {
+		if key.ID == id && key.TenantIDValue() == tenantID && ownerMatches(key, ownerUserID) && key.RevokedAt == nil {
+			key.RevokedAt = &now
+			return nil
+		}
+	}
+	return apprepo.ErrTenantAPIKeyNotFound
+}
+
+func (r *fakeTenantAPIKeyRepo) RevokePersonalAPIKeysByOwner(
+	_ context.Context, tenantID uint64, ownerUserID string,
+) error {
+	now := time.Now()
+	for _, key := range r.byHash {
+		if key.TenantIDValue() == tenantID && ownerMatches(key, ownerUserID) && key.RevokedAt == nil {
+			key.RevokedAt = &now
+		}
+	}
+	return nil
+}
+
+func ownerMatches(key *types.TenantAPIKey, ownerUserID string) bool {
+	return key != nil && key.OwnerUserID != nil && *key.OwnerUserID == ownerUserID
 }
 
 func (r *fakeTenantAPIKeyRepo) RevokePlatformAPIKey(_ context.Context, id uint64) error {

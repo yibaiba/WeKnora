@@ -47,6 +47,17 @@ func (r *tenantAPIKeyRepository) ListAPIKeys(ctx context.Context, tenantID uint6
 	return keys, err
 }
 
+func (r *tenantAPIKeyRepository) ListPersonalAPIKeys(
+	ctx context.Context, tenantID uint64, ownerUserID string,
+) ([]*types.TenantAPIKey, error) {
+	var keys []*types.TenantAPIKey
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND owner_user_id = ? AND revoked_at IS NULL", tenantID, ownerUserID).
+		Order("created_at DESC").
+		Find(&keys).Error
+	return keys, err
+}
+
 func (r *tenantAPIKeyRepository) ListPlatformAPIKeys(ctx context.Context) ([]*types.TenantAPIKey, error) {
 	var keys []*types.TenantAPIKey
 	err := r.db.WithContext(ctx).
@@ -57,10 +68,34 @@ func (r *tenantAPIKeyRepository) ListPlatformAPIKeys(ctx context.Context) ([]*ty
 }
 
 func (r *tenantAPIKeyRepository) RevokeAPIKey(ctx context.Context, tenantID uint64, id uint64) error {
+	return r.revokeAPIKeys(ctx, "id = ? AND tenant_id = ? AND revoked_at IS NULL", id, tenantID)
+}
+
+func (r *tenantAPIKeyRepository) RevokePersonalAPIKey(
+	ctx context.Context, tenantID uint64, ownerUserID string, id uint64,
+) error {
+	return r.revokeAPIKeys(
+		ctx,
+		"id = ? AND tenant_id = ? AND owner_user_id = ? AND revoked_at IS NULL",
+		id, tenantID, ownerUserID,
+	)
+}
+
+func (r *tenantAPIKeyRepository) RevokePersonalAPIKeysByOwner(
+	ctx context.Context, tenantID uint64, ownerUserID string,
+) error {
+	now := time.Now().UTC()
+	return r.db.WithContext(ctx).
+		Model(&types.TenantAPIKey{}).
+		Where("tenant_id = ? AND owner_user_id = ? AND revoked_at IS NULL", tenantID, ownerUserID).
+		Update("revoked_at", &now).Error
+}
+
+func (r *tenantAPIKeyRepository) revokeAPIKeys(ctx context.Context, query string, args ...interface{}) error {
 	now := time.Now().UTC()
 	res := r.db.WithContext(ctx).
 		Model(&types.TenantAPIKey{}).
-		Where("id = ? AND tenant_id = ? AND revoked_at IS NULL", id, tenantID).
+		Where(query, args...).
 		Update("revoked_at", &now)
 	if res.Error != nil {
 		return res.Error

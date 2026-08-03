@@ -41,6 +41,10 @@ func (s *tenantAPIKeyService) CreateAPIKey(
 	if scopeType == types.APIKeyScopePlatform && req.FullAccess {
 		return nil, errors.New("platform API keys require explicit capabilities")
 	}
+	ownerUserID := normalizeOwnerUserID(req.OwnerUserID)
+	if ownerUserID != nil && (scopeType != types.APIKeyScopeTenant || req.FullAccess) {
+		return nil, errors.New("personal API keys must be tenant-scoped and cannot have full access")
+	}
 	capabilities := types.NormalizeAPIKeyCapabilities(types.StringArray(req.Capabilities))
 	if scopeType == types.APIKeyScopePlatform && len(capabilities) == 0 {
 		return nil, errors.New("platform API keys require at least one capability")
@@ -64,6 +68,7 @@ func (s *tenantAPIKeyService) CreateAPIKey(
 	}
 	key := &types.TenantAPIKey{
 		TenantID:         tenantID,
+		OwnerUserID:      ownerUserID,
 		ScopeType:        scopeType,
 		Name:             name,
 		KeyHash:          hashTenantAPIKey(token),
@@ -126,12 +131,30 @@ func (s *tenantAPIKeyService) ListAPIKeys(ctx context.Context, tenantID uint64) 
 	return s.repo.ListAPIKeys(ctx, tenantID)
 }
 
+func (s *tenantAPIKeyService) ListPersonalAPIKeys(
+	ctx context.Context, tenantID uint64, ownerUserID string,
+) ([]*types.TenantAPIKey, error) {
+	return s.repo.ListPersonalAPIKeys(ctx, tenantID, strings.TrimSpace(ownerUserID))
+}
+
 func (s *tenantAPIKeyService) ListPlatformAPIKeys(ctx context.Context) ([]*types.TenantAPIKey, error) {
 	return s.repo.ListPlatformAPIKeys(ctx)
 }
 
 func (s *tenantAPIKeyService) RevokeAPIKey(ctx context.Context, tenantID uint64, id uint64) error {
 	return s.repo.RevokeAPIKey(ctx, tenantID, id)
+}
+
+func (s *tenantAPIKeyService) RevokePersonalAPIKey(
+	ctx context.Context, tenantID uint64, ownerUserID string, id uint64,
+) error {
+	return s.repo.RevokePersonalAPIKey(ctx, tenantID, strings.TrimSpace(ownerUserID), id)
+}
+
+func (s *tenantAPIKeyService) RevokePersonalAPIKeysByOwner(
+	ctx context.Context, tenantID uint64, ownerUserID string,
+) error {
+	return s.repo.RevokePersonalAPIKeysByOwner(ctx, tenantID, strings.TrimSpace(ownerUserID))
 }
 
 func (s *tenantAPIKeyService) RevokePlatformAPIKey(ctx context.Context, id uint64) error {
@@ -195,4 +218,15 @@ func normalizeAPIKeyIDs(in []string) types.StringArray {
 		out = append(out, id)
 	}
 	return out
+}
+
+func normalizeOwnerUserID(ownerUserID *string) *string {
+	if ownerUserID == nil {
+		return nil
+	}
+	value := strings.TrimSpace(*ownerUserID)
+	if value == "" {
+		return nil
+	}
+	return &value
 }

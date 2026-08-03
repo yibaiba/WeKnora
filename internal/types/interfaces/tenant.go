@@ -64,6 +64,7 @@ type TenantRepository interface {
 
 type TenantAPIKeyCreateRequest struct {
 	TenantID         uint64
+	OwnerUserID      *string
 	ScopeType        types.APIKeyScopeType
 	Name             string
 	FullAccess       bool
@@ -81,8 +82,11 @@ type TenantAPIKeyRepository interface {
 	CreateAPIKey(ctx context.Context, key *types.TenantAPIKey) error
 	GetAPIKeyByHash(ctx context.Context, hash string) (*types.TenantAPIKey, error)
 	ListAPIKeys(ctx context.Context, tenantID uint64) ([]*types.TenantAPIKey, error)
+	ListPersonalAPIKeys(ctx context.Context, tenantID uint64, ownerUserID string) ([]*types.TenantAPIKey, error)
 	ListPlatformAPIKeys(ctx context.Context) ([]*types.TenantAPIKey, error)
 	RevokeAPIKey(ctx context.Context, tenantID uint64, id uint64) error
+	RevokePersonalAPIKey(ctx context.Context, tenantID uint64, ownerUserID string, id uint64) error
+	RevokePersonalAPIKeysByOwner(ctx context.Context, tenantID uint64, ownerUserID string) error
 	RevokePlatformAPIKey(ctx context.Context, id uint64) error
 	UpdateAPIKeyHash(ctx context.Context, id uint64, hash string) error
 	UpdateAPIKeyLastUsed(ctx context.Context, id uint64, at time.Time) error
@@ -99,8 +103,11 @@ type TenantAPIKeyService interface {
 	CreateAPIKey(ctx context.Context, req TenantAPIKeyCreateRequest) (*TenantAPIKeyCreateResult, error)
 	AuthenticateAPIKey(ctx context.Context, token string) (*types.TenantAPIKey, error)
 	ListAPIKeys(ctx context.Context, tenantID uint64) ([]*types.TenantAPIKey, error)
+	ListPersonalAPIKeys(ctx context.Context, tenantID uint64, ownerUserID string) ([]*types.TenantAPIKey, error)
 	ListPlatformAPIKeys(ctx context.Context) ([]*types.TenantAPIKey, error)
 	RevokeAPIKey(ctx context.Context, tenantID uint64, id uint64) error
+	RevokePersonalAPIKey(ctx context.Context, tenantID uint64, ownerUserID string, id uint64) error
+	RevokePersonalAPIKeysByOwner(ctx context.Context, tenantID uint64, ownerUserID string) error
 	RevokePlatformAPIKey(ctx context.Context, id uint64) error
 	// BackfillMissingKeyHashes computes and persists the SHA-256 key_hash
 	// for legacy keys still carrying the migration placeholder.

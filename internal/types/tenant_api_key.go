@@ -18,6 +18,7 @@ import (
 type TenantAPIKey struct {
 	ID               uint64          `json:"id" gorm:"primaryKey;autoIncrement"`
 	TenantID         *uint64         `json:"tenant_id,omitempty" gorm:"index"`
+	OwnerUserID      *string         `json:"owner_user_id,omitempty" gorm:"type:varchar(36);index"`
 	ScopeType        APIKeyScopeType `json:"scope_type" gorm:"type:varchar(16);not null;default:tenant;index"`
 	Name             string          `json:"name" gorm:"type:varchar(128);not null"`
 	KeyHash          string          `json:"-" gorm:"type:varchar(64);not null;uniqueIndex"`
@@ -269,6 +270,7 @@ func (k *TenantAPIKey) AfterFind(tx *gorm.DB) error {
 type TenantAPIKeyScope struct {
 	KeyID            uint64
 	ScopeType        APIKeyScopeType
+	OwnerUserID      string
 	FullAccess       bool
 	KnowledgeBaseIDs StringArray
 	Capabilities     StringArray
@@ -293,6 +295,7 @@ func (s TenantAPIKeyScope) Normalize() TenantAPIKeyScope {
 	return TenantAPIKeyScope{
 		KeyID:            s.KeyID,
 		ScopeType:        NormalizeAPIKeyScopeType(s.ScopeType),
+		OwnerUserID:      strings.TrimSpace(s.OwnerUserID),
 		FullAccess:       s.FullAccess,
 		KnowledgeBaseIDs: normalizeIDArray(s.KnowledgeBaseIDs),
 		Capabilities:     NormalizeAPIKeyCapabilities(s.Capabilities),
