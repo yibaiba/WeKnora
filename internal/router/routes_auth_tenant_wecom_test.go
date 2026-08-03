@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/handler"
+	"github.com/Tencent/WeKnora/internal/handler/session"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -20,6 +21,7 @@ func TestRegisterTenantRoutesIncludesWeComIdentityEndpoints(t *testing.T) {
 		nil,
 		&handler.WeComIdentityHandler{},
 		nil,
+		&session.Handler{},
 		&rbacGuards{},
 	)
 
@@ -29,6 +31,8 @@ func TestRegisterTenantRoutesIncludesWeComIdentityEndpoints(t *testing.T) {
 	}
 
 	want := []string{
+		http.MethodGet + " /api/v1/tenants/:id/me/api-sessions",
+		http.MethodGet + " /api/v1/tenants/:id/me/api-sessions/:session_id/messages",
 		http.MethodGet + " /api/v1/tenants/:id/wecom/bindings",
 		http.MethodPost + " /api/v1/tenants/:id/wecom/bindings",
 		http.MethodPut + " /api/v1/tenants/:id/wecom/bindings/:user_id",

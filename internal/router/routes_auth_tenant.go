@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/Tencent/WeKnora/internal/handler"
+	"github.com/Tencent/WeKnora/internal/handler/session"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -47,6 +48,7 @@ func RegisterTenantRoutes(
 	invitationHandler *handler.TenantInvitationHandler,
 	wecomIdentityHandler *handler.WeComIdentityHandler,
 	auditLogHandler *handler.AuditLogHandler,
+	sessionHandler *session.Handler,
 	g *rbacGuards,
 ) {
 	// Cross-tenant superuser endpoints — promoted from handler if-blocks
@@ -101,6 +103,10 @@ func RegisterTenantRoutes(
 			tenantByID.GET("/me/api-keys", g.Viewer(), handler.ListPersonalAPIKeys)
 			tenantByID.POST("/me/api-keys", g.Viewer(), handler.CreatePersonalAPIKey)
 			tenantByID.DELETE("/me/api-keys/:key_id", g.Viewer(), handler.DeletePersonalAPIKey)
+			if sessionHandler != nil {
+				tenantByID.GET("/me/api-sessions", g.Viewer(), sessionHandler.ListPersonalAPIHistory)
+				tenantByID.GET("/me/api-sessions/:session_id/messages", g.Viewer(), sessionHandler.GetPersonalAPIHistoryMessages)
+			}
 			tenantByID.GET("/api-principal-config", g.Owner(), handler.GetAPIPrincipalConfig)
 			tenantByID.PUT("/api-principal-config", g.Owner(), handler.UpdateAPIPrincipalConfig)
 			tenantByID.POST("/api-principal-test-token", g.Owner(), handler.CreateAPIPrincipalTestToken)
