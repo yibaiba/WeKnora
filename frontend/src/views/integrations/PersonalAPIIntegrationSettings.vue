@@ -127,6 +127,15 @@
                 <strong>{{ message.role === 'user' ? t('integrations.api.personalRoleUser') : t('integrations.api.personalRoleAssistant') }}</strong>
                 <p>{{ message.content }}</p>
               </article>
+              <t-button
+                v-if="messagesHasMore"
+                block
+                variant="outline"
+                :loading="messagesLoadingMore"
+                @click="loadMoreMessages"
+              >
+                {{ t('integrations.api.personalHistoryLoadMore') }}
+              </t-button>
             </template>
           </div>
         </div>
@@ -208,7 +217,11 @@ const sessions = ref<PersonalAPISession[]>([])
 const messages = ref<PersonalAPIMessage[]>([])
 const sessionsLoading = ref(false)
 const messagesLoading = ref(false)
+const messagesLoadingMore = ref(false)
 const selectedSessionId = ref('')
+const messagesPage = ref(1)
+const messagesHasMore = ref(false)
+const messagesPageSize = 100
 const historyKeyword = ref('')
 const historyPage = ref(1)
 const historyPageSize = 20
@@ -260,6 +273,7 @@ async function loadKeys() {
 
 async function loadKnowledgeBases() {
   const response: any = await listKnowledgeBases({ creator: 'all' })
+  if (!response?.success) throw new Error(response?.message || t('integrations.api.personalKnowledgeLoadFailed'))
   const rows = Array.isArray(response?.data) ? response.data : []
   knowledgeBases.value = rows.map((item: any) => ({ id: String(item.id), name: item.name || item.id }))
 }
@@ -273,11 +287,14 @@ async function loadSessions() {
       page_size: historyPageSize,
       keyword: historyKeyword.value,
     })
+    if (!response.success) throw new Error(t('integrations.api.personalHistoryLoadFailed'))
     sessions.value = response.data || []
     historyTotal.value = response.total || 0
     if (selectedSessionId.value && !sessions.value.some((item) => item.id === selectedSessionId.value)) {
       selectedSessionId.value = ''
       messages.value = []
+      messagesPage.value = 1
+      messagesHasMore.value = false
     }
   } catch (err: any) {
     MessagePlugin.error(err?.message || t('integrations.api.personalHistoryLoadFailed'))
@@ -296,15 +313,46 @@ function searchSessions() {
 
 async function openSession(sessionId: string) {
   selectedSessionId.value = sessionId
+  messages.value = []
+  messagesPage.value = 1
+  messagesHasMore.value = false
   messagesLoading.value = true
   try {
-    const response = await listPersonalAPISessionMessages(tenantId.value, sessionId)
+    const response = await listPersonalAPISessionMessages(tenantId.value, sessionId, 1, messagesPageSize)
+    if (!response.success) throw new Error(t('integrations.api.personalHistoryLoadFailed'))
+    if (selectedSessionId.value !== sessionId) return
     messages.value = response.data || []
+    messagesHasMore.value = messages.value.length === messagesPageSize
   } catch (err: any) {
+    if (selectedSessionId.value !== sessionId) return
     messages.value = []
     MessagePlugin.error(err?.message || t('integrations.api.personalHistoryLoadFailed'))
   } finally {
-    messagesLoading.value = false
+    if (selectedSessionId.value === sessionId) messagesLoading.value = false
+  }
+}
+
+async function loadMoreMessages() {
+  const sessionId = selectedSessionId.value
+  if (!sessionId || messagesLoadingMore.value || !messagesHasMore.value) return
+  messagesLoadingMore.value = true
+  try {
+    const nextPage = messagesPage.value + 1
+    const response = await listPersonalAPISessionMessages(
+      tenantId.value, sessionId, nextPage, messagesPageSize,
+    )
+    if (!response.success) throw new Error(t('integrations.api.personalHistoryLoadFailed'))
+    if (selectedSessionId.value !== sessionId) return
+    const nextMessages = response.data || []
+    messages.value = [...messages.value, ...nextMessages]
+    messagesPage.value = nextPage
+    messagesHasMore.value = nextMessages.length === messagesPageSize
+  } catch (err: any) {
+    if (selectedSessionId.value === sessionId) {
+      MessagePlugin.error(err?.message || t('integrations.api.personalHistoryLoadFailed'))
+    }
+  } finally {
+    messagesLoadingMore.value = false
   }
 }
 

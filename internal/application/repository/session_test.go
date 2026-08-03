@@ -83,6 +83,37 @@ func TestSessionRepositoryGetAndListHonorUserScope(t *testing.T) {
 	require.ElementsMatch(t, []string{bobSession.ID, legacySession.ID}, sessionIDsForTest(paged))
 }
 
+func TestSessionRepositoryAPIMemberScopeExcludesLegacySessions(t *testing.T) {
+	repo, db := newSessionRepositoryForTest(t)
+	ctx := context.Background()
+	ownerID := types.SessionOwnerAPIMemberPrefix + "1:member-1"
+	personalSession := createSessionForTest(t, db, 1, ownerID)
+	legacySession := createSessionForTest(t, db, 1, "")
+
+	_, err := repo.Get(ctx, 1, ownerID, legacySession.ID)
+	require.ErrorIs(t, err, apperrors.ErrSessionNotFound)
+
+	sessions, err := repo.GetByTenantID(ctx, 1, ownerID)
+	require.NoError(t, err)
+	require.Equal(t, []string{personalSession.ID}, sessionIDsForTest(sessions))
+
+	items, total, err := repo.QueryPaged(ctx, &types.SessionListQuery{
+		TenantID: 1, UserID: ownerID, Page: 1, PageSize: 20,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Equal(t, []string{personalSession.ID}, listItemIDsForTest(items))
+
+	rows, err := repo.BatchDelete(ctx, 1, ownerID, []string{personalSession.ID, legacySession.ID})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	require.EqualValues(t, 1, countActiveSessionsForTest(t, db, legacySession.ID))
+
+	rows, err = repo.SetPinned(ctx, 1, ownerID, legacySession.ID, true)
+	require.NoError(t, err)
+	require.Zero(t, rows)
+}
+
 func TestSessionRepositoryUpdateHonorsUserScope(t *testing.T) {
 	repo, db := newSessionRepositoryForTest(t)
 	ctx := context.Background()

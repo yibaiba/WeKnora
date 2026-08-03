@@ -40,6 +40,12 @@ func testAPITenantKeyScopeContext(tenantID uint64, keyID uint64) context.Context
 	return types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: keyID})
 }
 
+func testAPIMemberScopeContext(tenantID uint64, userID string) context.Context {
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, tenantID)
+	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleViewer)
+	return types.WithPrincipal(ctx, types.APIMemberPrincipal(tenantID, userID))
+}
+
 func newTestSessionService(t *testing.T) (*sessionService, *gorm.DB) {
 	t.Helper()
 
@@ -82,6 +88,17 @@ func TestGetSessionIsScopedToCurrentUser(t *testing.T) {
 	got, err = svc.GetSession(testSessionScopeContext(1, "bob"), legacySession.ID)
 	require.NoError(t, err)
 	require.Equal(t, legacySession.ID, got.ID)
+}
+
+func TestGetSessionAllowsAPIMemberToReadOwnManagedSession(t *testing.T) {
+	svc, db := newTestSessionService(t)
+	ownerID := types.SessionOwnerAPIMemberPrefix + "1:member-1"
+	personalSession := &types.Session{TenantID: 1, UserID: ownerID, Title: "personal API session"}
+	require.NoError(t, db.Create(personalSession).Error)
+
+	got, err := svc.GetSession(testAPIMemberScopeContext(1, "member-1"), personalSession.ID)
+	require.NoError(t, err)
+	require.Equal(t, personalSession.ID, got.ID)
 }
 
 func TestUpdateSessionIsScopedToCurrentUserAndAllowsNoOp(t *testing.T) {

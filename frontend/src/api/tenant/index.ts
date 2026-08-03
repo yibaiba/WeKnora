@@ -335,11 +335,16 @@ export async function listPersonalAPISessionMessages(
   sessionId: string,
   page = 1,
   pageSize = 100,
-): Promise<{ success: boolean; data?: PersonalAPIMessage[] }> {
+): Promise<{ success: boolean; data?: PersonalAPIMessage[]; page?: number; page_size?: number }> {
   const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
   return await get(
     `/api/v1/tenants/${tenantId}/me/api-sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`,
-  ) as unknown as { success: boolean; data?: PersonalAPIMessage[] }
+  ) as unknown as {
+    success: boolean
+    data?: PersonalAPIMessage[]
+    page?: number
+    page_size?: number
+  }
 }
 
 /**

@@ -21,8 +21,25 @@ func applySessionUserScope(db *gorm.DB, userID string) *gorm.DB {
 	if userID == "" {
 		return db
 	}
+	if isStrictSessionOwner(userID) {
+		return db.Where("user_id = ?", userID)
+	}
 	// Empty user_id rows are legacy/API-created tenant-level sessions.
 	return db.Where("(user_id = ? OR user_id IS NULL OR user_id = '')", userID)
+}
+
+func applyAliasedSessionUserScope(db *gorm.DB, userID string) *gorm.DB {
+	if userID == "" {
+		return db
+	}
+	if isStrictSessionOwner(userID) {
+		return db.Where("s.user_id = ?", userID)
+	}
+	return db.Where("(s.user_id = ? OR s.user_id IS NULL OR s.user_id = '')", userID)
+}
+
+func isStrictSessionOwner(userID string) bool {
+	return strings.HasPrefix(strings.TrimSpace(userID), types.SessionOwnerAPIMemberPrefix)
 }
 
 // NewSessionRepository creates a new session repository instance
@@ -160,9 +177,7 @@ func (r *sessionRepository) QueryPaged(
 	// Base filter shared by count and list queries.
 	applyBase := func(db *gorm.DB) *gorm.DB {
 		db = db.Where("s.tenant_id = ? AND s.deleted_at IS NULL", q.TenantID)
-		if q.UserID != "" {
-			db = db.Where("(s.user_id = ? OR s.user_id IS NULL OR s.user_id = '')", q.UserID)
-		}
+		db = applyAliasedSessionUserScope(db, q.UserID)
 		if kw := strings.TrimSpace(q.Keyword); kw != "" {
 			db = db.Where(titleLikeExpr, "%"+escapeLikeKeyword(kw)+"%")
 		}
@@ -274,8 +289,8 @@ func (r *sessionRepository) QueryPaged(
 
 // SetPinned toggles is_pinned/pinned_at for a single session.
 // Scope: must match tenant, and user_id (when provided) to prevent pinning
-// other users' sessions. Legacy rows with user_id NULL/” remain mutable
-// at the tenant level (same visibility rule as QueryPaged).
+// other users' sessions. Legacy rows with user_id NULL/” remain mutable for
+// legacy/Web owner scopes; api_member identities always require an exact match.
 //
 // Returns the number of rows affected so callers can distinguish "session
 // doesn't exist / not visible to this user" (0) from a real DB error.
@@ -296,9 +311,7 @@ func (r *sessionRepository) SetPinned(
 	q := r.db.WithContext(ctx).
 		Model(&types.Session{}).
 		Where("tenant_id = ? AND id = ?", tenantID, id)
-	if userID != "" {
-		q = q.Where("(user_id = ? OR user_id IS NULL OR user_id = '')", userID)
-	}
+	q = applySessionUserScope(q, userID)
 	res := q.Updates(updates)
 	return res.RowsAffected, res.Error
 }

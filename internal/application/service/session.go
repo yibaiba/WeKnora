@@ -38,7 +38,7 @@ func runtimeMayBypassAdminConsoleRead(
 	switch principal.Type {
 	case types.PrincipalIMUser:
 		return strings.TrimSpace(imPlatform) != ""
-	case types.PrincipalAPITenant, types.PrincipalAPIExternalUser:
+	case types.PrincipalAPIMember, types.PrincipalAPITenant, types.PrincipalAPIExternalUser:
 		ownerID := types.SessionOwnerIDFromContext(ctx)
 		return types.IsAPISessionOwnerID(session.UserID) && session.UserID == ownerID
 	case types.PrincipalEmbedSession:
