@@ -108,6 +108,29 @@ func NewRemoteAPIVLM(config *Config) (*RemoteAPIVLM, error) {
 
 // Predict sends an image with a text prompt to the OpenAI-compatible API.
 func (v *RemoteAPIVLM) Predict(ctx context.Context, imgBytesList [][]byte, prompt string) (string, error) {
+	req := v.buildChatCompletionRequest(imgBytesList, prompt)
+
+	totalImageSize := 0
+	for _, img := range imgBytesList {
+		totalImageSize += len(img)
+	}
+	logger.Infof(ctx, "[VLM] Calling OpenAI-compatible API, model=%s, baseURL=%s, numImages=%d, totalImageSize=%d",
+		v.modelName, v.baseURL, len(imgBytesList), totalImageSize)
+
+	resp, err := v.client.CreateChatCompletion(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("OpenAI VLM request: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("OpenAI VLM returned no choices")
+	}
+
+	content := resp.Choices[0].Message.Content
+	logger.Infof(ctx, "[VLM] OpenAI response received, len=%d", len(content))
+	return content, nil
+}
+
+func (v *RemoteAPIVLM) buildChatCompletionRequest(imgBytesList [][]byte, prompt string) openai.ChatCompletionRequest {
 	var parts []openai.ChatMessagePart
 
 	// Add text prompt first
@@ -144,24 +167,20 @@ func (v *RemoteAPIVLM) Predict(ctx context.Context, imgBytesList [][]byte, promp
 		Temperature: v.temperature,
 	}
 
-	totalImageSize := 0
-	for _, img := range imgBytesList {
-		totalImageSize += len(img)
-	}
-	logger.Infof(ctx, "[VLM] Calling OpenAI-compatible API, model=%s, baseURL=%s, numImages=%d, totalImageSize=%d",
-		v.modelName, v.baseURL, len(imgBytesList), totalImageSize)
+	shapeOpenAICompatibleVLMRequest(&req, v.modelName)
+	return req
+}
 
-	resp, err := v.client.CreateChatCompletion(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("OpenAI VLM request: %w", err)
+// shapeOpenAICompatibleVLMRequest applies model-level API compatibility
+// independently of the configured provider so custom OpenAI-compatible
+// endpoints receive the same GPT-5/o-series request shape as OpenAI itself.
+func shapeOpenAICompatibleVLMRequest(req *openai.ChatCompletionRequest, modelName string) {
+	if !provider.IsOpenAIReasoningOrGPT5Model(modelName) {
+		return
 	}
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("OpenAI VLM returned no choices")
-	}
-
-	content := resp.Choices[0].Message.Content
-	logger.Infof(ctx, "[VLM] OpenAI response received, len=%d", len(content))
-	return content, nil
+	req.MaxCompletionTokens = req.MaxTokens
+	req.MaxTokens = 0
+	req.Temperature = 0
 }
 
 func (v *RemoteAPIVLM) GetModelName() string { return v.modelName }
