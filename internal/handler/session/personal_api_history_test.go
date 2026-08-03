@@ -33,6 +33,7 @@ type personalHistoryMessageService struct {
 	interfaces.MessageService
 	ownerID   string
 	sessionID string
+	role      types.TenantRole
 }
 
 func (s *personalHistoryMessageService) GetMessagesBySession(
@@ -40,6 +41,7 @@ func (s *personalHistoryMessageService) GetMessagesBySession(
 ) ([]*types.Message, error) {
 	s.ownerID = types.SessionOwnerIDFromContext(ctx)
 	s.sessionID = sessionID
+	s.role = types.TenantRoleFromContext(ctx)
 	return []*types.Message{{ID: "message-1", SessionID: sessionID}}, nil
 }
 
@@ -60,8 +62,8 @@ func TestPersonalAPIHistoryUsesAPIMemberScope(t *testing.T) {
 	if load.Code != http.StatusOK {
 		t.Fatalf("messages status = %d: %s", load.Code, load.Body.String())
 	}
-	if messages.ownerID != "api_member:42:member-1" || messages.sessionID != "api-session" {
-		t.Fatalf("message scope/session = %q %q", messages.ownerID, messages.sessionID)
+	if messages.ownerID != "api_member:42:member-1" || messages.sessionID != "api-session" || messages.role != types.TenantRoleViewer {
+		t.Fatalf("message scope/session/role = %q %q %q", messages.ownerID, messages.sessionID, messages.role)
 	}
 }
 
@@ -72,6 +74,7 @@ func TestPersonalAPIHistoryRejectsMachinePrincipal(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/tenants/42/me/api-sessions", nil)
 	ctx := context.WithValue(request.Context(), types.TenantIDContextKey, uint64(42))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "member-1")
+	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleOwner)
 	ctx = types.WithPrincipal(ctx, types.APIMemberPrincipal(42, "member-1"))
 	request = request.WithContext(ctx)
 	recorder := httptest.NewRecorder()
@@ -94,6 +97,7 @@ func performPersonalHistoryRequest(router http.Handler, method, path string) *ht
 	request := httptest.NewRequest(method, path, nil)
 	ctx := context.WithValue(request.Context(), types.TenantIDContextKey, uint64(42))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "member-1")
+	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleOwner)
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "member-1"})
 	request = request.WithContext(ctx)
 	recorder := httptest.NewRecorder()

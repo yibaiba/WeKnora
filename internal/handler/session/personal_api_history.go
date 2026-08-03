@@ -91,5 +91,6 @@ func personalAPIHistoryContext(c *gin.Context) (context.Context, bool) {
 		c.Error(errors.NewForbiddenError("Personal API history requires a signed-in user"))
 		return nil, false
 	}
+	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleViewer)
 	return types.WithPrincipal(ctx, types.APIMemberPrincipal(tenantID, userID)), true
 }
