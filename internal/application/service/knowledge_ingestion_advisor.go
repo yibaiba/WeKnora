@@ -45,6 +45,10 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	}
 
 	run.Effective.ChunkingConfig = applyAdvisorChunking(run.Effective.ChunkingConfig, analysis.RecommendedChunking)
+	run.Effective.IngestionAdvisorApplied = true
+	normalized := buildSplitterConfigFromEffective(run.Effective)
+	run.Effective.ChunkingConfig.ChunkSize = normalized.ChunkSize
+	run.Effective.ChunkingConfig.ChunkOverlap = normalized.ChunkOverlap
 	analysis = cloneIngestionAnalysis(analysis)
 	analysis.AppliedChunking = chunkingRecommendationFromConfig(run.Effective.ChunkingConfig)
 	analysis.ModelID = run.KB.SummaryModelID

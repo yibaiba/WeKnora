@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -191,7 +192,8 @@ func ValidateIngestionAnalysis(analysis *types.IngestionAnalysis) error {
 	if _, ok := allowedDocumentKinds[analysis.DocumentKind]; !ok {
 		return fmt.Errorf("document_kind %q 不受支持", analysis.DocumentKind)
 	}
-	if analysis.Confidence < 0 || analysis.Confidence > 1 {
+	if math.IsNaN(analysis.Confidence) || math.IsInf(analysis.Confidence, 0) ||
+		analysis.Confidence < 0 || analysis.Confidence > 1 {
 		return fmt.Errorf("confidence 必须在 0 到 1 之间")
 	}
 	if _, ok := allowedContentModes[analysis.RecommendedContentMode]; !ok {

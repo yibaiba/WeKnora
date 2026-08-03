@@ -238,18 +238,18 @@ func runTier(tier StrategyTier, text string, cfg SplitterConfig, profile *DocPro
 	return SplitText(text, cfg)
 }
 
-// ensureDefaults fills in zero-value config fields with sane defaults.
+// NormalizeConfig fills in zero-value config fields with sane defaults.
 // Mirrors buildSplitterConfig in internal/application/service/knowledge.go
 // so direct callers of this package get the same numbers.
 //
 // When cfg.TokenLimit is set, ChunkSize is clamped to the character budget
 // that fits within that token limit (with a 10% safety factor). This makes
 // chunks safe for embedding APIs that have hard token caps.
-func ensureDefaults(cfg SplitterConfig) SplitterConfig {
+func NormalizeConfig(cfg SplitterConfig) SplitterConfig {
 	if cfg.ChunkSize <= 0 {
 		cfg.ChunkSize = DefaultChunkSize
 	}
-	if cfg.ChunkOverlap <= 0 {
+	if cfg.ChunkOverlap < 0 || (cfg.ChunkOverlap == 0 && !cfg.AllowZeroOverlap) {
 		cfg.ChunkOverlap = DefaultChunkOverlap
 	}
 	if len(cfg.Separators) == 0 {
@@ -273,6 +273,10 @@ func ensureDefaults(cfg SplitterConfig) SplitterConfig {
 		cfg.ChunkOverlap = cfg.ChunkSize / 2
 	}
 	return cfg
+}
+
+func ensureDefaults(cfg SplitterConfig) SplitterConfig {
+	return NormalizeConfig(cfg)
 }
 
 // splitByHeadings is overridden by heading_splitter.go. The default no-op

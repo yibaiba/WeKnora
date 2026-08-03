@@ -204,24 +204,23 @@ func buildSplitterConfig(kb *types.KnowledgeBase) chunker.SplitterConfig {
 }
 
 func buildSplitterConfigFromChunking(cc types.ChunkingConfig) chunker.SplitterConfig {
-	chunkCfg := chunker.SplitterConfig{
-		ChunkSize:    cc.ChunkSize,
-		ChunkOverlap: cc.ChunkOverlap,
-		Separators:   cc.Separators,
-		Strategy:     cc.Strategy,
-		TokenLimit:   cc.TokenLimit,
-		Languages:    cc.Languages,
-	}
-	if chunkCfg.ChunkSize <= 0 {
-		chunkCfg.ChunkSize = chunker.DefaultChunkSize
-	}
-	if chunkCfg.ChunkOverlap <= 0 {
-		chunkCfg.ChunkOverlap = chunker.DefaultChunkOverlap
-	}
-	if len(chunkCfg.Separators) == 0 {
-		chunkCfg.Separators = []string{"\n\n", "\n", "。"}
-	}
-	return chunkCfg
+	return normalizeSplitterConfig(cc, false)
+}
+
+func buildSplitterConfigFromEffective(eff types.EffectiveProcessConfig) chunker.SplitterConfig {
+	return normalizeSplitterConfig(eff.ChunkingConfig, eff.IngestionAdvisorApplied)
+}
+
+func normalizeSplitterConfig(cc types.ChunkingConfig, allowZeroOverlap bool) chunker.SplitterConfig {
+	return chunker.NormalizeConfig(chunker.SplitterConfig{
+		ChunkSize:        cc.ChunkSize,
+		ChunkOverlap:     cc.ChunkOverlap,
+		Separators:       cc.Separators,
+		Strategy:         cc.Strategy,
+		TokenLimit:       cc.TokenLimit,
+		Languages:        cc.Languages,
+		AllowZeroOverlap: allowZeroOverlap,
+	})
 }
 
 // buildParentChildConfigs derives parent and child SplitterConfig from ChunkingConfig.
@@ -240,10 +239,11 @@ func buildParentChildConfigs(cc types.ChunkingConfig, base chunker.SplitterConfi
 		childSize = 384
 	}
 	parent = chunker.SplitterConfig{
-		ChunkSize:    parentSize,
-		ChunkOverlap: base.ChunkOverlap, // reuse configured overlap for parents
-		Separators:   base.Separators,
-		Strategy:     base.Strategy,
+		ChunkSize:        parentSize,
+		ChunkOverlap:     base.ChunkOverlap, // reuse configured overlap for parents
+		Separators:       base.Separators,
+		Strategy:         base.Strategy,
+		AllowZeroOverlap: base.AllowZeroOverlap,
 	}
 	child = chunker.SplitterConfig{
 		ChunkSize:    childSize,
@@ -3387,7 +3387,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 	}
 
 	// Step 3: Split into chunks using Go chunker
-	chunkCfg := buildSplitterConfigFromChunking(eff.ChunkingConfig)
+	chunkCfg := buildSplitterConfigFromEffective(eff)
 
 	processOpts := ProcessChunksOptions{
 		EnableQuestionGeneration: payload.EnableQuestionGeneration,
