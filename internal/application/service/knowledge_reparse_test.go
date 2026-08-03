@@ -19,9 +19,10 @@ func TestResetKnowledgeForReparseClearsPreviousAttemptState(t *testing.T) {
 		EmbeddingModelID:     "old-model",
 		PendingSubtasksCount: 3,
 	}
+	require.NoError(t, knowledge.SetIngestionAnalysis(validIngestionAnalysis()))
 	kb := &types.KnowledgeBase{EmbeddingModelID: "new-model"}
 
-	resetKnowledgeForReparse(knowledge, kb)
+	require.NoError(t, resetKnowledgeForReparse(knowledge, kb))
 
 	require.Equal(t, types.ParseStatusPending, knowledge.ParseStatus)
 	require.Equal(t, "disabled", knowledge.EnableStatus)
@@ -30,4 +31,7 @@ func TestResetKnowledgeForReparseClearsPreviousAttemptState(t *testing.T) {
 	require.Empty(t, knowledge.ErrorMessage)
 	require.Equal(t, "new-model", knowledge.EmbeddingModelID)
 	require.Zero(t, knowledge.PendingSubtasksCount)
+	analysis, err := knowledge.IngestionAnalysis()
+	require.NoError(t, err)
+	require.Nil(t, analysis)
 }

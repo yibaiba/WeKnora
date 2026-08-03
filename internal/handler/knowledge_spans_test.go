@@ -29,7 +29,7 @@ func TestBuildSpanTree_AssemblesParentChild(t *testing.T) {
 		"running stage span surfaces as current_stage")
 	require.Nil(lastFail)
 
-	// The 5 canonical stages must all appear under root (real or
+	// The 6 canonical stages must all appear under root (real or
 	// synthesized placeholder).
 	stageNames := map[string]string{}
 	for _, child := range tree.Children {
@@ -43,6 +43,8 @@ func TestBuildSpanTree_AssemblesParentChild(t *testing.T) {
 	}
 	require.Equal(types.SpanStatusDone, stageNames[types.StageDocReader])
 	require.Equal(types.SpanStatusRunning, stageNames[types.StageMultimodal])
+	require.Equal(types.SpanStatusSkipped, stageNames[types.StageDocumentAnalysis],
+		"a missing analysis stage with downstream evidence is a legacy skip")
 	require.Equal(types.SpanStatusPending, stageNames[types.StageEmbedding],
 		"missing stage rows must synthesize as pending placeholders")
 
@@ -71,7 +73,7 @@ func TestBuildSpanTree_NoRows_SynthesizesPlaceholderRoot(t *testing.T) {
 	a.Equal(types.SpanStatusPending, tree.Status)
 	a.Equal("", currentStage, "no rows means no running stage")
 	a.Nil(lastFail)
-	// All 5 stages must be present as pending placeholders so the UI
+	// All 6 stages must be present as pending placeholders so the UI
 	// renders a complete timeline even pre-parse.
 	a.Len(tree.Children, len(types.AllStages))
 	for _, child := range tree.Children {
@@ -93,13 +95,20 @@ func TestBuildSpanTree_LegacyCompletedRendersAsDone(t *testing.T) {
 		"legacy completed knowledge with no rows must render the synthesized root as done")
 	a.Len(completedTree.Children, len(types.AllStages))
 	for _, child := range completedTree.Children {
-		a.Equal(types.SpanStatusDone, child.Status,
-			"legacy completed knowledge: every synthesized stage placeholder must be done, not pending")
+		if child.Name == types.StageDocumentAnalysis {
+			a.Equal(types.SpanStatusSkipped, child.Status)
+			continue
+		}
+		a.Equal(types.SpanStatusDone, child.Status)
 	}
 
 	failedTree, _, _ := buildSpanTree("kid-legacy-fail", 0, nil, types.ParseStatusFailed)
 	a.Equal(types.SpanStatusFailed, failedTree.Status)
 	for _, child := range failedTree.Children {
+		if child.Name == types.StageDocumentAnalysis {
+			a.Equal(types.SpanStatusSkipped, child.Status)
+			continue
+		}
 		a.Equal(types.SpanStatusFailed, child.Status)
 	}
 }

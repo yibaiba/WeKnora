@@ -18,7 +18,7 @@ test('selects multiple document tags and returns them with the confirmation resu
 test('uses confirmed tags for file and URL imports instead of reading the list filter at upload time', () => {
   assert.match(knowledgeBase, /const tagIds = result\.tagIds \|\| \[\]/)
   assert.match(knowledgeBase, /executeUploadBatch\(files, \{ processConfig, tagIds \}\)/)
-  assert.match(knowledgeBase, /executeUrlImport\(url, processConfig, tagIds\)/)
+  assert.match(knowledgeBase, /executeUrlImport\(url, urlProcessConfig, tagIds\)/)
   assert.doesNotMatch(
     knowledgeBase,
     /const tagIdsToUpload = selectedTagIds\.value\.length > 0 \? \[\.\.\.selectedTagIds\.value\] : undefined/,
@@ -67,11 +67,27 @@ test('only opts eligible file uploads and file reparses into the advisor', () =>
 
   assert.match(availability, /props\.mode === 'file'.*localFiles\.value\.length > 0/s)
   assert.match(availability, /props\.mode !== 'reparse'/)
-  assert.match(availability, /source\?\.fileName/)
-  assert.match(availability, /!== 'html'/)
+  assert.match(availability, /source\?\.knowledgeType === 'file'/)
+  assert.match(availability, /!source\.isDatasource/)
+  assert.doesNotMatch(availability, /fileType|html/)
   assert.match(payload, /if \(advisorModeAvailable\.value\)/)
   assert.match(payload, /mode: state\.ingestionAdvisorMode/)
   assert.match(payload, /prompt_version: 'v1'/)
+})
+
+test('carries explicit provenance for reparses and isolates URL payloads in mixed batches', () => {
+  assert.match(knowledgeBase, /knowledgeType = detail\.data\.type \|\| knowledgeType/)
+  assert.match(knowledgeBase, /hasOwnProperty\.call\(detail\.data\.metadata \|\| \{\}, 'datasource_id'\)/)
+  assert.match(knowledgeBase, /knowledgeType,\s*isDatasource,/s)
+
+  const urlIsolation = knowledgeBase.slice(
+    knowledgeBase.indexOf('const withoutIngestionAdvisor'),
+    knowledgeBase.indexOf('const openUploadConfirmDialog'),
+  )
+  assert.match(urlIsolation, /const urlProcessConfig = \{ \.\.\.processConfig \}/)
+  assert.match(urlIsolation, /delete urlProcessConfig\.ingestion_advisor/)
+  assert.match(urlIsolation, /executeUploadBatch\(files, \{ processConfig, tagIds \}\)/)
+  assert.match(urlIsolation, /executeUrlImport\(url, urlProcessConfig, tagIds\)/)
 })
 
 test('locks only advisor-owned chunking controls in smart mode', () => {

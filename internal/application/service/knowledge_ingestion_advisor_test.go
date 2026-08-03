@@ -161,6 +161,51 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, []string{types.StageDocumentAnalysis}, tracker.ended)
 }
 
+func TestApplyIngestionAdvisorPreservesExplicitZeroOverlap(t *testing.T) {
+	analysis := validIngestionAnalysis()
+	analysis.RecommendedChunking.ChunkOverlap = 0
+	service := &knowledgeService{
+		repo:             &ingestionKnowledgeRepoStub{},
+		ingestionAdvisor: &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{analysis}},
+	}
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "zero-overlap"))
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	require.True(t, effective.IngestionAdvisorApplied)
+	require.Zero(t, effective.ChunkingConfig.ChunkOverlap)
+	require.Zero(t, buildSplitterConfigFromEffective(effective).ChunkOverlap)
+	persisted, parseErr := run.Knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Zero(t, persisted.AppliedChunking.ChunkOverlap)
+	require.NotZero(t, buildSplitterConfigFromChunking(effective.ChunkingConfig).ChunkOverlap,
+		"legacy zero-value configs must keep their historical default")
+}
+
+func TestApplyIngestionAdvisorPersistsTokenNormalizedAppliedValues(t *testing.T) {
+	analysis := validIngestionAnalysis()
+	analysis.RecommendedChunking.ChunkSize = 4000
+	analysis.RecommendedChunking.ChunkOverlap = 500
+	service := &knowledgeService{
+		repo:             &ingestionKnowledgeRepoStub{},
+		ingestionAdvisor: &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{analysis}},
+	}
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "token-normalized"))
+	run.Effective.ChunkingConfig.TokenLimit = 100
+	run.Effective.ChunkingConfig.Languages = []string{"en"}
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	actualSplitter := buildSplitterConfigFromEffective(effective)
+	require.Less(t, actualSplitter.ChunkSize, analysis.RecommendedChunking.ChunkSize)
+	persisted, parseErr := run.Knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Equal(t, actualSplitter.ChunkSize, persisted.AppliedChunking.ChunkSize)
+	require.Equal(t, actualSplitter.ChunkOverlap, persisted.AppliedChunking.ChunkOverlap)
+}
+
 func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 	repo := &ingestionKnowledgeRepoStub{}
 	tracker := newIngestionSpanTrackerStub()

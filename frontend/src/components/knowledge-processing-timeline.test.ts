@@ -79,7 +79,18 @@ test('builds explicit smart and knowledge-base retry payloads without mutating s
 
 test('shows both recovery actions only for document analysis failures', () => {
   assert.match(source, /error_code === 'DOCUMENT_ANALYSIS_FAILED'/)
+  assert.match(source, /stage\.status === 'failed' && !!stage\.span_id/)
   assert.match(source, /v-if="documentAnalysisFailed"/)
   assert.match(source, /knowledgeStages\.smartRetry/)
   assert.match(source, /knowledgeStages\.kbRetry/)
+})
+
+test('does not reuse stale analysis metadata for a skipped latest attempt', () => {
+  const selectedAnalysis = source.slice(
+    source.indexOf('const selectedIngestionAnalysis'),
+    source.indexOf('watch([selectedSpanId, detailTab]'),
+  )
+
+  assert.match(selectedAnalysis, /row\.node\.status === 'skipped'/)
+  assert.match(selectedAnalysis, /return viewingLatestAttempt\.value \? ingestionAnalysis\.value : null/)
 })

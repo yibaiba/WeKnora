@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -112,6 +113,8 @@ func TestValidateIngestionAnalysisRejectsInvalidEnumsAndBounds(t *testing.T) {
 		{name: "document kind", mutate: func(v *advisorModelResponse) { v.DocumentKind = "other" }},
 		{name: "content mode", mutate: func(v *advisorModelResponse) { v.RecommendedContentMode = "faq" }},
 		{name: "confidence", mutate: func(v *advisorModelResponse) { v.Confidence = 1.1 }},
+		{name: "confidence NaN", mutate: func(v *advisorModelResponse) { v.Confidence = math.NaN() }},
+		{name: "confidence infinity", mutate: func(v *advisorModelResponse) { v.Confidence = math.Inf(1) }},
 		{name: "strategy", mutate: func(v *advisorModelResponse) { v.RecommendedChunking.Strategy = "semantic" }},
 		{name: "chunk size", mutate: func(v *advisorModelResponse) { v.RecommendedChunking.ChunkSize = 99 }},
 		{name: "overlap", mutate: func(v *advisorModelResponse) { v.RecommendedChunking.ChunkOverlap = 351 }},
