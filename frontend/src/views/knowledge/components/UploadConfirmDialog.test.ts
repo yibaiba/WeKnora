@@ -42,3 +42,52 @@ test('uses section navigation with inline chunking controls and advanced options
   assert.match(dialog, /data-section="multimodal"/)
   assert.doesNotMatch(dialog, /<KBChunkingSettings/)
 })
+
+test('defaults new file uploads to smart analysis while preserving legacy reparse behavior', () => {
+  const initializer = dialog.slice(
+    dialog.indexOf('function initializeIngestionAdvisorMode'),
+    dialog.indexOf('async function loadModels'),
+  )
+
+  assert.match(initializer, /props\.mode === 'file'/)
+  assert.match(initializer, /ingestionAdvisorMode = 'smart'/)
+  assert.match(initializer, /processOverrides\?\.ingestion_advisor\?\.mode === 'smart'/)
+  assert.match(initializer, /ingestionAdvisorMode = 'off'/)
+})
+
+test('only opts eligible file uploads and file reparses into the advisor', () => {
+  const availability = dialog.slice(
+    dialog.indexOf('const advisorModeAvailable'),
+    dialog.indexOf('const isSmartAnalysis'),
+  )
+  const payload = dialog.slice(
+    dialog.indexOf('function buildProcessOverrides'),
+    dialog.indexOf('function applyOverridesToState'),
+  )
+
+  assert.match(availability, /props\.mode === 'file'.*localFiles\.value\.length > 0/s)
+  assert.match(availability, /props\.mode !== 'reparse'/)
+  assert.match(availability, /source\?\.fileName/)
+  assert.match(availability, /!== 'html'/)
+  assert.match(payload, /if \(advisorModeAvailable\.value\)/)
+  assert.match(payload, /mode: state\.ingestionAdvisorMode/)
+  assert.match(payload, /prompt_version: 'v1'/)
+})
+
+test('locks only advisor-owned chunking controls in smart mode', () => {
+  assert.match(dialog, /v-model="uiState\.ingestionAdvisorMode"/)
+  assert.match(dialog, /value="smart"/)
+  assert.match(dialog, /value="off"/)
+  assert.equal((dialog.match(/:disabled="isSmartAnalysis"/g) || []).length, 7)
+
+  const nonChunkingSection = dialog.slice(
+    dialog.indexOf('data-section="multimodal"'),
+    dialog.indexOf('data-section="question"'),
+  )
+  assert.doesNotMatch(nonChunkingSection, /:disabled="isSmartAnalysis"/)
+})
+
+test('switching to knowledge base configuration sends explicit off mode', () => {
+  assert.match(dialog, /<t-radio-button value="off">/)
+  assert.match(dialog, /overrides\.ingestion_advisor = \{\s*mode: state\.ingestionAdvisorMode,/s)
+})
