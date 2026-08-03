@@ -59,7 +59,15 @@ export interface ExtractConfigOverride {
   custom_instructions?: string
 }
 
+export type IngestionAdvisorMode = 'smart' | 'off'
+
+export interface IngestionAdvisorConfig {
+  mode: IngestionAdvisorMode
+  prompt_version?: 'v1'
+}
+
 export interface KnowledgeProcessOverrides {
+  ingestion_advisor?: IngestionAdvisorConfig
   parser_engine_rules?: ParserEngineRule[]
   chunking_config?: ChunkingConfigOverride
   enable_multimodel?: boolean

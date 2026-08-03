@@ -177,10 +177,45 @@
                         <h2 class="section-title">{{ t('knowledgeEditor.chunking.title') }}</h2>
                         <p class="section-desc">{{ t('knowledgeEditor.chunking.description') }}</p>
                       </div>
+                      <div v-if="advisorModeAvailable" class="processing-mode-card">
+                        <div class="processing-mode-header">
+                          <div class="processing-mode-copy">
+                            <label id="processing-mode-label" class="processing-mode-label">
+                              {{ t('uploadConfirm.processingModeLabel') }}
+                            </label>
+                            <p class="processing-mode-desc">{{ t('uploadConfirm.processingModeDescription') }}</p>
+                          </div>
+                          <t-radio-group
+                            v-model="uiState.ingestionAdvisorMode"
+                            class="processing-mode-control"
+                            aria-labelledby="processing-mode-label"
+                          >
+                            <t-radio-button value="smart">{{ t('uploadConfirm.modeSmart') }}</t-radio-button>
+                            <t-radio-button value="off">{{ t('uploadConfirm.modeKnowledgeBase') }}</t-radio-button>
+                          </t-radio-group>
+                        </div>
+                        <div
+                          v-if="isSmartAnalysis"
+                          id="ingestion-advisor-owned-hint"
+                          class="smart-analysis-notice"
+                          :class="{ 'smart-analysis-notice--warning': !llmModelId }"
+                          :role="llmModelId ? undefined : 'alert'"
+                        >
+                          <t-icon :name="llmModelId ? 'lightbulb-circle' : 'error-circle'" aria-hidden="true" />
+                          <div>
+                            <strong>{{ t('uploadConfirm.smartDecisionHint') }}</strong>
+                            <p v-if="!llmModelId">{{ t('uploadConfirm.smartModelMissing') }}</p>
+                            <p v-else-if="localUrls.length > 0">{{ t('uploadConfirm.smartUrlsUseKb') }}</p>
+                          </div>
+                        </div>
+                      </div>
                       <div class="settings-group">
-                        <div class="setting-row">
+                        <div class="setting-row" :class="{ 'setting-row--advisor-owned': isSmartAnalysis }">
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.strategyLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.strategyLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                             <p class="desc">{{ t('knowledgeEditor.chunking.strategyDescription') }}</p>
                           </div>
                           <div class="setting-control">
@@ -188,13 +223,18 @@
                               v-model="uiState.chunkingConfig.strategy"
                               :options="chunkingStrategyOptions"
                               :clearable="false"
+                              :disabled="isSmartAnalysis"
+                              :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined"
                               :style="{ width: '280px' }"
                             />
                           </div>
                         </div>
-                        <div class="setting-row">
+                        <div class="setting-row" :class="{ 'setting-row--advisor-owned': isSmartAnalysis }">
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.sizeLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.sizeLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                             <p class="desc">{{ t('knowledgeEditor.chunking.sizeDescription') }}</p>
                           </div>
                           <div class="setting-control">
@@ -204,13 +244,18 @@
                               :max="4000"
                               :step="50"
                               theme="normal"
+                              :disabled="isSmartAnalysis"
+                              :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined"
                               :style="{ width: '200px' }"
                             />
                           </div>
                         </div>
-                        <div class="setting-row">
+                        <div class="setting-row" :class="{ 'setting-row--advisor-owned': isSmartAnalysis }">
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.overlapLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.overlapLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                             <p class="desc">{{ t('knowledgeEditor.chunking.overlapDescription') }}</p>
                           </div>
                           <div class="setting-control">
@@ -220,6 +265,8 @@
                               :max="500"
                               :step="20"
                               theme="normal"
+                              :disabled="isSmartAnalysis"
+                              :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined"
                               :style="{ width: '200px' }"
                             />
                           </div>
@@ -237,9 +284,12 @@
                       </button>
 
                       <div v-if="chunkingMoreOpen" class="settings-group settings-group--more">
-                        <div class="setting-row setting-row--separators">
+                        <div class="setting-row setting-row--separators" :class="{ 'setting-row--advisor-owned': isSmartAnalysis }">
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.separatorsLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.separatorsLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                             <p class="desc">{{ t('knowledgeEditor.chunking.separatorsDescription') }}</p>
                           </div>
                           <div class="setting-control">
@@ -249,6 +299,8 @@
                               multiple
                               creatable
                               filterable
+                              :disabled="isSmartAnalysis"
+                              :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined"
                               :style="{ width: '280px' }"
                             />
                           </div>
@@ -281,29 +333,50 @@
                             />
                           </div>
                         </div>
-                        <div class="setting-row">
+                        <div class="setting-row" :class="{ 'setting-row--advisor-owned': isSmartAnalysis }">
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.parentChildLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.parentChildLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                             <p class="desc">{{ t('knowledgeEditor.chunking.parentChildDescription') }}</p>
                           </div>
                           <div class="setting-control">
-                            <t-switch v-model="uiState.chunkingConfig.enableParentChild" />
+                            <t-switch
+                              v-model="uiState.chunkingConfig.enableParentChild"
+                              :disabled="isSmartAnalysis"
+                              :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined"
+                            />
                           </div>
                         </div>
-                        <div v-if="uiState.chunkingConfig.enableParentChild" class="setting-row">
+                        <div
+                          v-if="uiState.chunkingConfig.enableParentChild"
+                          class="setting-row"
+                          :class="{ 'setting-row--advisor-owned': isSmartAnalysis }"
+                        >
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.parentChunkSizeLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.parentChunkSizeLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                           </div>
                           <div class="setting-control">
-                            <t-input-number v-model="uiState.chunkingConfig.parentChunkSize" :min="512" :max="8192" :step="64" theme="normal" :style="{ width: '200px' }" />
+                            <t-input-number v-model="uiState.chunkingConfig.parentChunkSize" :min="512" :max="8192" :step="64" theme="normal" :disabled="isSmartAnalysis" :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined" :style="{ width: '200px' }" />
                           </div>
                         </div>
-                        <div v-if="uiState.chunkingConfig.enableParentChild" class="setting-row">
+                        <div
+                          v-if="uiState.chunkingConfig.enableParentChild"
+                          class="setting-row"
+                          :class="{ 'setting-row--advisor-owned': isSmartAnalysis }"
+                        >
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.childChunkSizeLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.childChunkSizeLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                           </div>
                           <div class="setting-control">
-                            <t-input-number v-model="uiState.chunkingConfig.childChunkSize" :min="64" :max="2048" :step="32" theme="normal" :style="{ width: '200px' }" />
+                            <t-input-number v-model="uiState.chunkingConfig.childChunkSize" :min="64" :max="2048" :step="32" theme="normal" :disabled="isSmartAnalysis" :aria-describedby="isSmartAnalysis ? 'ingestion-advisor-owned-hint' : undefined" :style="{ width: '200px' }" />
                           </div>
                         </div>
                       </div>
@@ -522,7 +595,7 @@ import { formatFileSize, getFileIcon } from '@/utils/files'
 import { getUploadFileKey } from '../utils/uploadSources'
 import { listKnowledgeTags } from '@/api/knowledge-base'
 import KbUploadSourceDropdown from './KbUploadSourceDropdown.vue'
-import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
+import type { IngestionAdvisorMode, KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
 import type {
   UploadConfirmManualSource,
   UploadConfirmMode,
@@ -555,6 +628,7 @@ interface ChunkingUIConfig {
 }
 
 interface UploadUIState {
+  ingestionAdvisorMode: IngestionAdvisorMode
   chunkingConfig: ChunkingUIConfig
   multimodalConfig: { enabled: boolean; vllmModelId: string; descriptionLanguage?: string; customInstructions?: string }
   asrConfig: { enabled: boolean; modelId: string; language: string }
@@ -744,6 +818,17 @@ const tagOptions = computed(() => availableTags.value.map(tag => ({
 
 const llmModelId = computed(() => props.kbInfo?.summary_model_id || '')
 
+const advisorModeAvailable = computed(() => {
+  if (props.mode === 'file') return localFiles.value.length > 0
+  if (props.mode !== 'reparse') return false
+  const source = props.reparsePreview
+  return !!source?.fileName && (source.fileType || '').toLowerCase() !== 'html'
+})
+
+const isSmartAnalysis = computed(() => {
+  return advisorModeAvailable.value && uiState.value.ingestionAdvisorMode === 'smart'
+})
+
 const hasImages = computed(() => {
   if (props.mode === 'manual' && props.manualPreview?.content) {
     const content = props.manualPreview.content
@@ -862,6 +947,9 @@ function getSectionNavStatus(
       }
       return { status: t('uploadConfirm.navParserDefault'), statusTone: 'muted' }
     case 'chunking': {
+      if (isSmartAnalysis.value) {
+        return { status: t('uploadConfirm.navChunkingSmart') }
+      }
       const chunking = uiState.value.chunkingConfig
       const parts = [t('uploadConfirm.navChunkingSummary', { size: chunking.chunkSize })]
       if (chunking.enableParentChild) {
@@ -954,6 +1042,7 @@ function goToSection(key: ConfigSectionKey) {
 
 function createDefaultUIState(): UploadUIState {
   return {
+    ingestionAdvisorMode: 'off',
     chunkingConfig: {
       chunkSize: 512,
       chunkOverlap: 80,
@@ -990,6 +1079,7 @@ function initFromKbInfo(kb: any) {
   }
 
   uiState.value = {
+    ingestionAdvisorMode: 'off',
     chunkingConfig: {
       chunkSize: kb.chunking_config?.chunk_size || 512,
       chunkOverlap: kb.chunking_config?.chunk_overlap || 80,
@@ -1081,6 +1171,13 @@ function buildProcessOverrides(): KnowledgeProcessOverrides {
     },
   }
 
+  if (advisorModeAvailable.value) {
+    overrides.ingestion_advisor = {
+      mode: state.ingestionAdvisorMode,
+      prompt_version: 'v1',
+    }
+  }
+
   if (state.pdfForceScanned) {
     overrides.parser_engine_overrides = {
       pdf_force_scanned: 'true',
@@ -1144,6 +1241,20 @@ function applyOverridesToState(o?: KnowledgeProcessOverrides | null) {
   }
 }
 
+function initializeIngestionAdvisorMode() {
+  if (props.mode === 'file') {
+    uiState.value.ingestionAdvisorMode = 'smart'
+    return
+  }
+  if (props.mode === 'reparse' && advisorModeAvailable.value) {
+    uiState.value.ingestionAdvisorMode = props.reparsePreview?.processOverrides?.ingestion_advisor?.mode === 'smart'
+      ? 'smart'
+      : 'off'
+    return
+  }
+  uiState.value.ingestionAdvisorMode = 'off'
+}
+
 async function loadModels() {
   try {
     await chatResources.ensureModels()
@@ -1193,6 +1304,7 @@ watch(
     if (props.mode === 'reparse') {
       applyOverridesToState(props.reparsePreview?.processOverrides)
     }
+    initializeIngestionAdvisorMode()
     activeSection.value = getDefaultSection()
     chunkingMoreOpen.value = false
     loadModels()
@@ -1208,6 +1320,7 @@ watch(isGraphSectionAvailable, (available) => {
 })
 
 const appendFiles = (incoming: File[]) => {
+  const hadFiles = localFiles.value.length > 0
   const existingKeys = new Set(localFiles.value.map(getUploadFileKey))
   const toAdd: File[] = []
   let duplicateCount = 0
@@ -1224,6 +1337,7 @@ const appendFiles = (incoming: File[]) => {
 
   if (toAdd.length > 0) {
     localFiles.value = [...localFiles.value, ...toAdd]
+    if (!hadFiles) uiState.value.ingestionAdvisorMode = 'smart'
     MessagePlugin.success(t('uploadConfirm.filesAdded', { count: toAdd.length }))
   } else if (duplicateCount > 0) {
     MessagePlugin.warning(t('uploadConfirm.filesAllDuplicate'))
@@ -1810,6 +1924,95 @@ const handleConfirm = () => {
   }
 }
 
+.processing-mode-card {
+  margin-bottom: 8px;
+  padding: 16px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-secondarycontainer);
+}
+
+.processing-mode-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.processing-mode-copy {
+  min-width: 0;
+}
+
+.processing-mode-label {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--td-text-color-primary);
+}
+
+.processing-mode-desc {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+}
+
+.processing-mode-control {
+  flex-shrink: 0;
+}
+
+.smart-analysis-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--td-component-stroke);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
+
+  .t-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--td-brand-color);
+  }
+
+  strong {
+    color: var(--td-text-color-primary);
+  }
+
+  p {
+    margin: 2px 0 0;
+  }
+
+  &--warning,
+  &--warning .t-icon,
+  &--warning strong {
+    color: var(--td-warning-color);
+  }
+}
+
+.setting-row--advisor-owned {
+  .setting-info .desc {
+    opacity: 0.72;
+  }
+}
+
+.advisor-owned-badge {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  vertical-align: 1px;
+}
+
 .kb-settings-block {
   width: 100%;
 
@@ -2020,6 +2223,11 @@ const handleConfirm = () => {
   }
 
   .setting-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .processing-mode-header {
     flex-direction: column;
     gap: 12px;
   }
