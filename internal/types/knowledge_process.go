@@ -2,6 +2,7 @@ package types
 
 // KnowledgeProcessOverrides stores per-upload parse config overrides in knowledge metadata.
 type KnowledgeProcessOverrides struct {
+	IngestionAdvisor         *IngestionAdvisorConfig   `json:"ingestion_advisor,omitempty"`
 	ParserEngineRules        []ParserEngineRule        `json:"parser_engine_rules,omitempty"`
 	ChunkingConfig           *ChunkingConfig           `json:"chunking_config,omitempty"`
 	EnableMultimodel         *bool                     `json:"enable_multimodel,omitempty"`
