@@ -12,6 +12,7 @@ import (
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	appconfig "github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -154,6 +155,9 @@ type executeIngestionAgentRequest struct {
 
 func executeIngestionAgent(ctx context.Context, request executeIngestionAgentRequest) (*types.AgentState, error) {
 	callCtx := types.WithLLMCallMetadata(ctx, "document_analysis", "")
+	if effectiveIngestionPromptVersion(request.Request.PromptVersion) == types.IngestionPromptVersionV2 {
+		callCtx = logger.WithSuppressedOutput(callCtx)
+	}
 	return request.Engine.ExecuteTask(callCtx, interfaces.AgentTaskRequest{
 		SessionID: ingestionAgentSessionID(request.Request),
 		MessageID: request.Request.KnowledgeID,
