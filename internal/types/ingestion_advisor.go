@@ -34,21 +34,29 @@ type IngestionAdvisorConfig struct {
 
 // IngestionAdvisorRequest is immutable input to the advisor boundary.
 type IngestionAdvisorRequest struct {
-	Content           string
-	KnowledgeID       string
-	KnowledgeBaseID   string
-	KnowledgeBaseName string
-	KnowledgeBaseType string
-	TenantID          uint64
-	VectorEnabled     bool
-	KeywordEnabled    bool
-	GraphEnabled      bool
-	WikiEnabled       bool
-	ModelID           string
-	PromptVersion     string
-	AllowWebAccess    bool
-	AllowReadOnlyMCP  bool
-	ProgressFn        func(IngestionAgentStep)
+	Content             string
+	KnowledgeID         string
+	KnowledgeBaseID     string
+	KnowledgeBaseName   string
+	KnowledgeBaseType   string
+	TenantID            uint64
+	VectorEnabled       bool
+	KeywordEnabled      bool
+	GraphEnabled        bool
+	WikiEnabled         bool
+	ModelID             string
+	PromptVersion       string
+	AllowWebAccess      bool
+	AllowReadOnlyMCP    bool
+	ChunkingConstraints IngestionChunkingConstraints
+	ProgressFn          func(IngestionAgentStep)
+}
+
+// IngestionChunkingConstraints are knowledge-base-owned splitter inputs. The
+// advisor may observe them when previewing but never overwrite them.
+type IngestionChunkingConstraints struct {
+	TokenLimit int
+	Languages  []string
 }
 
 type IngestionAgentWarning struct {

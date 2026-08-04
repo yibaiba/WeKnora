@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -129,8 +130,17 @@ func naturalResponse(content string) []types.StreamResponse {
 }
 
 func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	request.ChunkingConstraints = types.IngestionChunkingConstraints{
+		TokenLimit: 100,
+		Languages:  []string{chunker.LangEnglish},
+	}
 	config := validIngestionRecommendation()
-	normalized, err := normalizeIngestionPreviewConfig(config)
+	config.ChunkSize = 4000
+	config.ChunkOverlap = 500
+	normalized, err := normalizeIngestionPreviewConfig(
+		config, request.ChunkingConstraints,
+	)
 	require.NoError(t, err)
 	candidateID, err := ingestionCandidateID(normalized)
 	require.NoError(t, err)
@@ -147,7 +157,6 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
 	}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
-	request := validIngestionAdvisorRequest()
 	request.AllowWebAccess = true
 	request.AllowReadOnlyMCP = true
 
@@ -206,7 +215,7 @@ func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t
 	configs := []types.IngestionChunkingRecommendation{
 		roughBoundaryConfig, ingestionTestConfig(420), ingestionTestConfig(960),
 	}
-	probe := newIngestionAgentSession(request.Content)
+	probe := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
 	probed := make([]types.IngestionChunkingCandidate, 0, len(configs))
 	for _, config := range configs {
 		candidate, err := probe.preview(config)
@@ -397,6 +406,25 @@ func TestValidateIngestionAnalysisRejectsInvalidEnumsAndBounds(t *testing.T) {
 			require.Error(t, ValidateIngestionAnalysis(value))
 		})
 	}
+}
+
+func TestConstrainedValidationAcceptsOnlyTokenNormalizedSmallChunk(t *testing.T) {
+	constraints := types.IngestionChunkingConstraints{
+		TokenLimit: 1,
+		Languages:  []string{chunker.LangEnglish},
+	}
+	analysis := validReactIngestionAnalysis()
+	normalized, err := normalizeIngestionPreviewConfig(
+		analysis.RecommendedChunking, constraints,
+	)
+	require.NoError(t, err)
+	require.Less(t, normalized.ChunkSize, 100)
+	analysis.RecommendedChunking = normalized
+
+	require.NoError(t, validateIngestionAnalysisWithConstraints(analysis, constraints))
+	require.Error(t, ValidateIngestionAnalysis(analysis))
+	analysis.RecommendedChunking.ChunkSize--
+	require.Error(t, validateIngestionAnalysisWithConstraints(analysis, constraints))
 }
 
 func TestValidateIngestionAdvisorResultRequiresPreviewedHardValidSelection(t *testing.T) {

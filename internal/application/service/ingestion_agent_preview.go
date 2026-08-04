@@ -9,37 +9,37 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func buildIngestionCandidate(
-	content string,
-	config types.IngestionChunkingRecommendation,
-	id string,
-) (types.IngestionChunkingCandidate, error) {
-	base := chunker.NormalizeConfig(chunker.SplitterConfig{
-		ChunkSize:        config.ChunkSize,
-		ChunkOverlap:     config.ChunkOverlap,
-		AllowZeroOverlap: true,
-		Separators:       append([]string(nil), config.Separators...),
-		Strategy:         config.Strategy,
-	})
-	chunks, parents, parentIndexes, diagnostics, scoreConfig := splitIngestionPreview(content, config, base)
-	if err := validateIngestionChunkPositions(content, chunks); err != nil {
+type ingestionCandidateBuildRequest struct {
+	content     string
+	config      types.IngestionChunkingRecommendation
+	constraints types.IngestionChunkingConstraints
+	id          string
+}
+
+func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
+	config := ingestionChunkingConfig(request.config, request.constraints)
+	base := normalizeSplitterConfig(config, true)
+	chunks, parents, parentIndexes, diagnostics, scoreConfig := splitIngestionPreview(request.content, config, base)
+	if err := validateIngestionChunkPositions(request.content, chunks); err != nil {
 		return types.IngestionChunkingCandidate{}, err
 	}
 	if len(parents) > 0 {
-		if err := validateIngestionChunkPositions(content, parents); err != nil {
+		if err := validateIngestionChunkPositions(request.content, parents); err != nil {
 			return types.IngestionChunkingCandidate{}, fmt.Errorf("父块位置校验失败: %w", err)
 		}
 	}
-	if config.EnableParentChild {
+	if request.config.EnableParentChild {
 		if err := validateParentChildPreview(chunks, parents, parentIndexes); err != nil {
 			return types.IngestionChunkingCandidate{}, err
 		}
 	}
 
-	metrics := ingestionPreviewMetrics(content, chunks, parents, parentIndexes, config, scoreConfig)
+	metrics := ingestionPreviewMetrics(
+		request.content, chunks, parents, parentIndexes, request.config, scoreConfig,
+	)
 	return types.IngestionChunkingCandidate{
-		ID:               id,
-		Config:           cloneChunkingRecommendation(config),
+		ID:               request.id,
+		Config:           cloneChunkingRecommendation(request.config),
 		ChunkCount:       len(chunks),
 		ParentChunkCount: len(parents),
 		Lengths:          metrics.lengths,
@@ -53,23 +53,14 @@ func buildIngestionCandidate(
 
 func splitIngestionPreview(
 	content string,
-	config types.IngestionChunkingRecommendation,
+	config types.ChunkingConfig,
 	base chunker.SplitterConfig,
 ) ([]chunker.Chunk, []chunker.Chunk, []int, *chunker.Diagnostics, chunker.SplitterConfig) {
 	if !config.EnableParentChild {
 		chunks, diagnostics := chunker.SplitWithDiagnostics(content, base)
 		return chunks, nil, nil, diagnostics, base
 	}
-	chunkingConfig := types.ChunkingConfig{
-		ChunkSize:         config.ChunkSize,
-		ChunkOverlap:      config.ChunkOverlap,
-		Separators:        append([]string(nil), config.Separators...),
-		EnableParentChild: true,
-		ParentChunkSize:   config.ParentChunkSize,
-		ChildChunkSize:    config.ChildChunkSize,
-		Strategy:          config.Strategy,
-	}
-	parentConfig, childConfig := buildParentChildConfigs(chunkingConfig, base)
+	parentConfig, childConfig := buildParentChildConfigs(config, base)
 	_, diagnostics := chunker.SplitWithDiagnostics(content, parentConfig)
 	result := chunker.SplitParentChild(content, parentConfig, childConfig)
 	children := make([]chunker.Chunk, len(result.Children))

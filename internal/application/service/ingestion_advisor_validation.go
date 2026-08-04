@@ -53,6 +53,13 @@ func ingestionPromptVersion(config *types.IngestionAdvisorConfig) string {
 // ValidateIngestionAnalysis protects the pipeline from both remote model
 // responses and injected advisor implementations.
 func ValidateIngestionAnalysis(analysis *types.IngestionAnalysis) error {
+	return validateIngestionAnalysisWithConstraints(analysis, types.IngestionChunkingConstraints{})
+}
+
+func validateIngestionAnalysisWithConstraints(
+	analysis *types.IngestionAnalysis,
+	constraints types.IngestionChunkingConstraints,
+) error {
 	if analysis == nil {
 		return fmt.Errorf("文档分析结果为空")
 	}
@@ -74,14 +81,21 @@ func ValidateIngestionAnalysis(analysis *types.IngestionAnalysis) error {
 			return fmt.Errorf("reason_codes 不能包含空值")
 		}
 	}
-	return ValidateIngestionChunkingRecommendation(analysis.RecommendedChunking)
+	return validateIngestionChunkingRecommendation(analysis.RecommendedChunking, constraints)
 }
 
 func ValidateIngestionAdvisorResult(result *types.IngestionAdvisorResult) error {
+	return validateIngestionAdvisorResultWithConstraints(result, types.IngestionChunkingConstraints{})
+}
+
+func validateIngestionAdvisorResultWithConstraints(
+	result *types.IngestionAdvisorResult,
+	constraints types.IngestionChunkingConstraints,
+) error {
 	if result == nil {
 		return fmt.Errorf("文档智能分析未返回结果")
 	}
-	if err := ValidateIngestionAnalysis(result.Analysis); err != nil {
+	if err := validateIngestionAnalysisWithConstraints(result.Analysis, constraints); err != nil {
 		return err
 	}
 	if result.SelectedCandidateID == "" || len(result.SelectionReasonCodes) == 0 {
@@ -103,11 +117,19 @@ func ValidateIngestionAdvisorResult(result *types.IngestionAdvisorResult) error 
 }
 
 func ValidateIngestionChunkingRecommendation(value types.IngestionChunkingRecommendation) error {
+	return validateIngestionChunkingRecommendation(value, types.IngestionChunkingConstraints{})
+}
+
+func validateIngestionChunkingRecommendation(
+	value types.IngestionChunkingRecommendation,
+	constraints types.IngestionChunkingConstraints,
+) error {
 	if _, ok := allowedChunkingStrategies[value.Strategy]; !ok {
 		return fmt.Errorf("strategy %q 不受支持", value.Strategy)
 	}
-	if value.ChunkSize < 100 || value.ChunkSize > 4000 {
-		return fmt.Errorf("chunk_size 必须在 100 到 4000 之间")
+	minimumChunkSize, maximumChunkSize := ingestionChunkSizeBounds(constraints)
+	if value.ChunkSize < minimumChunkSize || value.ChunkSize > maximumChunkSize {
+		return fmt.Errorf("chunk_size 必须在 %d 到 %d 之间", minimumChunkSize, maximumChunkSize)
 	}
 	maxOverlap := min(500, value.ChunkSize/2)
 	if value.ChunkOverlap < 0 || value.ChunkOverlap > maxOverlap {
@@ -131,6 +153,23 @@ func ValidateIngestionChunkingRecommendation(value types.IngestionChunkingRecomm
 		}
 	}
 	return nil
+}
+
+func ingestionChunkSizeBounds(constraints types.IngestionChunkingConstraints) (int, int) {
+	const (
+		minimumAdvisorChunkSize = 100
+		maximumAdvisorChunkSize = 4000
+	)
+	if constraints.TokenLimit <= 0 {
+		return minimumAdvisorChunkSize, maximumAdvisorChunkSize
+	}
+	config := normalizeSplitterConfig(types.ChunkingConfig{
+		ChunkSize:  maximumAdvisorChunkSize,
+		TokenLimit: constraints.TokenLimit,
+		Languages:  append([]string(nil), constraints.Languages...),
+	}, true)
+	maximum := min(maximumAdvisorChunkSize, config.ChunkSize)
+	return min(minimumAdvisorChunkSize, maximum), maximum
 }
 
 func cloneChunkingRecommendation(value types.IngestionChunkingRecommendation) types.IngestionChunkingRecommendation {

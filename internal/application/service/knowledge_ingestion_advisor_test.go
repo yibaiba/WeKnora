@@ -228,6 +228,8 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, "untrusted-model", original.ModelID, "advisor-owned result must not be mutated")
 	require.True(t, advisor.requests[0].AllowWebAccess)
 	require.True(t, advisor.requests[0].AllowReadOnlyMCP)
+	require.Equal(t, 1024, advisor.requests[0].ChunkingConstraints.TokenLimit)
+	require.Equal(t, []string{"de"}, advisor.requests[0].ChunkingConstraints.Languages)
 
 	persisted, err := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, err)
@@ -285,6 +287,15 @@ func TestApplyIngestionAdvisorPersistsTokenNormalizedAppliedValues(t *testing.T)
 	analysis := validIngestionAnalysis()
 	analysis.RecommendedChunking.ChunkSize = 4000
 	analysis.RecommendedChunking.ChunkOverlap = 500
+	constraints := types.IngestionChunkingConstraints{
+		TokenLimit: 100,
+		Languages:  []string{"en"},
+	}
+	normalized, normalizeErr := normalizeIngestionPreviewConfig(
+		analysis.RecommendedChunking, constraints,
+	)
+	require.NoError(t, normalizeErr)
+	analysis.RecommendedChunking = normalized
 	service := &knowledgeService{
 		repo:             &ingestionKnowledgeRepoStub{},
 		ingestionAdvisor: &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{analysis}},
@@ -297,11 +308,12 @@ func TestApplyIngestionAdvisorPersistsTokenNormalizedAppliedValues(t *testing.T)
 
 	require.NoError(t, err)
 	actualSplitter := buildSplitterConfigFromEffective(effective)
-	require.Less(t, actualSplitter.ChunkSize, analysis.RecommendedChunking.ChunkSize)
+	require.Less(t, actualSplitter.ChunkSize, 4000)
 	persisted, parseErr := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, parseErr)
 	require.Equal(t, actualSplitter.ChunkSize, persisted.AppliedChunking.ChunkSize)
 	require.Equal(t, actualSplitter.ChunkOverlap, persisted.AppliedChunking.ChunkOverlap)
+	require.Equal(t, persisted.RecommendedChunking, persisted.AppliedChunking)
 }
 
 func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {

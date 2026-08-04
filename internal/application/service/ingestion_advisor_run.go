@@ -114,7 +114,7 @@ func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAg
 		return fmt.Errorf("文档分析 Agent 未返回运行状态")
 	}
 	if state.TerminatedByTool == submitIngestionDecisionTool && session.decisionSnapshot() != nil {
-		return ValidateIngestionAnalysis(session.decisionSnapshot())
+		return validateIngestionAnalysisWithConstraints(session.decisionSnapshot(), session.constraints)
 	}
 	if err := firstFailedIngestionCoreTool(state); err != nil {
 		return err

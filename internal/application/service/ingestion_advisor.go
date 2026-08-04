@@ -46,7 +46,7 @@ func (a *modelIngestionAdvisor) Analyze(
 		)
 	}
 
-	session := newIngestionAgentSession(request.Content)
+	session := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
 	registry := agenttools.NewToolRegistry()
 	registerIngestionCoreTools(registry, session)
 	config := buildIngestionAgentConfig(request)

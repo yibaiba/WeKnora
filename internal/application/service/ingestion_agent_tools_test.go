@@ -30,8 +30,12 @@ func ingestionTestContent() string {
 	return strings.Repeat("# 标题\n\nQ: 如何处理？\nA: 按照步骤处理。\n\n|列一|列二|\n|---|---|\n|甲|乙|\n\n正文内容用于真实预切分。\n\n", 80)
 }
 
+func newTestIngestionAgentSession(content string) *ingestionAgentSession {
+	return newIngestionAgentSession(content, types.IngestionChunkingConstraints{})
+}
+
 func TestInspectIngestionDocumentUsesRuneOffsetsAndHardLimit(t *testing.T) {
-	session := newIngestionAgentSession("甲乙丙丁")
+	session := newTestIngestionAgentSession("甲乙丙丁")
 	tool := newInspectIngestionDocument(session)
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"offset":1,"limit":2}`))
 	require.NoError(t, err)
@@ -50,7 +54,7 @@ func TestInspectIngestionDocumentUsesRuneOffsetsAndHardLimit(t *testing.T) {
 }
 
 func TestIngestionPreviewDeduplicatesAndCapsDistinctCandidates(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	first, err := session.preview(ingestionTestConfig(300))
 	require.NoError(t, err)
 	duplicate, err := session.preview(ingestionTestConfig(300))
@@ -67,15 +71,13 @@ func TestIngestionPreviewDeduplicatesAndCapsDistinctCandidates(t *testing.T) {
 }
 
 func TestIngestionPreviewBuildsDistinctCandidatesConcurrently(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
-	session.buildCandidate = func(
-		content string, config types.IngestionChunkingRecommendation, id string,
-	) (types.IngestionChunkingCandidate, error) {
+	session.buildCandidate = func(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
 		started <- struct{}{}
 		<-release
-		return buildIngestionCandidate(content, config, id)
+		return buildIngestionCandidate(request)
 	}
 
 	results := make(chan error, 2)
@@ -92,17 +94,15 @@ func TestIngestionPreviewBuildsDistinctCandidatesConcurrently(t *testing.T) {
 }
 
 func TestIngestionPreviewSharesSameCandidateInFlight(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var buildCalls atomic.Int32
-	session.buildCandidate = func(
-		content string, config types.IngestionChunkingRecommendation, id string,
-	) (types.IngestionChunkingCandidate, error) {
+	session.buildCandidate = func(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
 		buildCalls.Add(1)
 		started <- struct{}{}
 		<-release
-		return buildIngestionCandidate(content, config, id)
+		return buildIngestionCandidate(request)
 	}
 
 	type previewResult struct {
@@ -128,15 +128,13 @@ func TestIngestionPreviewSharesSameCandidateInFlight(t *testing.T) {
 }
 
 func TestIngestionPreviewFailureReleasesReservation(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	var buildCalls atomic.Int32
-	session.buildCandidate = func(
-		content string, config types.IngestionChunkingRecommendation, id string,
-	) (types.IngestionChunkingCandidate, error) {
+	session.buildCandidate = func(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
 		if buildCalls.Add(1) == 1 {
 			return types.IngestionChunkingCandidate{}, errors.New("chunker unavailable")
 		}
-		return buildIngestionCandidate(content, config, id)
+		return buildIngestionCandidate(request)
 	}
 
 	_, err := session.preview(ingestionTestConfig(300))
@@ -148,8 +146,10 @@ func TestIngestionPreviewFailureReleasesReservation(t *testing.T) {
 }
 
 func TestIngestionPreviewFlightPropagatesFailureToWaiter(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
-	normalized, err := normalizeIngestionPreviewConfig(ingestionTestConfig(300))
+	session := newTestIngestionAgentSession(ingestionTestContent())
+	normalized, err := normalizeIngestionPreviewConfig(
+		ingestionTestConfig(300), types.IngestionChunkingConstraints{},
+	)
 	require.NoError(t, err)
 	id, err := ingestionCandidateID(normalized)
 	require.NoError(t, err)
@@ -170,15 +170,13 @@ func TestIngestionPreviewFlightPropagatesFailureToWaiter(t *testing.T) {
 }
 
 func TestIngestionPreviewConcurrentReservationsEnforceCandidateCap(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	started := make(chan struct{}, maxIngestionCandidates)
 	release := make(chan struct{})
-	session.buildCandidate = func(
-		content string, config types.IngestionChunkingRecommendation, id string,
-	) (types.IngestionChunkingCandidate, error) {
+	session.buildCandidate = func(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
 		started <- struct{}{}
 		<-release
-		return buildIngestionCandidate(content, config, id)
+		return buildIngestionCandidate(request)
 	}
 
 	results := make(chan error, maxIngestionCandidates)
@@ -207,7 +205,7 @@ func waitForIngestionPreviewSignals(t *testing.T, signals <-chan struct{}, count
 
 func TestIngestionPreviewUsesNormalizedRealChunkerWithoutMutatingInput(t *testing.T) {
 	content := ingestionTestContent()
-	session := newIngestionAgentSession(content)
+	session := newTestIngestionAgentSession(content)
 	input := ingestionTestConfig(320)
 	originalSeparators := append([]string(nil), input.Separators...)
 
@@ -227,8 +225,63 @@ func TestIngestionPreviewUsesNormalizedRealChunkerWithoutMutatingInput(t *testin
 	require.Equal(t, string(diagnostics.SelectedTier), candidate.Diagnostics.SelectedTier)
 }
 
+func TestIngestionPreviewMatchesTokenAndLanguageConstrainedFormalSplitter(t *testing.T) {
+	content := ingestionTestContent()
+	constraints := types.IngestionChunkingConstraints{
+		TokenLimit: 100,
+		Languages:  []string{chunker.LangEnglish},
+	}
+	session := newIngestionAgentSession(content, constraints)
+	constraints.Languages[0] = chunker.LangChinese
+	config := ingestionTestConfig(4000)
+	config.ChunkOverlap = 500
+
+	candidate, err := session.preview(config)
+	require.NoError(t, err)
+	formalConfig := normalizeSplitterConfig(ingestionChunkingConfig(
+		candidate.Config,
+		types.IngestionChunkingConstraints{TokenLimit: 100, Languages: []string{chunker.LangEnglish}},
+	), true)
+	formalChunks, diagnostics := chunker.SplitWithDiagnostics(content, formalConfig)
+
+	require.Equal(t, formalConfig.ChunkSize, candidate.Config.ChunkSize)
+	require.Equal(t, formalConfig.ChunkOverlap, candidate.Config.ChunkOverlap)
+	require.Equal(t, len(formalChunks), candidate.ChunkCount)
+	require.Equal(t, ingestionLengthDistribution(formalChunks), candidate.Lengths)
+	require.Equal(t, string(diagnostics.SelectedTier), candidate.Diagnostics.SelectedTier)
+}
+
+func TestParentChildPreviewMatchesFormalConstrainedConfigs(t *testing.T) {
+	content := ingestionTestContent()
+	constraints := types.IngestionChunkingConstraints{
+		TokenLimit: 100,
+		Languages:  []string{chunker.LangEnglish},
+	}
+	config := ingestionTestConfig(4000)
+	config.ChunkOverlap = 500
+	config.EnableParentChild = true
+	config.ParentChunkSize = 900
+	config.ChildChunkSize = 180
+	session := newIngestionAgentSession(content, constraints)
+
+	candidate, err := session.preview(config)
+	require.NoError(t, err)
+	formalChunking := ingestionChunkingConfig(candidate.Config, constraints)
+	formalBase := normalizeSplitterConfig(formalChunking, true)
+	parentConfig, childConfig := buildParentChildConfigs(formalChunking, formalBase)
+	formal := chunker.SplitParentChild(content, parentConfig, childConfig)
+	children := make([]chunker.Chunk, len(formal.Children))
+	for index, child := range formal.Children {
+		children[index] = child.Chunk
+	}
+
+	require.Equal(t, len(formal.Parents), candidate.ParentChunkCount)
+	require.Equal(t, len(children), candidate.ChunkCount)
+	require.Equal(t, ingestionLengthDistribution(children), candidate.Lengths)
+}
+
 func TestIngestionPreviewValidatesProductionParentChildMapping(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	config := ingestionTestConfig(300)
 	config.EnableParentChild = true
 	config.ParentChunkSize = 900
@@ -305,7 +358,7 @@ func TestIngestionCandidateScoreComponentsPenalizeMismatches(t *testing.T) {
 }
 
 func TestSubmitIngestionDecisionRequiresPreviewAndRejectsDuplicate(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	_, err := session.submit(submitIngestionDecisionInput{CandidateID: "cand_unknown"})
 	require.ErrorContains(t, err, "未预览")
 
@@ -329,7 +382,7 @@ func TestSubmitIngestionDecisionRequiresPreviewAndRejectsDuplicate(t *testing.T)
 }
 
 func TestValidateIngestionAgentOutcomeTreatsSuccessfulSubmitAsAuthoritative(t *testing.T) {
-	session := newIngestionAgentSession(ingestionTestContent())
+	session := newTestIngestionAgentSession(ingestionTestContent())
 	candidate, err := session.preview(ingestionTestConfig(300))
 	require.NoError(t, err)
 	_, err = session.submit(submitIngestionDecisionInput{

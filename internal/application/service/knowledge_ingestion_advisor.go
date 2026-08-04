@@ -80,30 +80,41 @@ func (s *knowledgeService) analyzeIngestionContent(
 	if s.ingestionAdvisor == nil {
 		return nil, fmt.Errorf("文档智能分析服务未配置")
 	}
+	constraints := ingestionChunkingConstraintsFromConfig(run.Effective.ChunkingConfig)
 	result, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
-		Content:           run.Content,
-		KnowledgeID:       run.Knowledge.ID,
-		KnowledgeBaseID:   run.KB.ID,
-		KnowledgeBaseName: run.KB.Name,
-		KnowledgeBaseType: run.KB.Type,
-		TenantID:          run.KB.TenantID,
-		VectorEnabled:     run.KB.IsVectorEnabled(),
-		KeywordEnabled:    run.KB.IsKeywordEnabled(),
-		GraphEnabled:      run.KB.IsGraphEnabled(),
-		WikiEnabled:       run.KB.IsWikiEnabled(),
-		ModelID:           run.KB.SummaryModelID,
-		PromptVersion:     promptVersion,
-		AllowWebAccess:    config.AllowWebAccess,
-		AllowReadOnlyMCP:  config.AllowReadOnlyMCP,
-		ProgressFn:        progress,
+		Content:             run.Content,
+		KnowledgeID:         run.Knowledge.ID,
+		KnowledgeBaseID:     run.KB.ID,
+		KnowledgeBaseName:   run.KB.Name,
+		KnowledgeBaseType:   run.KB.Type,
+		TenantID:            run.KB.TenantID,
+		VectorEnabled:       run.KB.IsVectorEnabled(),
+		KeywordEnabled:      run.KB.IsKeywordEnabled(),
+		GraphEnabled:        run.KB.IsGraphEnabled(),
+		WikiEnabled:         run.KB.IsWikiEnabled(),
+		ModelID:             run.KB.SummaryModelID,
+		PromptVersion:       promptVersion,
+		AllowWebAccess:      config.AllowWebAccess,
+		AllowReadOnlyMCP:    config.AllowReadOnlyMCP,
+		ChunkingConstraints: constraints,
+		ProgressFn:          progress,
 	})
 	if err != nil {
 		return result, err
 	}
-	if err := ValidateIngestionAdvisorResult(result); err != nil {
+	if err := validateIngestionAdvisorResultWithConstraints(result, constraints); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func ingestionChunkingConstraintsFromConfig(
+	config types.ChunkingConfig,
+) types.IngestionChunkingConstraints {
+	return types.IngestionChunkingConstraints{
+		TokenLimit: config.TokenLimit,
+		Languages:  append([]string(nil), config.Languages...),
+	}
 }
 
 func ingestionAnalysisFromAdvisorResult(result *types.IngestionAdvisorResult) *types.IngestionAnalysis {

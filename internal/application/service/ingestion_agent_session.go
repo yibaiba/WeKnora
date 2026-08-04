@@ -12,7 +12,6 @@ import (
 	"sync"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
-	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -25,8 +24,9 @@ const (
 )
 
 type ingestionAgentSession struct {
-	content string
-	profile types.IngestionDocumentProfile
+	content     string
+	profile     types.IngestionDocumentProfile
+	constraints types.IngestionChunkingConstraints
 
 	mu             sync.RWMutex
 	candidates     map[string]types.IngestionChunkingCandidate
@@ -36,11 +36,7 @@ type ingestionAgentSession struct {
 	selectedID     string
 }
 
-type ingestionCandidateBuilder func(
-	content string,
-	config types.IngestionChunkingRecommendation,
-	id string,
-) (types.IngestionChunkingCandidate, error)
+type ingestionCandidateBuilder func(ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error)
 
 type ingestionCandidateFlight struct {
 	done      chan struct{}
@@ -53,10 +49,17 @@ type ingestionCandidateBuildResult struct {
 	err       error
 }
 
-func newIngestionAgentSession(content string) *ingestionAgentSession {
+func newIngestionAgentSession(
+	content string,
+	constraints types.IngestionChunkingConstraints,
+) *ingestionAgentSession {
 	return &ingestionAgentSession{
-		content:        content,
-		profile:        BuildIngestionDocumentProfile(content),
+		content: content,
+		profile: BuildIngestionDocumentProfile(content),
+		constraints: types.IngestionChunkingConstraints{
+			TokenLimit: constraints.TokenLimit,
+			Languages:  append([]string(nil), constraints.Languages...),
+		},
 		candidates:     make(map[string]types.IngestionChunkingCandidate),
 		inFlight:       make(map[string]*ingestionCandidateFlight),
 		buildCandidate: buildIngestionCandidate,
@@ -106,7 +109,7 @@ func (s *ingestionAgentSession) candidate(id string) (types.IngestionChunkingCan
 func (s *ingestionAgentSession) preview(
 	config types.IngestionChunkingRecommendation,
 ) (types.IngestionChunkingCandidate, error) {
-	normalized, err := normalizeIngestionPreviewConfig(config)
+	normalized, err := normalizeIngestionPreviewConfig(config, s.constraints)
 	if err != nil {
 		return types.IngestionChunkingCandidate{}, err
 	}
@@ -126,7 +129,9 @@ func (s *ingestionAgentSession) preview(
 		<-flight.done
 		return cloneIngestionCandidate(flight.candidate), flight.err
 	}
-	candidate, err = s.buildCandidate(s.content, normalized, id)
+	candidate, err = s.buildCandidate(ingestionCandidateBuildRequest{
+		content: s.content, config: normalized, constraints: s.constraints, id: id,
+	})
 	s.completePreview(id, flight, ingestionCandidateBuildResult{candidate: candidate, err: err})
 	return cloneIngestionCandidate(candidate), err
 }
@@ -188,7 +193,7 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 		Summary:                input.Summary,
 		RecommendedChunking:    cloneChunkingRecommendation(candidate.Config),
 	}
-	if err := ValidateIngestionAnalysis(analysis); err != nil {
+	if err := validateIngestionAnalysisWithConstraints(analysis, s.constraints); err != nil {
 		return nil, err
 	}
 	s.decision = analysis
@@ -198,25 +203,37 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 
 func normalizeIngestionPreviewConfig(
 	value types.IngestionChunkingRecommendation,
+	constraints types.IngestionChunkingConstraints,
 ) (types.IngestionChunkingRecommendation, error) {
 	value = cloneChunkingRecommendation(value)
 	if err := ValidateIngestionChunkingRecommendation(value); err != nil {
 		return types.IngestionChunkingRecommendation{}, err
 	}
-	base := chunker.NormalizeConfig(chunker.SplitterConfig{
-		ChunkSize:        value.ChunkSize,
-		ChunkOverlap:     value.ChunkOverlap,
-		AllowZeroOverlap: true,
-		Separators:       append([]string(nil), value.Separators...),
-		Strategy:         value.Strategy,
-	})
+	base := normalizeSplitterConfig(ingestionChunkingConfig(value, constraints), true)
 	value.ChunkSize = base.ChunkSize
 	value.ChunkOverlap = base.ChunkOverlap
 	value.Separators = append([]string(nil), base.Separators...)
-	if err := ValidateIngestionChunkingRecommendation(value); err != nil {
+	if err := validateIngestionChunkingRecommendation(value, constraints); err != nil {
 		return types.IngestionChunkingRecommendation{}, err
 	}
 	return value, nil
+}
+
+func ingestionChunkingConfig(
+	value types.IngestionChunkingRecommendation,
+	constraints types.IngestionChunkingConstraints,
+) types.ChunkingConfig {
+	return types.ChunkingConfig{
+		Strategy:          value.Strategy,
+		ChunkSize:         value.ChunkSize,
+		ChunkOverlap:      value.ChunkOverlap,
+		EnableParentChild: value.EnableParentChild,
+		ParentChunkSize:   value.ParentChunkSize,
+		ChildChunkSize:    value.ChildChunkSize,
+		Separators:        append([]string(nil), value.Separators...),
+		TokenLimit:        constraints.TokenLimit,
+		Languages:         append([]string(nil), constraints.Languages...),
+	}
 }
 
 func ingestionCandidateID(value types.IngestionChunkingRecommendation) (string, error) {
