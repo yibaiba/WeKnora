@@ -23,9 +23,17 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 	if err := validateIngestionChunkPositions(request.content, chunks); err != nil {
 		return types.IngestionChunkingCandidate{}, err
 	}
+	if !request.config.EnableParentChild {
+		if err := validateIngestionChunkOrder(chunks); err != nil {
+			return types.IngestionChunkingCandidate{}, err
+		}
+	}
 	if len(parents) > 0 {
 		if err := validateIngestionChunkPositions(request.content, parents); err != nil {
 			return types.IngestionChunkingCandidate{}, fmt.Errorf("父块位置校验失败: %w", err)
+		}
+		if err := validateIngestionChunkOrder(parents); err != nil {
+			return types.IngestionChunkingCandidate{}, fmt.Errorf("父块顺序校验失败: %w", err)
 		}
 	}
 	if request.config.EnableParentChild {
@@ -77,7 +85,6 @@ func validateIngestionChunkPositions(content string, chunks []chunker.Chunk) err
 		return fmt.Errorf("预切分结果为空")
 	}
 	runes := []rune(content)
-	lastEnd := 0
 	for index, current := range chunks {
 		if current.Start < 0 || current.End <= current.Start || current.End > len(runes) {
 			return fmt.Errorf("块 %d 的位置 [%d,%d) 越界", index, current.Start, current.End)
@@ -85,6 +92,13 @@ func validateIngestionChunkPositions(content string, chunks []chunker.Chunk) err
 		if string(runes[current.Start:current.End]) != current.Content {
 			return fmt.Errorf("块 %d 的位置与内容不一致", index)
 		}
+	}
+	return nil
+}
+
+func validateIngestionChunkOrder(chunks []chunker.Chunk) error {
+	lastEnd := 0
+	for index, current := range chunks {
 		if index > 0 && current.End <= lastEnd {
 			return fmt.Errorf("块 %d 的结束位置未递增", index)
 		}
@@ -97,6 +111,7 @@ func validateParentChildPreview(children, parents []chunker.Chunk, parentIndexes
 	if len(children) != len(parentIndexes) {
 		return fmt.Errorf("父子映射数量与子块数量不一致")
 	}
+	lastEndByParent := make(map[int]int, len(parents))
 	for index, parentIndex := range parentIndexes {
 		if parentIndex == -1 {
 			continue
@@ -109,6 +124,10 @@ func validateParentChildPreview(children, parents []chunker.Chunk, parentIndexes
 		if child.Start < parent.Start || child.End > parent.End {
 			return fmt.Errorf("子块 %d 不在父块 %d 范围内", index, parentIndex)
 		}
+		if lastEnd, ok := lastEndByParent[parentIndex]; ok && child.End <= lastEnd {
+			return fmt.Errorf("父块 %d 内子块 %d 的结束位置未递增", parentIndex, index)
+		}
+		lastEndByParent[parentIndex] = child.End
 	}
 	return nil
 }

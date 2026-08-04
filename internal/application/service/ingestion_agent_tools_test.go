@@ -301,10 +301,18 @@ func TestIngestionCandidateHardValidationRejectsInvalidPositions(t *testing.T) {
 		Content: "错误", Start: 0, End: 2,
 	}})
 	require.ErrorContains(t, err, "位置与内容不一致")
+	require.ErrorContains(t, validateIngestionChunkOrder([]chunker.Chunk{
+		{Content: "正文", Start: 0, End: 2},
+		{Content: "文", Start: 1, End: 2},
+	}), "结束位置未递增")
 
 	children := []chunker.Chunk{{Content: "正文", Start: 0, End: 2}}
 	parents := []chunker.Chunk{{Content: "正", Start: 0, End: 1}}
 	require.Error(t, validateParentChildPreview(children, parents, []int{0}))
+	require.ErrorContains(t, validateParentChildPreview(
+		[]chunker.Chunk{{Start: 0, End: 2}, {Start: 1, End: 2}},
+		[]chunker.Chunk{{Start: 0, End: 2}}, []int{0, 0},
+	), "结束位置未递增")
 }
 
 func TestIngestionCandidateScoresAllNamedDimensions(t *testing.T) {
