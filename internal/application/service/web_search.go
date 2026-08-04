@@ -24,6 +24,8 @@ type WebSearchService struct {
 	timeout      int
 }
 
+const webSearchTemporaryKBNamePrefix = "tmp-websearch-"
+
 // NewWebSearchService creates a new web search service.
 // The registry holds provider type factories; the providerRepo loads tenant-specific configurations.
 func NewWebSearchService(
@@ -144,7 +146,8 @@ func mergeProxyFromWebSearchConfig(base types.WebSearchProviderParameters, cfg *
 func (s *WebSearchService) CompressWithRAG(
 	ctx context.Context, sessionID string, tempKBID string, questions []string,
 	webSearchResults []*types.WebSearchResult, cfg *types.WebSearchConfig,
-	kbSvc interfaces.KnowledgeBaseService, knowSvc interfaces.KnowledgeService,
+	kbSvc interfaces.WebSearchTemporaryKnowledgeBaseService,
+	knowSvc interfaces.WebSearchTemporaryKnowledgeService,
 	seenURLs map[string]bool, knowledgeIDs []string,
 ) (compressed []*types.WebSearchResult, kbID string, newSeen map[string]bool, newIDs []string, err error) {
 	if len(webSearchResults) == 0 || len(questions) == 0 {
@@ -161,13 +164,19 @@ func (s *WebSearchService) CompressWithRAG(
 	if strings.TrimSpace(tempKBID) != "" {
 		createdKB, err = kbSvc.GetKnowledgeBaseByID(ctx, tempKBID)
 		if err != nil {
-			logger.Warnf(ctx, "Temp KB %s not available, recreating: %v", tempKBID, err)
-			createdKB = nil
+			return nil, tempKBID, seenURLs, knowledgeIDs, fmt.Errorf(
+				"failed to load Web search temporary knowledge base %s: %w", tempKBID, err,
+			)
+		}
+		if !isWebSearchTemporaryKB(createdKB) {
+			return nil, tempKBID, seenURLs, knowledgeIDs, fmt.Errorf(
+				"knowledge base %s is not a Web search temporary knowledge base", tempKBID,
+			)
 		}
 	}
 	if createdKB == nil {
 		kb := &types.KnowledgeBase{
-			Name:             fmt.Sprintf("tmp-websearch-%d", time.Now().UnixNano()),
+			Name:             fmt.Sprintf("%s%d", webSearchTemporaryKBNamePrefix, time.Now().UnixNano()),
 			Description:      "Ephemeral search compression KB",
 			IsTemporary:      true,
 			EmbeddingModelID: cfg.EmbeddingModelID,
@@ -244,6 +253,10 @@ func (s *WebSearchService) CompressWithRAG(
 	// Consolidate by URL back into the web results
 	compressedResults := s.consolidateReferencesByURL(webSearchResults, selected)
 	return compressedResults, tempKBID, seenURLs, knowledgeIDs, nil
+}
+
+func isWebSearchTemporaryKB(kb *types.KnowledgeBase) bool {
+	return kb != nil && kb.IsTemporary && strings.HasPrefix(kb.Name, webSearchTemporaryKBNamePrefix)
 }
 
 // selectReferencesRoundRobin selects up to limit references, distributing fairly across source URLs.

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
@@ -23,6 +25,150 @@ type ingestionAdvisorScriptedModel struct {
 	calls     [][]chat.Message
 	options   []*chat.ChatOptions
 	streamErr error
+}
+
+type ingestionWebSearchServiceSpy struct {
+	mu            sync.Mutex
+	compressCalls int
+}
+
+func (s *ingestionWebSearchServiceSpy) Search(
+	_ context.Context,
+	_ string,
+	_ *types.WebSearchConfig,
+	query string,
+) ([]*types.WebSearchResult, error) {
+	suffix := "first"
+	if query == "second query" {
+		suffix = "second"
+	}
+	return []*types.WebSearchResult{{
+		Title: "Chunking", URL: "https://example.com/" + suffix, Content: "raw guidance " + suffix,
+	}}, nil
+}
+
+func (s *ingestionWebSearchServiceSpy) CompressWithRAG(
+	ctx context.Context,
+	sessionID string,
+	tempKBID string,
+	questions []string,
+	results []*types.WebSearchResult,
+	config *types.WebSearchConfig,
+	kb interfaces.WebSearchTemporaryKnowledgeBaseService,
+	knowledge interfaces.WebSearchTemporaryKnowledgeService,
+	seen map[string]bool,
+	knowledgeIDs []string,
+) ([]*types.WebSearchResult, string, map[string]bool, []string, error) {
+	s.mu.Lock()
+	s.compressCalls++
+	s.mu.Unlock()
+	return (&WebSearchService{}).CompressWithRAG(
+		ctx, sessionID, tempKBID, questions, results, config,
+		kb, knowledge, seen, knowledgeIDs,
+	)
+}
+
+type ingestionAdvisorWebKBStub struct {
+	interfaces.KnowledgeBaseService
+	mu                  sync.Mutex
+	knowledge           *ingestionAdvisorWebKnowledgeStub
+	kb                  *types.KnowledgeBase
+	created             int
+	deleted             []string
+	firstCreateEntered  chan struct{}
+	secondCreateEntered chan struct{}
+	releaseFirstCreate  chan struct{}
+}
+
+func (s *ingestionAdvisorWebKBStub) CreateKnowledgeBase(
+	_ context.Context,
+	kb *types.KnowledgeBase,
+) (*types.KnowledgeBase, error) {
+	s.mu.Lock()
+	s.created++
+	createIndex := s.created
+	s.mu.Unlock()
+	if createIndex == 1 && s.firstCreateEntered != nil {
+		close(s.firstCreateEntered)
+		<-s.releaseFirstCreate
+	}
+	if createIndex == 2 && s.secondCreateEntered != nil {
+		close(s.secondCreateEntered)
+	}
+	created := *kb
+	created.ID = fmt.Sprintf("temp-kb-%d", createIndex)
+	s.mu.Lock()
+	s.kb = &created
+	s.mu.Unlock()
+	return &created, nil
+}
+
+func (s *ingestionAdvisorWebKBStub) GetKnowledgeBaseByID(
+	_ context.Context,
+	id string,
+) (*types.KnowledgeBase, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.kb == nil || s.kb.ID != id {
+		return nil, errors.New("temporary knowledge base not found")
+	}
+	result := *s.kb
+	return &result, nil
+}
+
+func (s *ingestionAdvisorWebKBStub) HybridSearch(
+	context.Context,
+	string,
+	types.SearchParams,
+) ([]*types.SearchResult, error) {
+	return s.knowledge.searchResults(), nil
+}
+
+func (s *ingestionAdvisorWebKBStub) DeleteKnowledgeBase(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleted = append(s.deleted, id)
+	return nil
+}
+
+type ingestionAdvisorWebKnowledgeStub struct {
+	interfaces.WebSearchTemporaryKnowledgeService
+	mu       sync.Mutex
+	created  int
+	contents []string
+	deleted  []string
+}
+
+func (s *ingestionAdvisorWebKnowledgeStub) CreateKnowledgeFromPassageSync(
+	_ context.Context,
+	_ string,
+	passage []string,
+	_ string,
+) (*types.Knowledge, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.created++
+	s.contents = append(s.contents, strings.Join(passage, "\n"))
+	return &types.Knowledge{ID: fmt.Sprintf("temp-doc-%d", s.created)}, nil
+}
+
+func (s *ingestionAdvisorWebKnowledgeStub) DeleteKnowledge(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleted = append(s.deleted, id)
+	return nil
+}
+
+func (s *ingestionAdvisorWebKnowledgeStub) searchResults() []*types.SearchResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	results := make([]*types.SearchResult, 0, len(s.contents))
+	for index, content := range s.contents {
+		results = append(results, &types.SearchResult{
+			ID: fmt.Sprintf("chunk-%d", index+1), Content: content,
+		})
+	}
+	return results
 }
 
 func (m *ingestionAdvisorScriptedModel) Chat(
@@ -160,7 +306,7 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 	request.AllowWebAccess = true
 	request.AllowReadOnlyMCP = true
 
-	result, err := advisor.Analyze(context.Background(), request)
+	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
 
 	require.NoError(t, err)
 	require.NotNil(t, result.Analysis)
@@ -178,6 +324,76 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 	require.Contains(t, result.AgentRun.Warnings, types.IngestionAgentWarning{
 		Code: "readonly_tools_unavailable", Message: "只读 Agent 工具工厂未配置",
 	})
+}
+
+func TestModelIngestionAdvisorCompressesWebResultsAndCleansTemporaryKnowledge(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	request.VectorEnabled = false
+	request.KeywordEnabled = false
+	request.AllowWebAccess = true
+	config := validIngestionRecommendation()
+	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
+	require.NoError(t, err)
+	candidateID, err := ingestionCandidateID(normalized)
+	require.NoError(t, err)
+	previewArgs, err := jsonMarshalForTest(config)
+	require.NoError(t, err)
+	submitArgs := fmt.Sprintf(
+		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.9,`+
+			`"recommended_content_mode":"document","reason_codes":["web_validated"],`+
+			`"summary":"结合 Web 检索验证切分方案"}`,
+		candidateID,
+	)
+	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
+		toolCallsResponse(
+			types.LLMToolCall{ID: "web-1", Function: types.FunctionCall{
+				Name: agenttools.ToolWebSearch, Arguments: `{"query":"first query"}`,
+			}},
+			types.LLMToolCall{ID: "web-2", Function: types.FunctionCall{
+				Name: agenttools.ToolWebSearch, Arguments: `{"query":"second query"}`,
+			}},
+		),
+		toolResponse("preview-1", previewIngestionChunkingTool, previewArgs),
+		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
+	}}
+	webSearch := &ingestionWebSearchServiceSpy{}
+	knowledge := &ingestionAdvisorWebKnowledgeStub{}
+	kb := &ingestionAdvisorWebKBStub{
+		knowledge:          knowledge,
+		firstCreateEntered: make(chan struct{}), secondCreateEntered: make(chan struct{}),
+		releaseFirstCreate: make(chan struct{}),
+	}
+	go func() {
+		<-kb.firstCreateEntered
+		select {
+		case <-kb.secondCreateEntered:
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(kb.releaseFirstCreate)
+	}()
+	factory := NewReadOnlyAgentToolFactory(readOnlyAgentToolFactoryParams{
+		WebSearchService: webSearch, KnowledgeBaseService: kb,
+	})
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, factory)
+	tenant := &types.Tenant{ID: request.TenantID, WebSearchConfig: &types.WebSearchConfig{
+		CompressionMethod: "rag", EmbeddingModelID: "embedding-1",
+	}}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, request.TenantID)
+	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
+
+	result, err := advisor.Analyze(ctx, request, interfaces.IngestionAdvisorRuntime{
+		WebSearchKnowledge: knowledge,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, candidateID, result.SelectedCandidateID)
+	require.Equal(t, 2, webSearch.compressCalls)
+	require.Equal(t, 1, kb.created)
+	require.Equal(t, []string{"temp-doc-1", "temp-doc-2"}, knowledge.deleted)
+	require.Equal(t, []string{"temp-kb-1"}, kb.deleted)
+	for _, warning := range result.AgentRun.Warnings {
+		require.False(t, warning.Tool == agenttools.ToolWebSearch, warning.Message)
+	}
 }
 
 func TestBuildIngestionAgentRunRedactsPayloadsAndWarnsOnOptionalToolFailure(t *testing.T) {
@@ -258,7 +474,7 @@ func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t
 	}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
-	result, err := advisor.Analyze(context.Background(), request)
+	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
 
 	require.NoError(t, err)
 	require.Equal(t, selected.ID, result.SelectedCandidateID)
@@ -273,7 +489,9 @@ func TestModelIngestionAdvisorRejectsNaturalAnswerWithoutTools(t *testing.T) {
 	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{naturalResponse("plain answer")}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
-	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+	result, err := advisor.Analyze(
+		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+	)
 
 	require.ErrorContains(t, err, "不支持原生工具调用")
 	require.NotNil(t, result)
@@ -303,7 +521,9 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 			}}
 			advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
-			result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+			result, err := advisor.Analyze(
+				context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+			)
 
 			require.Error(t, err)
 			require.Equal(t, test.code, ingestionAdvisorRunErrorCode(err))
@@ -326,7 +546,9 @@ func TestModelIngestionAdvisorFailsAtFourRoundsWithoutSubmission(t *testing.T) {
 	model := &ingestionAdvisorScriptedModel{responses: responses}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
-	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+	result, err := advisor.Analyze(
+		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+	)
 
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorMaxRounds, ingestionAdvisorRunErrorCode(err))
@@ -346,7 +568,9 @@ func TestModelIngestionAdvisorRejectsPreviewWithoutSubmission(t *testing.T) {
 	}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
-	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+	result, err := advisor.Analyze(
+		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+	)
 
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorNotSubmitted, ingestionAdvisorRunErrorCode(err))
@@ -358,7 +582,9 @@ func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T)
 	model := &ingestionAdvisorScriptedModel{streamErr: errors.New("tool calling unsupported by provider")}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
-	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+	result, err := advisor.Analyze(
+		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+	)
 
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorToolCalling, ingestionAdvisorRunErrorCode(err))
@@ -369,12 +595,14 @@ func TestModelIngestionAdvisorSurfacesMissingModelAndProviderErrors(t *testing.T
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{}, nil)
 	request := validIngestionAdvisorRequest()
 	request.ModelID = ""
-	_, err := advisor.Analyze(context.Background(), request)
+	_, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
 	require.ErrorContains(t, err, "未配置摘要模型")
 
 	providerErr := errors.New("provider unavailable")
 	advisor = NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{err: providerErr}, nil)
-	_, err = advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+	_, err = advisor.Analyze(
+		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+	)
 	require.ErrorIs(t, err, providerErr)
 }
 

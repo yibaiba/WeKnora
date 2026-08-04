@@ -16,14 +16,17 @@ type ingestionAdvisorStub struct {
 	responses []*types.IngestionAnalysis
 	errors    []error
 	requests  []types.IngestionAdvisorRequest
+	runtimes  []interfaces.IngestionAdvisorRuntime
 }
 
 func (s *ingestionAdvisorStub) Analyze(
 	_ context.Context,
 	request types.IngestionAdvisorRequest,
+	runtime interfaces.IngestionAdvisorRuntime,
 ) (*types.IngestionAdvisorResult, error) {
 	call := len(s.requests)
 	s.requests = append(s.requests, request)
+	s.runtimes = append(s.runtimes, runtime)
 	if call < len(s.errors) && s.errors[call] != nil {
 		return nil, s.errors[call]
 	}
@@ -228,6 +231,7 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, "untrusted-model", original.ModelID, "advisor-owned result must not be mutated")
 	require.True(t, advisor.requests[0].AllowWebAccess)
 	require.True(t, advisor.requests[0].AllowReadOnlyMCP)
+	require.Same(t, service, advisor.runtimes[0].WebSearchKnowledge)
 	require.Equal(t, 1024, advisor.requests[0].ChunkingConstraints.TokenLimit)
 	require.Equal(t, []string{"de"}, advisor.requests[0].ChunkingConstraints.Languages)
 

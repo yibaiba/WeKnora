@@ -6,14 +6,21 @@ import (
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
+
+type ingestionOptionalToolOptions struct {
+	config             *types.AgentConfig
+	chatModel          chat.Chat
+	request            types.IngestionAdvisorRequest
+	webSearchKnowledge interfaces.WebSearchTemporaryKnowledgeService
+	webSearchState     interfaces.WebSearchStateService
+}
 
 func (a *modelIngestionAdvisor) registerOptionalTools(
 	ctx context.Context,
 	registry *agenttools.ToolRegistry,
-	config *types.AgentConfig,
-	chatModel chat.Chat,
-	request types.IngestionAdvisorRequest,
+	options ingestionOptionalToolOptions,
 ) []types.IngestionAgentWarning {
 	warnings := []types.IngestionAgentWarning{}
 	if a.readOnlyTools == nil {
@@ -22,10 +29,10 @@ func (a *modelIngestionAdvisor) registerOptionalTools(
 		})
 	}
 
-	names, wikiKBIDs := ingestionReadOnlyToolNames(request)
-	options := ingestionReadOnlyToolOptions(config, chatModel, request, wikiKBIDs)
+	names, wikiKBIDs := ingestionReadOnlyToolNames(options.request)
+	toolOptions := ingestionReadOnlyToolOptions(options, wikiKBIDs)
 	for _, name := range names {
-		tool, err := a.readOnlyTools.Build(ctx, name, options)
+		tool, err := a.readOnlyTools.Build(ctx, name, toolOptions)
 		if err != nil {
 			warnings = append(warnings, types.IngestionAgentWarning{
 				Code: "readonly_tool_unavailable", Tool: name, Message: err.Error(),
@@ -34,8 +41,8 @@ func (a *modelIngestionAdvisor) registerOptionalTools(
 		}
 		registry.RegisterTool(tool)
 	}
-	if request.AllowReadOnlyMCP {
-		warnings = append(warnings, a.registerIngestionMCP(ctx, registry, request.TenantID)...)
+	if options.request.AllowReadOnlyMCP {
+		warnings = append(warnings, a.registerIngestionMCP(ctx, registry, options.request.TenantID)...)
 	}
 	return sortedWarningCopy(warnings)
 }
@@ -67,17 +74,18 @@ func ingestionReadOnlyToolNames(request types.IngestionAdvisorRequest) ([]string
 }
 
 func ingestionReadOnlyToolOptions(
-	config *types.AgentConfig,
-	chatModel chat.Chat,
-	request types.IngestionAdvisorRequest,
+	options ingestionOptionalToolOptions,
 	wikiKBIDs []string,
 ) readOnlyAgentToolOptions {
 	wikiRoutes := agenttools.NewWikiRouteResolver()
 	return readOnlyAgentToolOptions{
-		Config: config, ChatModel: chatModel, SessionID: ingestionAgentSessionID(request),
-		ReadOnlyWeb: true,
-		WikiKBIDs:   wikiKBIDs, WikiRoutes: wikiRoutes,
-		WikiScopes: agenttools.NewWikiScopesFromSearchTargets(config.SearchTargets, wikiKBIDs),
+		Config: options.config, ChatModel: options.chatModel,
+		SessionID:            ingestionAgentSessionID(options.request),
+		WebSearchKnowledge:   options.webSearchKnowledge,
+		WebSearchState:       options.webSearchState,
+		StrictWebCompression: true,
+		WikiKBIDs:            wikiKBIDs, WikiRoutes: wikiRoutes,
+		WikiScopes: agenttools.NewWikiScopesFromSearchTargets(options.config.SearchTargets, wikiKBIDs),
 	}
 }
 

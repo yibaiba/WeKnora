@@ -9,5 +9,15 @@ import (
 // IngestionAdvisor analyzes extracted document text without owning the file,
 // knowledge record, model selection, or chunking lifecycle.
 type IngestionAdvisor interface {
-	Analyze(ctx context.Context, request types.IngestionAdvisorRequest) (*types.IngestionAdvisorResult, error)
+	Analyze(
+		ctx context.Context,
+		request types.IngestionAdvisorRequest,
+		runtime IngestionAdvisorRuntime,
+	) (*types.IngestionAdvisorResult, error)
+}
+
+// IngestionAdvisorRuntime carries request-scoped infrastructure capabilities
+// that cannot be constructor-injected without creating a service cycle.
+type IngestionAdvisorRuntime struct {
+	WebSearchKnowledge WebSearchTemporaryKnowledgeService
 }

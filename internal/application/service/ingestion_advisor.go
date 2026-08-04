@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 const (
 	ingestionAdvisorMaxRounds    = 4
 	ingestionAdvisorTimeout      = 8 * time.Minute
+	ingestionWebCleanupTimeout   = time.Minute
 	ingestionWebSearchMaxResults = 5
 )
 
@@ -35,6 +37,7 @@ func NewIngestionAdvisor(
 func (a *modelIngestionAdvisor) Analyze(
 	ctx context.Context,
 	request types.IngestionAdvisorRequest,
+	runtime interfaces.IngestionAdvisorRuntime,
 ) (*types.IngestionAdvisorResult, error) {
 	if err := validateIngestionAdvisorRequest(a, request); err != nil {
 		return nil, err
@@ -47,10 +50,18 @@ func (a *modelIngestionAdvisor) Analyze(
 	}
 
 	session := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
+	query, err := buildIngestionAgentQuery(session.profile)
+	if err != nil {
+		return nil, fmt.Errorf("构建文档分析请求失败: %w", err)
+	}
+	webState := a.newIngestionWebSearchState(request, runtime)
 	registry := agenttools.NewToolRegistry()
 	registerIngestionCoreTools(registry, session)
 	config := buildIngestionAgentConfig(request)
-	warnings := a.registerOptionalTools(ctx, registry, config, chatModel, request)
+	warnings := a.registerOptionalTools(ctx, registry, ingestionOptionalToolOptions{
+		config: config, chatModel: chatModel, request: request,
+		webSearchKnowledge: runtime.WebSearchKnowledge, webSearchState: webState,
+	})
 	config.AllowedTools = registry.ListTools()
 	run := newIngestionAgentRun(config.AllowedTools, warnings)
 
@@ -62,20 +73,48 @@ func (a *modelIngestionAdvisor) Analyze(
 		engine.SetAppConfig(a.readOnlyTools.params.Config)
 		engine.SetSkillsManager(a.readOnlyTools.loadedSkillsManager())
 	}
-	query, err := buildIngestionAgentQuery(session.profile)
-	if err != nil {
-		return nil, fmt.Errorf("构建文档分析请求失败: %w", err)
-	}
 	state, executeErr := executeIngestionAgent(ctx, engine, request, query)
 	run = buildIngestionAgentRun(run, state)
 	result := buildIngestionAdvisorResult(session, run)
+	cleanupErr := cleanupIngestionWebSearch(ctx, webState, ingestionAgentSessionID(request))
 	if executeErr != nil {
-		return result, classifyIngestionAgentExecutionError(executeErr)
+		return result, classifyIngestionAgentExecutionError(errors.Join(executeErr, cleanupErr))
+	}
+	if cleanupErr != nil {
+		return result, wrapIngestionAdvisorRunError(
+			ingestionAdvisorErrorExecution, "清理 Web 搜索临时知识库失败", cleanupErr,
+		)
 	}
 	if err := validateIngestionAgentOutcome(state, session); err != nil {
 		return result, err
 	}
 	return buildIngestionAdvisorResult(session, run), nil
+}
+
+func (a *modelIngestionAdvisor) newIngestionWebSearchState(
+	request types.IngestionAdvisorRequest,
+	runtime interfaces.IngestionAdvisorRuntime,
+) interfaces.WebSearchStateService {
+	if !request.AllowWebAccess || a.readOnlyTools == nil || runtime.WebSearchKnowledge == nil {
+		return nil
+	}
+	return newIngestionWebSearchState(
+		a.readOnlyTools.params.KnowledgeBaseService,
+		runtime.WebSearchKnowledge,
+	)
+}
+
+func cleanupIngestionWebSearch(
+	ctx context.Context,
+	state interfaces.WebSearchStateService,
+	sessionID string,
+) error {
+	if state == nil {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ingestionWebCleanupTimeout)
+	defer cancel()
+	return state.DeleteWebSearchTempKBState(cleanupCtx, sessionID)
 }
 
 func executeIngestionAgent(

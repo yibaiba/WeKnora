@@ -65,17 +65,17 @@ type readOnlyAgentToolFactory struct {
 }
 
 type readOnlyAgentToolOptions struct {
-	Config           *types.AgentConfig
-	KnowledgeReader  interfaces.KnowledgeReadService
-	KnowledgeService interfaces.KnowledgeService
-	RerankModel      rerank.Reranker
-	ChatModel        chat.Chat
-	SessionID        string
-	WebSearchState   interfaces.WebSearchStateService
-	ReadOnlyWeb      bool
-	WikiScopes       []agenttools.WikiScope
-	WikiKBIDs        []string
-	WikiRoutes       *agenttools.WikiRouteResolver
+	Config               *types.AgentConfig
+	KnowledgeReader      interfaces.KnowledgeReadService
+	WebSearchKnowledge   interfaces.WebSearchTemporaryKnowledgeService
+	StrictWebCompression bool
+	RerankModel          rerank.Reranker
+	ChatModel            chat.Chat
+	SessionID            string
+	WebSearchState       interfaces.WebSearchStateService
+	WikiScopes           []agenttools.WikiScope
+	WikiKBIDs            []string
+	WikiRoutes           *agenttools.WikiRouteResolver
 }
 
 func NewReadOnlyAgentToolFactory(params readOnlyAgentToolFactoryParams) *readOnlyAgentToolFactory {
@@ -164,20 +164,20 @@ func (f *readOnlyAgentToolFactory) Build(
 		if f.params.WebSearchService == nil {
 			return nil, fmt.Errorf("Web 搜索服务未配置")
 		}
-		if options.ReadOnlyWeb {
-			return agenttools.NewReadOnlyWebSearchTool(
-				f.params.WebSearchService, f.params.KnowledgeBaseService, reader,
-				options.SessionID, options.Config.WebSearchMaxResults, options.Config.WebSearchProviderID,
-			), nil
-		}
-		if options.KnowledgeService == nil || options.WebSearchState == nil {
+		if f.params.KnowledgeBaseService == nil || options.WebSearchKnowledge == nil ||
+			options.WebSearchState == nil {
 			return nil, fmt.Errorf("Web 搜索 RAG 压缩服务未配置")
 		}
-		return agenttools.NewWebSearchTool(
-			f.params.WebSearchService, f.params.KnowledgeBaseService, options.KnowledgeService,
-			options.WebSearchState, options.SessionID,
-			options.Config.WebSearchMaxResults, options.Config.WebSearchProviderID,
-		), nil
+		return agenttools.NewWebSearchTool(agenttools.WebSearchToolOptions{
+			WebSearchService:      f.params.WebSearchService,
+			KnowledgeBaseService:  f.params.KnowledgeBaseService,
+			KnowledgeService:      options.WebSearchKnowledge,
+			WebSearchStateService: options.WebSearchState,
+			SessionID:             options.SessionID,
+			MaxResults:            options.Config.WebSearchMaxResults,
+			ProviderID:            options.Config.WebSearchProviderID,
+			StrictCompression:     options.StrictWebCompression,
+		}), nil
 	case agenttools.ToolWebFetch:
 		if options.ChatModel == nil {
 			return nil, fmt.Errorf("web_fetch 需要聊天模型")

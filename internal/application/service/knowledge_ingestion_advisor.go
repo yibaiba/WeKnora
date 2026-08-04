@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 type ingestionAdvisorRun struct {
@@ -98,7 +99,7 @@ func (s *knowledgeService) analyzeIngestionContent(
 		AllowReadOnlyMCP:    config.AllowReadOnlyMCP,
 		ChunkingConstraints: constraints,
 		ProgressFn:          progress,
-	})
+	}, interfaces.IngestionAdvisorRuntime{WebSearchKnowledge: s})
 	if err != nil {
 		return result, err
 	}

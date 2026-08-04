@@ -20,7 +20,11 @@ type inertWebSearchStateService struct {
 }
 
 type inertKnowledgeService struct {
-	interfaces.KnowledgeService
+	interfaces.WebSearchTemporaryKnowledgeService
+}
+
+type inertKnowledgeBaseService struct {
+	interfaces.KnowledgeBaseService
 }
 
 func TestIngestionReadOnlyToolPolicyAllowsReadsAndRejectsSideEffects(t *testing.T) {
@@ -93,30 +97,25 @@ func TestIngestionAgentConfigPinsTenantAndKnowledgeBaseScope(t *testing.T) {
 	require.True(t, config.ParallelToolCalls)
 }
 
-func TestWebSearchToolFactorySeparatesReadOnlyAndCompressionDependencies(t *testing.T) {
+func TestWebSearchToolFactoryRequiresScopedCompressionDependencies(t *testing.T) {
 	factory := NewReadOnlyAgentToolFactory(readOnlyAgentToolFactoryParams{
-		WebSearchService: &inertWebSearchService{},
+		WebSearchService:     &inertWebSearchService{},
+		KnowledgeBaseService: &inertKnowledgeBaseService{},
 	})
 	config := &types.AgentConfig{WebSearchMaxResults: 3}
 
-	readOnlyTool, err := factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
-		Config: config, ReadOnlyWeb: true,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, readOnlyTool)
-
-	_, err = factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
+	_, err := factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
 		Config: config, WebSearchState: &inertWebSearchStateService{},
 	})
 	require.EqualError(t, err, "Web 搜索 RAG 压缩服务未配置")
 
-	regularTool, err := factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
-		Config:           config,
-		KnowledgeService: &inertKnowledgeService{},
-		WebSearchState:   &inertWebSearchStateService{},
+	tool, err := factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
+		Config:             config,
+		WebSearchKnowledge: &inertKnowledgeService{},
+		WebSearchState:     &inertWebSearchStateService{},
 	})
 	require.NoError(t, err)
-	require.NotNil(t, regularTool)
+	require.NotNil(t, tool)
 }
 
 func TestIngestionMCPWarningsRetainPartialServiceDiagnostics(t *testing.T) {
