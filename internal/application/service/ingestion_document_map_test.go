@@ -24,6 +24,23 @@ type ingestionMapCall struct {
 	redacted bool
 }
 
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
 type ingestionMapModelStub struct {
 	response func(context.Context, []chat.Message) (*types.ChatResponse, error)
 	release  chan struct{}
@@ -90,8 +107,8 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 		},
 	}
 	var progress []types.IngestionDocumentAnalysisProgress
-	var logs bytes.Buffer
-	logger.SetOutput(&logs)
+	logs := &lockedBuffer{}
+	logger.SetOutput(logs)
 	t.Cleanup(func() { logger.SetOutput(os.Stdout) })
 
 	result, err := mapIngestionDocument(context.Background(), ingestionDocumentMapRequest{
@@ -111,6 +128,7 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 	for _, call := range calls {
 		require.True(t, call.redacted)
 		require.Equal(t, float64(0), call.options.Temperature)
+		require.True(t, call.options.TemperatureSet)
 		require.Equal(t, ingestionDocumentAnalysisCompletionTokens, call.options.MaxCompletionTokens)
 		require.Equal(t, ingestionDocumentAnalysisCompletionTokens, call.options.MaxTokens)
 		require.JSONEq(t, string(ingestionDocumentEvidenceSchema), string(call.options.Format))

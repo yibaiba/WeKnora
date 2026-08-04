@@ -602,6 +602,22 @@ func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T)
 	require.NotNil(t, result)
 }
 
+func TestModelIngestionAdvisorV1PreservesProviderErrorChain(t *testing.T) {
+	providerErr := errors.New("v1 provider diagnostic")
+	model := &ingestionAdvisorScriptedModel{streamErr: providerErr}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+	request := validIngestionAdvisorRequest()
+	request.PromptVersion = types.IngestionPromptVersionV1
+
+	result, err := advisor.Analyze(
+		context.Background(), request, interfaces.IngestionAdvisorRuntime{},
+	)
+
+	require.NotNil(t, result)
+	require.ErrorIs(t, err, providerErr)
+	require.ErrorContains(t, err, providerErr.Error())
+}
+
 func TestModelIngestionAdvisorSurfacesMissingModelAndProviderErrors(t *testing.T) {
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{}, nil)
 	request := validIngestionAdvisorRequest()

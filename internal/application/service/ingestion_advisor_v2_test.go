@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -105,8 +104,8 @@ func TestModelIngestionAdvisorV2MapsFullTextBeforePreviewAndSubmission(t *testin
 	}}
 	model := &ingestionAdvisorV2Model{agent: agentModel, logSensitivePayload: true}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
-	var logs bytes.Buffer
-	logger.SetOutput(&logs)
+	logs := &lockedBuffer{}
+	logger.SetOutput(logs)
 	t.Cleanup(func() { logger.SetOutput(os.Stdout) })
 
 	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
@@ -187,6 +186,25 @@ func TestModelIngestionAdvisorV2AnalysisFailureDoesNotStartAgent(t *testing.T) {
 	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
 	require.NotContains(t, err.Error(), "private body")
 	require.Empty(t, agentModel.calls)
+}
+
+func TestModelIngestionAdvisorV2RedactsAgentProviderError(t *testing.T) {
+	const sensitiveEvidence = "provider echoed aggregated private evidence"
+	request := validIngestionAdvisorRequest()
+	request.PromptVersion = types.IngestionPromptVersionV2
+	providerErr := errors.New(sensitiveEvidence)
+	model := &ingestionAdvisorV2Model{
+		agent: &ingestionAdvisorScriptedModel{streamErr: providerErr},
+	}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
+
+	require.NotNil(t, result)
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorExecution, ingestionAdvisorRunErrorCode(err))
+	require.NotContains(t, err.Error(), sensitiveEvidence)
+	require.NotErrorIs(t, err, providerErr)
 }
 
 func TestModelIngestionAdvisorV2TotalTimeoutStopsDuringMap(t *testing.T) {

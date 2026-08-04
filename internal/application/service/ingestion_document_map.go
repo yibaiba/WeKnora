@@ -130,7 +130,7 @@ func buildIngestionDocumentMapPrompt(unit ingestionDocumentAnalysisUnit, totalUn
 func ingestionDocumentAnalysisOptions() *chat.ChatOptions {
 	thinking := false
 	return &chat.ChatOptions{
-		Temperature: 0, MaxTokens: ingestionDocumentAnalysisCompletionTokens,
+		Temperature: 0, TemperatureSet: true, MaxTokens: ingestionDocumentAnalysisCompletionTokens,
 		MaxCompletionTokens: ingestionDocumentAnalysisCompletionTokens,
 		Thinking:            &thinking, Format: ingestionDocumentEvidenceSchema,
 	}

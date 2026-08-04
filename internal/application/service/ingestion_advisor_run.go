@@ -180,18 +180,20 @@ func countAgentToolCalls(state *types.AgentState) int {
 	return total
 }
 
-func classifyIngestionAgentExecutionError(err error) error {
+func classifyIngestionAgentExecutionError(err error, redactDetails bool) error {
 	message := strings.ToLower(err.Error())
 	unsupported := strings.Contains(message, "tool") &&
 		(strings.Contains(message, "unsupported") || strings.Contains(message, "not support"))
+	code := ingestionAdvisorErrorExecution
+	summary := "文档分析 Agent 执行失败"
 	if unsupported {
-		return wrapIngestionAdvisorRunError(
-			ingestionAdvisorErrorToolCalling, "模型不支持原生工具调用", err,
-		)
+		code = ingestionAdvisorErrorToolCalling
+		summary = "模型不支持原生工具调用"
 	}
-	return wrapIngestionAdvisorRunError(
-		ingestionAdvisorErrorExecution, "文档分析 Agent 执行失败", err,
-	)
+	if redactDetails {
+		return newIngestionAdvisorRunError(code, "%s，供应商错误详情已脱敏", summary)
+	}
+	return wrapIngestionAdvisorRunError(code, summary, err)
 }
 
 func sortedWarningCopy(warnings []types.IngestionAgentWarning) []types.IngestionAgentWarning {

@@ -31,13 +31,23 @@ type anthropicMessage struct {
 }
 
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	Stream      bool               `json:"stream,omitempty"`
-	System      string             `json:"system,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
-	Temperature *float64           `json:"temperature,omitempty"`
-	TopP        *float64           `json:"top_p,omitempty"`
+	Model        string                 `json:"model"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Stream       bool                   `json:"stream,omitempty"`
+	System       string                 `json:"system,omitempty"`
+	Messages     []anthropicMessage     `json:"messages"`
+	Temperature  *float64               `json:"temperature,omitempty"`
+	TopP         *float64               `json:"top_p,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Format anthropicOutputFormat `json:"format"`
+}
+
+type anthropicOutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type anthropicResponse struct {
@@ -262,13 +272,18 @@ func (c *AnthropicChat) buildRequest(messages []Message, opts *ChatOptions) anth
 		} else if opts.MaxCompletionTokens > 0 {
 			req.MaxTokens = opts.MaxCompletionTokens
 		}
-		if opts.Temperature > 0 {
+		if opts.Temperature > 0 || opts.TemperatureSet {
 			temperature := opts.Temperature
 			req.Temperature = &temperature
 		}
 		if opts.TopP > 0 {
 			topP := opts.TopP
 			req.TopP = &topP
+		}
+		if len(opts.Format) > 0 {
+			req.OutputConfig = &anthropicOutputConfig{Format: anthropicOutputFormat{
+				Type: "json_schema", Schema: append(json.RawMessage(nil), opts.Format...),
+			}}
 		}
 	}
 

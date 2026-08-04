@@ -70,6 +70,44 @@ func TestAnthropicChat(t *testing.T) {
 	assert.Equal(t, 5, resp.Usage.TotalTokens)
 }
 
+func TestAnthropicChatSendsExplicitZeroAndStructuredOutput(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"msg_123","type":"message","role":"assistant",
+			"content":[{"type":"text","text":"{}"}],"stop_reason":"end_turn",
+			"usage":{"input_tokens":3,"output_tokens":2}
+		}`))
+	}))
+	defer server.Close()
+
+	model, err := NewAnthropicChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL,
+		ModelName: "claude-sonnet-4-5", ModelID: "model-id", APIKey: "test-key",
+		Provider: string(provider.ProviderAnthropic),
+	})
+	require.NoError(t, err)
+	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`)
+
+	_, err = model.Chat(context.Background(), []Message{{Role: "user", Content: "analyze"}}, &ChatOptions{
+		Temperature: 0, TemperatureSet: true, MaxCompletionTokens: 1024, Format: schema,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, float64(0), captured["temperature"])
+	outputConfig := captured["output_config"].(map[string]any)
+	format := outputConfig["format"].(map[string]any)
+	require.Equal(t, "json_schema", format["type"])
+	require.Equal(t, map[string]any{
+		"type": "object", "properties": map[string]any{
+			"summary": map[string]any{"type": "string"},
+		}, "required": []any{"summary"}, "additionalProperties": false,
+	}, format["schema"])
+}
+
 func TestAnthropicChat_CacheUsage(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

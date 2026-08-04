@@ -48,6 +48,9 @@ type providerAdapter interface {
 	// ForceRawHTTP forces the raw HTTP path even when the body is standard
 	// (needed by providers that must sign the exact request bytes). Default: false.
 	ForceRawHTTP() bool
+	// SupportsTemperature reports whether the provider/model accepts sampling
+	// temperature. Reasoning and fixed-temperature models override this.
+	SupportsTemperature() bool
 	// ExtractToolCallMetadata captures provider-specific state from a raw
 	// OpenAI-compatible tool_call object. Default: nil.
 	ExtractToolCallMetadata(raw json.RawMessage) types.ToolCallMetadata
@@ -72,7 +75,8 @@ func (baseProvider) Endpoint(string, string, bool) string { return "" }
 func (baseProvider) Auth(req *http.Request, creds authCreds, _ []byte) {
 	req.Header.Set("Authorization", "Bearer "+creds.APIKey)
 }
-func (baseProvider) ForceRawHTTP() bool { return false }
+func (baseProvider) ForceRawHTTP() bool        { return false }
+func (baseProvider) SupportsTemperature() bool { return true }
 func (baseProvider) ExtractToolCallMetadata(json.RawMessage) types.ToolCallMetadata {
 	return nil
 }
@@ -226,6 +230,7 @@ func (azureReasoningProvider) Matches(model string) bool {
 func (azureReasoningProvider) ShapeRequest(req *openai.ChatCompletionRequest, _ *ChatOptions, _ bool) {
 	shapeOpenAIReasoning(req)
 }
+func (azureReasoningProvider) SupportsTemperature() bool { return false }
 
 // --- OpenAI reasoning / GPT-5: no sampling params, must use max_completion_tokens ---
 
@@ -238,6 +243,7 @@ func (openAIReasoningProvider) Matches(model string) bool {
 func (openAIReasoningProvider) ShapeRequest(req *openai.ChatCompletionRequest, _ *ChatOptions, _ bool) {
 	shapeOpenAIReasoning(req)
 }
+func (openAIReasoningProvider) SupportsTemperature() bool { return false }
 
 // --- Moonshot: v1 models accept only temperature=1 ---
 
@@ -255,6 +261,7 @@ func (moonshotProvider) ShapeRequest(req *openai.ChatCompletionRequest, _ *ChatO
 	req.FrequencyPenalty = 0
 	req.PresencePenalty = 0
 }
+func (moonshotProvider) SupportsTemperature() bool { return false }
 
 // shapeOpenAIReasoning strips sampling params (unsupported by o-series / GPT-5)
 // and migrates max_tokens to max_completion_tokens. See issue #1283.

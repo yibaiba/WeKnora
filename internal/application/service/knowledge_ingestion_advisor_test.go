@@ -95,15 +95,17 @@ func (s *ingestionKnowledgeRepoStub) UpdateKnowledgeColumn(
 
 type ingestionSpanTrackerStub struct {
 	noopSpanTracker
-	spans      map[string]*Span
-	ended      []string
-	failed     []string
-	failCodes  []string
-	skipped    []string
-	subspans   []string
-	subEnded   []string
-	subInputs  []types.JSONMap
-	subOutputs []types.JSONMap
+	spans        map[string]*Span
+	ended        []string
+	failed       []string
+	failCodes    []string
+	failMessages []string
+	failErrors   []string
+	skipped      []string
+	subspans     []string
+	subEnded     []string
+	subInputs    []types.JSONMap
+	subOutputs   []types.JSONMap
 }
 
 func newIngestionSpanTrackerStub() *ingestionSpanTrackerStub {
@@ -150,9 +152,15 @@ func (s *ingestionSpanTrackerStub) EndSpan(_ context.Context, span *Span, output
 	s.ended = append(s.ended, span.Name)
 }
 
-func (s *ingestionSpanTrackerStub) FailSpan(_ context.Context, span *Span, code, _ string, _ error) {
+func (s *ingestionSpanTrackerStub) FailSpan(_ context.Context, span *Span, code, message string, err error) {
 	s.failed = append(s.failed, span.Name)
 	s.failCodes = append(s.failCodes, code)
+	s.failMessages = append(s.failMessages, message)
+	if err == nil {
+		s.failErrors = append(s.failErrors, "")
+		return
+	}
+	s.failErrors = append(s.failErrors, err.Error())
 }
 
 func (s *ingestionSpanTrackerStub) SkipSpan(_ context.Context, span *Span, _ string) {
@@ -414,6 +422,35 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 	analysis, parseErr := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, parseErr)
 	require.Nil(t, analysis)
+}
+
+func TestApplyIngestionAdvisorV2DoesNotPersistAgentProviderErrorDetails(t *testing.T) {
+	const sensitiveEvidence = "provider echoed aggregated private evidence"
+	providerErr := errors.New(sensitiveEvidence)
+	model := &ingestionAdvisorV2Model{
+		agent: &ingestionAdvisorScriptedModel{streamErr: providerErr},
+	}
+	tracker := newIngestionSpanTrackerStub()
+	knowledge := newSmartIngestionKnowledge(t, "v2-private-provider-error")
+	service := &knowledgeService{
+		repo: &ingestionKnowledgeRepoStub{},
+		ingestionAdvisor: NewIngestionAdvisor(
+			&ingestionAdvisorModelServiceStub{model: model}, nil,
+		),
+		spanTracker: tracker,
+	}
+
+	_, err := service.applyIngestionAdvisor(
+		withAttempt(context.Background(), 1), smartIngestionRun(knowledge),
+	)
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorExecution, ingestionAdvisorRunErrorCode(err))
+	require.NotContains(t, err.Error(), sensitiveEvidence)
+	require.NotContains(t, knowledge.ErrorMessage, sensitiveEvidence)
+	spanFailures, marshalErr := json.Marshal([][]string{tracker.failMessages, tracker.failErrors})
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(spanFailures), sensitiveEvidence)
 }
 
 func TestApplyIngestionAdvisorClearsStaleAnalysisBeforeFailedRetry(t *testing.T) {

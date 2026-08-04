@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -12,6 +14,71 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRemoteAPIChatSendsExplicitZeroAndStrictJSONSchema(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}],"usage":{}}`))
+	}))
+	defer server.Close()
+
+	model, err := NewRemoteAPIChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
+		ModelName: "gpt-4o", ModelID: "gpt-4o", APIKey: "test-key",
+		Provider: "openai",
+	})
+	require.NoError(t, err)
+	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`)
+
+	_, err = model.Chat(context.Background(), []Message{{Role: "user", Content: "analyze"}}, &ChatOptions{
+		Temperature: 0, TemperatureSet: true, MaxCompletionTokens: 1024, Format: schema,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, float64(0), captured["temperature"])
+	responseFormat := captured["response_format"].(map[string]any)
+	require.Equal(t, "json_schema", responseFormat["type"])
+	jsonSchema := responseFormat["json_schema"].(map[string]any)
+	require.Equal(t, true, jsonSchema["strict"])
+	require.Equal(t, "structured_output", jsonSchema["name"])
+	require.Equal(t, map[string]any{
+		"type": "object", "properties": map[string]any{
+			"summary": map[string]any{"type": "string"},
+		}, "required": []any{"summary"}, "additionalProperties": false,
+	}, jsonSchema["schema"])
+}
+
+func TestRemoteAPIChatKeepsAzureEndpointForExplicitTemperature(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/openai/deployments/summary-deployment/chat/completions", r.URL.Path)
+		require.Equal(t, "2025-04-01-preview", r.URL.Query().Get("api-version"))
+		require.Equal(t, "test-key", r.Header.Get("api-key"))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{}"},"finish_reason":"stop"}],"usage":{}}`))
+	}))
+	defer server.Close()
+
+	model, err := NewRemoteAPIChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL,
+		ModelName: "summary-deployment", ModelID: "model-id", APIKey: "test-key",
+		Provider: "azure_openai", ExtraConfig: map[string]string{"api_version": "2025-04-01-preview"},
+	})
+	require.NoError(t, err)
+
+	_, err = model.Chat(context.Background(), []Message{{Role: "user", Content: "analyze"}}, &ChatOptions{
+		Temperature: 0, TemperatureSet: true, Format: json.RawMessage(`{"type":"object"}`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, float64(0), captured["temperature"])
+}
 
 func newTestRemoteChat(t *testing.T) *RemoteAPIChat {
 	t.Helper()

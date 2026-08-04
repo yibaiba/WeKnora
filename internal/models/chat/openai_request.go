@@ -175,9 +175,11 @@ func (c *RemoteAPIChat) BuildChatCompletionRequest(
 
 	if len(opts.Format) > 0 {
 		req.ResponseFormat = &openai.ChatCompletionResponseFormat{
-			Type: openai.ChatCompletionResponseFormatTypeJSONObject,
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name: "structured_output", Schema: json.RawMessage(opts.Format), Strict: true,
+			},
 		}
-		req.Messages[len(req.Messages)-1].Content += fmt.Sprintf("\nUse this JSON schema: %s", opts.Format)
 	}
 
 	return req
@@ -234,9 +236,21 @@ func (c *RemoteAPIChat) buildProviderOpenAIRequest(
 	return out, nil
 }
 
-func (c *RemoteAPIChat) shapeProviderRequest(body any, req openai.ChatCompletionRequest, messages []Message) (any, error) {
-	if !c.adapter.ForceRawHTTP() {
+func (c *RemoteAPIChat) shapeProviderRequest(
+	body any,
+	req openai.ChatCompletionRequest,
+	messages []Message,
+	forceExplicitTemperature bool,
+) (any, error) {
+	if !c.adapter.ForceRawHTTP() && !forceExplicitTemperature {
 		return body, nil
 	}
-	return c.buildProviderOpenAIRequest(body, req.Messages, messages)
+	providerRequest, err := c.buildProviderOpenAIRequest(body, req.Messages, messages)
+	if err != nil {
+		return nil, err
+	}
+	if forceExplicitTemperature {
+		providerRequest["temperature"] = 0.0
+	}
+	return providerRequest, nil
 }

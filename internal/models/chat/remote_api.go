@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -21,14 +22,15 @@ import (
 // providerAdapter（见 provider.go），thinking 编码委托给 ThinkingStrategy
 // （见 thinking.go）。
 type RemoteAPIChat struct {
-	modelName string
-	client    *openai.Client
-	modelID   string
-	baseURL   string
-	apiKey    string
-	provider  provider.ProviderName
-	appID     string
-	appSecret string
+	modelName  string
+	client     *openai.Client
+	modelID    string
+	baseURL    string
+	apiKey     string
+	apiVersion string
+	provider   provider.ProviderName
+	appID      string
+	appSecret  string
 	// customHeaders 为用户在模型配置中指定的自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
 	customHeaders map[string]string
 
@@ -104,6 +106,7 @@ func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 		modelID:          chatConfig.ModelID,
 		baseURL:          strings.TrimRight(config.BaseURL, "/"),
 		apiKey:           apiKey,
+		apiVersion:       config.APIVersion,
 		provider:         providerName,
 		appID:            chatConfig.AppID,
 		appSecret:        chatConfig.AppSecret,
@@ -146,13 +149,32 @@ func (c *RemoteAPIChat) buildOutbound(
 	if customBody != nil {
 		body = customBody
 	}
-	body, err = c.shapeProviderRequest(body, req, messages)
+	explicitZero := opts != nil && opts.TemperatureSet && opts.Temperature == 0 &&
+		c.adapter.SupportsTemperature()
+	body, err = c.shapeProviderRequest(body, req, messages, explicitZero)
 	if err != nil {
 		return nil, "", false, err
 	}
 	endpoint = c.adapter.Endpoint(c.baseURL, c.modelID, isStream)
-	useRawHTTP = useRaw || c.adapter.ForceRawHTTP() || endpoint != ""
+	useRawHTTP = useRaw || c.adapter.ForceRawHTTP() || endpoint != "" || explicitZero
+	if useRawHTTP && endpoint == "" {
+		endpoint = c.rawChatCompletionsEndpoint()
+	}
 	return body, endpoint, useRawHTTP, nil
+}
+
+func (c *RemoteAPIChat) rawChatCompletionsEndpoint() string {
+	if c.provider != provider.ProviderAzureOpenAI {
+		return c.baseURL + "/chat/completions"
+	}
+	endpoint := fmt.Sprintf(
+		"%s/openai/deployments/%s/chat/completions",
+		strings.TrimRight(c.baseURL, "/"), url.PathEscape(c.modelName),
+	)
+	if c.apiVersion != "" {
+		endpoint += "?api-version=" + url.QueryEscape(c.apiVersion)
+	}
+	return endpoint
 }
 
 // logRequest 记录请求日志

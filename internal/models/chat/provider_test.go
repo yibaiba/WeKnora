@@ -155,11 +155,25 @@ func TestBuildOutbound_ShapeRequest(t *testing.T) {
 
 	t.Run("moonshot pins temperature to 1", func(t *testing.T) {
 		c := newOutboundChat(t, string(provider.ProviderMoonshot), "moonshot-v1-8k", nil)
-		body, _, _, err := c.buildOutbound(msgs, &ChatOptions{Temperature: 0.7, TopP: 0.9}, false)
+		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{
+			Temperature: 0, TemperatureSet: true, TopP: 0.9,
+		}, false)
 		require.NoError(t, err)
 		req := body.(*openai.ChatCompletionRequest)
+		assert.False(t, useRaw)
 		assert.EqualValues(t, 1, req.Temperature)
 		assert.EqualValues(t, 0, req.TopP)
+	})
+
+	t.Run("reasoning model omits unsupported explicit temperature", func(t *testing.T) {
+		c := newOutboundChat(t, string(provider.ProviderOpenAI), "gpt-5", nil)
+		body, _, useRaw, err := c.buildOutbound(msgs, &ChatOptions{
+			Temperature: 0, TemperatureSet: true, MaxCompletionTokens: 1024,
+		}, false)
+		require.NoError(t, err)
+		assert.False(t, useRaw)
+		requestJSON := mustJSON(t, body)
+		assert.NotContains(t, requestJSON, `"temperature"`)
 	})
 }
 

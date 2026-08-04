@@ -27,6 +27,7 @@ type FunctionDef struct {
 // ChatOptions 聊天选项
 type ChatOptions struct {
 	Temperature         float64         `json:"temperature"`                   // 温度参数
+	TemperatureSet      bool            `json:"-"`                             // 显式发送 temperature，包括零值
 	TopP                float64         `json:"top_p"`                         // Top P 参数
 	Seed                int             `json:"seed"`                          // 随机种子
 	MaxTokens           int             `json:"max_tokens"`                    // 最大 token 数
