@@ -1,9 +1,10 @@
+import io
 import unittest
+import zipfile
 
 from docreader.models.document import Document
 from docreader.parser.base_parser import BaseParser
 from docreader.parser.parser import Parser, detect_effective_file_type
-
 
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
@@ -48,6 +49,16 @@ class ParserRoutingTest(unittest.TestCase):
         self.assertEqual(
             "docx",
             detect_effective_file_type(".DOCX", b"PK\x03\x04ooxml-payload"),
+        )
+
+    def test_ole_wrapped_ooxml_payload_keeps_docx_parser_route(self):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+
+        self.assertEqual(
+            "docx",
+            detect_effective_file_type("docx", OLE_MAGIC + output.getvalue()),
         )
 
     def test_unrelated_ole_type_is_not_reclassified(self):
