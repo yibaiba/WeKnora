@@ -70,6 +70,29 @@ func TestIngestionPreviewDeduplicatesAndCapsDistinctCandidates(t *testing.T) {
 	require.ErrorContains(t, err, "最多预览 3 个")
 }
 
+func TestPreviewIngestionToolExposesSubmissionProtocol(t *testing.T) {
+	session := newTestIngestionAgentSession(ingestionTestContent())
+	tool := newPreviewIngestionChunking(session)
+	for index, size := range []int{300, 400, 500} {
+		arguments, err := json.Marshal(ingestionTestConfig(size))
+		require.NoError(t, err)
+		result, err := tool.Execute(context.Background(), arguments)
+		require.NoError(t, err)
+		require.True(t, result.Success)
+
+		var output previewIngestionChunkingOutput
+		require.NoError(t, json.Unmarshal([]byte(result.Output), &output))
+		require.Equal(t, output.Candidate.ID, output.CandidateID)
+		require.Equal(t, index+1, output.SavedCandidateCount)
+		require.Equal(t, maxIngestionCandidates, output.CandidateLimit)
+		if index < maxIngestionCandidates-1 {
+			require.Equal(t, "preview_or_submit", output.NextAction)
+			continue
+		}
+		require.Equal(t, submitIngestionDecisionTool, output.NextAction)
+	}
+}
+
 func TestIngestionPreviewBuildsDistinctCandidatesConcurrently(t *testing.T) {
 	session := newTestIngestionAgentSession(ingestionTestContent())
 	started := make(chan struct{}, 2)

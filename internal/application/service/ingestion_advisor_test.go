@@ -317,7 +317,18 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 	require.Equal(t, normalized, result.Analysis.RecommendedChunking)
 	require.Equal(t, float64(0), model.options[0].Temperature)
 	require.Contains(t, model.calls[0][0].Content, "submit_ingestion_decision")
+	require.Contains(t, model.calls[0][0].Content, "工具成功输出中的 candidate_id")
+	require.Contains(t, model.calls[0][0].Content, "第 4 轮必须直接提交")
 	require.NotContains(t, model.calls[0][1].Content, "First section")
+	previewContext := ""
+	for _, message := range model.calls[1] {
+		if message.Role == "tool" && message.Name == previewIngestionChunkingTool {
+			previewContext = message.Content
+			break
+		}
+	}
+	require.Contains(t, previewContext, `"candidate_id":"`)
+	require.Contains(t, previewContext, `"next_action":"preview_or_submit"`)
 	require.Contains(t, result.AgentRun.AvailableTools, inspectIngestionDocumentTool)
 	require.Contains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionDecisionTool)

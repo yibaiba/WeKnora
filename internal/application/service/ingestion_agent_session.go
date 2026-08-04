@@ -81,6 +81,12 @@ func (s *ingestionAgentSession) candidateSnapshot() []types.IngestionChunkingCan
 	return result
 }
 
+func (s *ingestionAgentSession) candidateCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.candidates)
+}
+
 func (s *ingestionAgentSession) decisionSnapshot() *types.IngestionAnalysis {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

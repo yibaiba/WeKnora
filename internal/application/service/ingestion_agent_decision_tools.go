@@ -14,9 +14,17 @@ type previewIngestionChunking struct {
 	session *ingestionAgentSession
 }
 
+type previewIngestionChunkingOutput struct {
+	CandidateID         string                           `json:"candidate_id"`
+	SavedCandidateCount int                              `json:"saved_candidate_count"`
+	CandidateLimit      int                              `json:"candidate_limit"`
+	NextAction          string                           `json:"next_action"`
+	Candidate           types.IngestionChunkingCandidate `json:"candidate"`
+}
+
 func newPreviewIngestionChunking(session *ingestionAgentSession) *previewIngestionChunking {
 	return &previewIngestionChunking{
-		BaseTool: agenttools.NewBaseTool(previewIngestionChunkingTool, "Run the production chunker with a normalized candidate configuration and return deterministic metrics and a 0-100 score.", json.RawMessage(`{
+		BaseTool: agenttools.NewBaseTool(previewIngestionChunkingTool, "Run the production chunker with a normalized candidate configuration. Success returns candidate_id, deterministic metrics, and next_action; submit immediately when next_action is submit_ingestion_decision.", json.RawMessage(`{
   "type":"object",
   "properties":{
     "strategy":{"type":"string","enum":["auto","heading","heuristic","legacy","recursive"]},
@@ -46,10 +54,24 @@ func (t *previewIngestionChunking) Execute(
 	if err != nil {
 		return ingestionToolFailure(err)
 	}
-	return ingestionToolJSON(candidate, map[string]interface{}{
+	candidateCount := t.session.candidateCount()
+	return ingestionToolJSON(previewIngestionChunkingOutput{
+		CandidateID:         candidate.ID,
+		SavedCandidateCount: candidateCount,
+		CandidateLimit:      maxIngestionCandidates,
+		NextAction:          ingestionPreviewNextAction(candidateCount),
+		Candidate:           candidate,
+	}, map[string]interface{}{
 		"candidate_id": candidate.ID,
 		"score":        candidate.Score.Total,
 	})
+}
+
+func ingestionPreviewNextAction(candidateCount int) string {
+	if candidateCount >= maxIngestionCandidates {
+		return submitIngestionDecisionTool
+	}
+	return "preview_or_submit"
 }
 
 type submitIngestionDecisionInput struct {
