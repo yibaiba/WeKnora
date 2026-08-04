@@ -2,11 +2,8 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"sync"
 
-	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
@@ -54,31 +51,6 @@ func configuredTerminationTool(ctx context.Context) string {
 		return ""
 	}
 	return runtime.options.TerminationTool
-}
-
-func finalRoundTool(ctx context.Context, round, maxIterations int) string {
-	runtime := taskRuntimeFromContext(ctx)
-	if runtime == nil || round != maxIterations {
-		return ""
-	}
-	return strings.TrimSpace(runtime.options.FinalRoundTool)
-}
-
-func taskToolsForRound(
-	ctx context.Context,
-	tools []chat.Tool,
-	round, maxIterations int,
-) ([]chat.Tool, error) {
-	required := finalRoundTool(ctx, round, maxIterations)
-	if required == "" {
-		return tools, nil
-	}
-	for _, tool := range tools {
-		if tool.Function.Name == required {
-			return []chat.Tool{tool}, nil
-		}
-	}
-	return nil, fmt.Errorf("agent task final-round tool %q is not registered", required)
 }
 
 func emitTaskEvent(ctx context.Context, event interfaces.AgentTaskEvent) {

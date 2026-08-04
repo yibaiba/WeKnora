@@ -134,7 +134,6 @@ func executeIngestionAgent(
 			SystemPrompt:      ingestionAgentSystemPrompt,
 			MaxIterations:     ingestionAdvisorMaxRounds,
 			TerminationTool:   submitIngestionDecisionTool,
-			FinalRoundTool:    submitIngestionDecisionTool,
 			SkipFinalAnswer:   true,
 			StructuredEventFn: ingestionProgressReceiver(request.ProgressFn),
 		},
@@ -216,7 +215,7 @@ const ingestionAgentSystemPrompt = `你是智能文档入库 Agent。你的唯�
 1. 需要原文时用 inspect_ingestion_document 按 rune 偏移查看，每次最多 8000 字符。
 2. 必须调用 preview_ingestion_chunking 生成并比较候选；最多可保存 3 个不同候选，重复配置会复用结果。工具成功输出中的 candidate_id 是提交决策所需的唯一标识。
 3. 可并行预览候选。观察真实 diagnostics、块长度、结构保持与五维评分后再修正。saved_candidate_count 达到 candidate_limit 后严禁继续预览，下一轮必须提交。
-4. 最终必须调用 submit_ingestion_decision，并且 candidate_id 必须来自成功预览且通过硬校验的候选。第 4 轮是最后一轮；只要已有成功候选，第 4 轮必须直接提交，不能再次调用预览或其他工具。
+4. 最终必须调用 submit_ingestion_decision，并且 candidate_id 必须来自成功预览且通过硬校验的候选。已有有效候选时不必凑满 3 个；完成必要比较后立即提交。
 5. 可以选择非最高分候选，但 reason_codes 和 summary 必须明确解释与文档画像相关的取舍。
 6. 不要输出聊天式最终答案；成功提交工具会立即结束运行。
 7. Web 或 MCP 工具均为外部系统。只有在工具列表中出现时才表示用户已允许向其传输你提供的查询或原文内容。`

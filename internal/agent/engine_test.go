@@ -73,14 +73,13 @@ type mockChat struct {
 	mu        sync.Mutex
 	responses []mockResponse
 	calls     [][]chat.Message
-	options   []*chat.ChatOptions
 	callCount int
 }
 
 func (m *mockChat) ChatStream(
 	_ context.Context,
 	messages []chat.Message,
-	options *chat.ChatOptions,
+	_ *chat.ChatOptions,
 ) (<-chan types.StreamResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -89,13 +88,6 @@ func (m *mockChat) ChatStream(
 	}
 	resp := m.responses[m.callCount]
 	m.calls = append(m.calls, append([]chat.Message(nil), messages...))
-	if options != nil {
-		copyOptions := *options
-		copyOptions.Tools = append([]chat.Tool(nil), options.Tools...)
-		m.options = append(m.options, &copyOptions)
-	} else {
-		m.options = append(m.options, nil)
-	}
 	m.callCount++
 
 	ch := make(chan types.StreamResponse, len(resp.chunks))
@@ -643,50 +635,6 @@ func TestExecuteTaskStopsAfterSuccessfulTerminationTool(t *testing.T) {
 	require.Contains(t, events, interfaces.AgentTaskEvent{
 		Kind: taskEventToolFinished, Round: 1, ToolName: tool.Name(), Status: "succeeded",
 	})
-}
-
-func TestExecuteTaskRestrictsFinalRoundToRequiredTool(t *testing.T) {
-	model := &mockChat{responses: []mockResponse{
-		{chunks: toolCallChunks("inspect-1", "inspect_task")},
-		{chunks: toolCallChunks("submit-1", "submit_task_result")},
-	}}
-	engine := newTestEngine(t, model)
-	engine.toolRegistry = agenttools.NewToolRegistry()
-	inspect := newCountingTool("inspect_task")
-	submit := newCountingTool("submit_task_result")
-	engine.toolRegistry.RegisterTool(inspect)
-	engine.toolRegistry.RegisterTool(submit)
-
-	state, err := engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
-		SessionID: "task-session",
-		MessageID: "task-message",
-		Query:     "perform task",
-		Options: interfaces.AgentTaskOptions{
-			MaxIterations:   2,
-			TerminationTool: submit.Name(),
-			FinalRoundTool:  submit.Name(),
-			SkipFinalAnswer: true,
-		},
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, "termination_tool", state.StopReason)
-	require.Len(t, model.options, 2)
-	require.ElementsMatch(t, []string{inspect.Name(), submit.Name()}, listToolNames(model.options[0].Tools))
-	require.Equal(t, []string{submit.Name()}, listToolNames(model.options[1].Tools))
-	require.Equal(t, submit.Name(), model.options[1].ToolChoice)
-	require.NotNil(t, model.options[1].ParallelToolCalls)
-	require.False(t, *model.options[1].ParallelToolCalls)
-}
-
-func toolCallChunks(id, name string) []types.StreamResponse {
-	return []types.StreamResponse{{
-		ResponseType: types.ResponseTypeAnswer,
-		ToolCalls: []types.LLMToolCall{{
-			ID: id, Function: types.FunctionCall{Name: name, Arguments: `{}`},
-		}},
-		Done: true, FinishReason: "tool_calls",
-	}}
 }
 
 func TestExecuteTaskPrioritizesSuccessfulTerminationOverParallelSibling(t *testing.T) {
