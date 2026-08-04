@@ -41,7 +41,9 @@ func (a *modelIngestionAdvisor) Analyze(
 	}
 	chatModel, err := a.modelService.GetChatModel(ctx, request.ModelID)
 	if err != nil {
-		return nil, fmt.Errorf("加载文档分析模型失败: %w", err)
+		return nil, wrapIngestionAdvisorRunError(
+			ingestionAdvisorErrorModelUnavailable, "加载文档分析模型失败", err,
+		)
 	}
 
 	session := newIngestionAgentSession(request.Content)
@@ -100,7 +102,9 @@ func executeIngestionAgent(
 
 func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.IngestionAdvisorRequest) error {
 	if strings.TrimSpace(request.ModelID) == "" {
-		return fmt.Errorf("知识库未配置摘要模型，无法执行文档智能分析")
+		return newIngestionAdvisorRunError(
+			ingestionAdvisorErrorModelUnavailable, "知识库未配置摘要模型，无法执行文档智能分析",
+		)
 	}
 	if request.PromptVersion != types.IngestionPromptVersionV1 {
 		return fmt.Errorf("不支持的文档分析 Prompt 版本 %q", request.PromptVersion)

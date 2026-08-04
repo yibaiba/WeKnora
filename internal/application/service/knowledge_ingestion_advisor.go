@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -36,20 +35,26 @@ func (s *knowledgeService) applyIngestionAdvisor(
 		"prompt_version": promptVersion,
 		"text_length":    len([]rune(run.Content)),
 	})
+	stage := s.tracker().LookupStage(
+		ctx, run.Knowledge.ID, attemptFromCtx(ctx), types.StageDocumentAnalysis,
+	)
+	progress := newIngestionAgentSpanProgress(ctx, s.tracker(), stage)
+	progress.RecordProfile(len([]rune(run.Content)))
 	if err := s.clearPreviousIngestionAnalysis(ctx, run.Knowledge); err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
 	}
-	analysis, err := s.analyzeIngestionContent(ctx, run, promptVersion, config)
+	advisorResult, err := s.analyzeIngestionContent(ctx, run, promptVersion, config, progress.Handle)
+	progress.RecordEvaluation(advisorResult)
 	if err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
 	}
+	analysis := ingestionAnalysisFromAdvisorResult(advisorResult)
 
 	run.Effective.ChunkingConfig = applyAdvisorChunking(run.Effective.ChunkingConfig, analysis.RecommendedChunking)
 	run.Effective.IngestionAdvisorApplied = true
 	normalized := buildSplitterConfigFromEffective(run.Effective)
 	run.Effective.ChunkingConfig.ChunkSize = normalized.ChunkSize
 	run.Effective.ChunkingConfig.ChunkOverlap = normalized.ChunkOverlap
-	analysis = cloneIngestionAnalysis(analysis)
 	analysis.AppliedChunking = chunkingRecommendationFromConfig(run.Effective.ChunkingConfig)
 	analysis.ModelID = run.KB.SummaryModelID
 	analysis.PromptVersion = promptVersion
@@ -70,7 +75,8 @@ func (s *knowledgeService) analyzeIngestionContent(
 	run ingestionAdvisorRun,
 	promptVersion string,
 	config *types.IngestionAdvisorConfig,
-) (*types.IngestionAnalysis, error) {
+	progress func(types.IngestionAgentStep),
+) (*types.IngestionAdvisorResult, error) {
 	if s.ingestionAdvisor == nil {
 		return nil, fmt.Errorf("文档智能分析服务未配置")
 	}
@@ -89,18 +95,24 @@ func (s *knowledgeService) analyzeIngestionContent(
 		PromptVersion:     promptVersion,
 		AllowWebAccess:    config.AllowWebAccess,
 		AllowReadOnlyMCP:  config.AllowReadOnlyMCP,
+		ProgressFn:        progress,
 	})
 	if err != nil {
+		return result, err
+	}
+	if err := ValidateIngestionAdvisorResult(result); err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, fmt.Errorf("文档智能分析未返回结果")
-	}
-	analysis := result.Analysis
-	if err := ValidateIngestionAnalysis(analysis); err != nil {
-		return nil, err
-	}
-	return analysis, nil
+	return result, nil
+}
+
+func ingestionAnalysisFromAdvisorResult(result *types.IngestionAdvisorResult) *types.IngestionAnalysis {
+	analysis := cloneIngestionAnalysis(result.Analysis)
+	analysis.Candidates = cloneIngestionCandidates(result.Candidates)
+	analysis.SelectedCandidateID = result.SelectedCandidateID
+	analysis.SelectionReasonCodes = append([]string(nil), result.SelectionReasonCodes...)
+	analysis.AgentRun = cloneIngestionAgentRun(result.AgentRun)
+	return analysis
 }
 
 func resolveIngestionAdvisorEligibility(
@@ -159,7 +171,7 @@ func (s *knowledgeService) failIngestionAdvisor(
 		err = fmt.Errorf("%w; 更新知识失败状态失败: %v", err, updateErr)
 	}
 	s.failStage(ctx, knowledge.ID, types.StageDocumentAnalysis,
-		werrors.ErrCodeDocumentAnalysisFailed, err.Error(), err)
+		ingestionAdvisorRunErrorCode(err), err.Error(), err)
 	return err
 }
 
@@ -189,14 +201,6 @@ func chunkingRecommendationFromConfig(config types.ChunkingConfig) types.Ingesti
 	}
 }
 
-func cloneIngestionAnalysis(analysis *types.IngestionAnalysis) *types.IngestionAnalysis {
-	cloned := *analysis
-	cloned.ReasonCodes = append([]string(nil), analysis.ReasonCodes...)
-	cloned.RecommendedChunking = cloneChunkingRecommendation(analysis.RecommendedChunking)
-	cloned.AppliedChunking = cloneChunkingRecommendation(analysis.AppliedChunking)
-	return &cloned
-}
-
 func ingestionAnalysisOutput(analysis *types.IngestionAnalysis) types.JSONMap {
 	return types.JSONMap{
 		"document_kind":            analysis.DocumentKind,
@@ -208,5 +212,9 @@ func ingestionAnalysisOutput(analysis *types.IngestionAnalysis) types.JSONMap {
 		"applied_chunking":         analysis.AppliedChunking,
 		"model_id":                 analysis.ModelID,
 		"prompt_version":           analysis.PromptVersion,
+		"candidates":               analysis.Candidates,
+		"selected_candidate_id":    analysis.SelectedCandidateID,
+		"selection_reason_codes":   analysis.SelectionReasonCodes,
+		"agent_run":                analysis.AgentRun,
 	}
 }

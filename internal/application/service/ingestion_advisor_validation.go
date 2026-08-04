@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -74,6 +75,31 @@ func ValidateIngestionAnalysis(analysis *types.IngestionAnalysis) error {
 		}
 	}
 	return ValidateIngestionChunkingRecommendation(analysis.RecommendedChunking)
+}
+
+func ValidateIngestionAdvisorResult(result *types.IngestionAdvisorResult) error {
+	if result == nil {
+		return fmt.Errorf("文档智能分析未返回结果")
+	}
+	if err := ValidateIngestionAnalysis(result.Analysis); err != nil {
+		return err
+	}
+	if result.SelectedCandidateID == "" || len(result.SelectionReasonCodes) == 0 {
+		return fmt.Errorf("selected_candidate_id 和 selection_reason_codes 不能为空")
+	}
+	for _, candidate := range result.Candidates {
+		if candidate.ID != result.SelectedCandidateID {
+			continue
+		}
+		if !candidate.HardValid {
+			return fmt.Errorf("选中候选 %q 未通过硬校验", candidate.ID)
+		}
+		if !reflect.DeepEqual(candidate.Config, result.Analysis.RecommendedChunking) {
+			return fmt.Errorf("选中候选与 recommended_chunking 不一致")
+		}
+		return nil
+	}
+	return fmt.Errorf("选中候选 %q 不存在", result.SelectedCandidateID)
 }
 
 func ValidateIngestionChunkingRecommendation(value types.IngestionChunkingRecommendation) error {

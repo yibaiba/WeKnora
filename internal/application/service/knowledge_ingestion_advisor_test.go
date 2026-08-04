@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -28,7 +30,21 @@ func (s *ingestionAdvisorStub) Analyze(
 	if call >= len(s.responses) {
 		return nil, errors.New("no stub response")
 	}
-	return &types.IngestionAdvisorResult{Analysis: s.responses[call]}, nil
+	if request.ProgressFn != nil {
+		emitIngestionProgressForTest(request.ProgressFn)
+	}
+	return ingestionAdvisorResultForTest(s.responses[call]), nil
+}
+
+func emitIngestionProgressForTest(progress func(types.IngestionAgentStep)) {
+	for _, toolName := range []string{
+		agenttools.ToolKnowledgeSearch, previewIngestionChunkingTool, submitIngestionDecisionTool,
+	} {
+		progress(types.IngestionAgentStep{Round: 1, ToolName: toolName, Status: "running"})
+		progress(types.IngestionAgentStep{
+			Round: 1, ToolName: toolName, Status: "succeeded", DurationMS: 5,
+		})
+	}
 }
 
 type ingestionKnowledgeRepoStub struct {
@@ -54,10 +70,12 @@ func (s *ingestionKnowledgeRepoStub) UpdateKnowledgeColumn(
 
 type ingestionSpanTrackerStub struct {
 	noopSpanTracker
-	spans   map[string]*Span
-	ended   []string
-	failed  []string
-	skipped []string
+	spans    map[string]*Span
+	ended    []string
+	failed   []string
+	skipped  []string
+	subspans []string
+	subEnded []string
 }
 
 func newIngestionSpanTrackerStub() *ingestionSpanTrackerStub {
@@ -80,7 +98,25 @@ func (s *ingestionSpanTrackerStub) LookupStage(_ context.Context, _ string, _ in
 	return s.spans[stage]
 }
 
+func (s *ingestionSpanTrackerStub) BeginSubSpan(
+	_ context.Context,
+	parent *Span,
+	name string,
+	kind string,
+	_ types.JSONMap,
+) *Span {
+	s.subspans = append(s.subspans, name)
+	return &Span{
+		KnowledgeID: parent.KnowledgeID, Attempt: parent.Attempt,
+		SpanID: name, ParentSpanID: parent.SpanID, Name: name, Kind: kind,
+	}
+}
+
 func (s *ingestionSpanTrackerStub) EndSpan(_ context.Context, span *Span, _ types.JSONMap) {
+	if span.Kind == types.SpanKindSubSpan {
+		s.subEnded = append(s.subEnded, span.Name)
+		return
+	}
 	s.ended = append(s.ended, span.Name)
 }
 
@@ -106,6 +142,28 @@ func validIngestionAnalysis() *types.IngestionAnalysis {
 		},
 		ModelID:       "untrusted-model",
 		PromptVersion: "untrusted-version",
+	}
+}
+
+func ingestionAdvisorResultForTest(analysis *types.IngestionAnalysis) *types.IngestionAdvisorResult {
+	if analysis == nil {
+		return &types.IngestionAdvisorResult{}
+	}
+	candidate := types.IngestionChunkingCandidate{
+		ID: "cand_test", Config: cloneChunkingRecommendation(analysis.RecommendedChunking),
+		HardValid: true, Score: types.IngestionCandidateScore{Total: 88},
+	}
+	return &types.IngestionAdvisorResult{
+		Analysis: analysis, Candidates: []types.IngestionChunkingCandidate{candidate},
+		SelectedCandidateID:  "cand_test",
+		SelectionReasonCodes: append([]string(nil), analysis.ReasonCodes...),
+		AgentRun: types.IngestionAgentRun{
+			MaxRounds: 4, ActualRounds: 2,
+			AvailableTools: []string{
+				inspectIngestionDocumentTool, previewIngestionChunkingTool, submitIngestionDecisionTool,
+			},
+			StopReason: "termination_tool",
+		},
 	}
 }
 
@@ -159,9 +217,27 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, "summary-1", persisted.ModelID)
 	require.Equal(t, types.IngestionPromptVersionV1, persisted.PromptVersion)
 	require.Equal(t, persisted.RecommendedChunking, persisted.AppliedChunking)
+	require.Equal(t, "cand_test", persisted.SelectedCandidateID)
+	require.Equal(t, []string{"heading_rich", "long_sections"}, persisted.SelectionReasonCodes)
+	require.Len(t, persisted.Candidates, 1)
+	require.Equal(t, "termination_tool", persisted.AgentRun.StopReason)
+	require.Empty(t, original.Candidates, "advisor-owned result must remain immutable")
+	persistedJSON, marshalErr := json.Marshal(persisted)
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(persistedJSON), "thought")
+	require.NotContains(t, string(persistedJSON), "reasoning_content")
+	require.NotContains(t, string(persistedJSON), "First section")
+	require.NotContains(t, string(persistedJSON), "tool_output")
 	require.Equal(t, 1, repo.updateColumnCalls)
 	require.Equal(t, 1, repo.updateCalls)
 	require.Equal(t, []string{types.StageDocumentAnalysis}, tracker.ended)
+	require.Len(t, tracker.subspans, 5)
+	require.Len(t, tracker.subEnded, 5)
+	require.Contains(t, tracker.subspans[0], "analyze_document")
+	require.Contains(t, tracker.subspans[1], "readonly_tools")
+	require.Contains(t, tracker.subspans[2], "preview_candidates")
+	require.Contains(t, tracker.subspans[3], "submit_decision")
+	require.Contains(t, tracker.subspans[4], "evaluate_and_refine")
 }
 
 func TestApplyIngestionAdvisorPreservesExplicitZeroOverlap(t *testing.T) {

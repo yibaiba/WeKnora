@@ -120,12 +120,20 @@ func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAg
 		return ValidateIngestionAnalysis(session.decisionSnapshot())
 	}
 	if countAgentToolCalls(state) == 0 {
-		return fmt.Errorf("模型不支持原生工具调用或未调用任何工具")
+		return newIngestionAdvisorRunError(
+			ingestionAdvisorErrorToolCalling, "模型不支持原生工具调用或未调用任何工具",
+		)
 	}
 	if state.StopReason == "max_iterations" {
-		return fmt.Errorf("文档分析 Agent 达到 %d 轮上限但未提交决策", ingestionAdvisorMaxRounds)
+		return newIngestionAdvisorRunError(
+			ingestionAdvisorErrorMaxRounds,
+			"文档分析 Agent 达到 %d 轮上限但未提交决策", ingestionAdvisorMaxRounds,
+		)
 	}
-	return fmt.Errorf("文档分析 Agent 未通过 submit_ingestion_decision 提交决策")
+	return newIngestionAdvisorRunError(
+		ingestionAdvisorErrorNotSubmitted,
+		"文档分析 Agent 未通过 submit_ingestion_decision 提交决策",
+	)
 }
 
 func firstFailedIngestionCoreTool(state *types.AgentState) error {
@@ -144,7 +152,13 @@ func firstFailedIngestionCoreTool(state *types.AgentState) error {
 			if message == "" {
 				message = "工具未返回成功结果"
 			}
-			return fmt.Errorf("入库核心工具 %s 执行失败: %s", call.Name, message)
+			code := ingestionAdvisorErrorCoreTool
+			if call.Name == previewIngestionChunkingTool || call.Name == submitIngestionDecisionTool {
+				code = ingestionAdvisorErrorCandidate
+			}
+			return newIngestionAdvisorRunError(
+				code, "入库核心工具 %s 执行失败: %s", call.Name, message,
+			)
 		}
 	}
 	return nil
@@ -171,9 +185,13 @@ func classifyIngestionAgentExecutionError(err error) error {
 	unsupported := strings.Contains(message, "tool") &&
 		(strings.Contains(message, "unsupported") || strings.Contains(message, "not support"))
 	if unsupported {
-		return fmt.Errorf("模型不支持原生工具调用: %w", err)
+		return wrapIngestionAdvisorRunError(
+			ingestionAdvisorErrorToolCalling, "模型不支持原生工具调用", err,
+		)
 	}
-	return fmt.Errorf("文档分析 Agent 执行失败: %w", err)
+	return wrapIngestionAdvisorRunError(
+		ingestionAdvisorErrorExecution, "文档分析 Agent 执行失败", err,
+	)
 }
 
 func sortedWarningCopy(warnings []types.IngestionAgentWarning) []types.IngestionAgentWarning {

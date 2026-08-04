@@ -153,6 +153,10 @@ type IngestionAnalysis struct {
 	AppliedChunking        IngestionChunkingRecommendation `json:"applied_chunking"`
 	ModelID                string                          `json:"model_id"`
 	PromptVersion          string                          `json:"prompt_version"`
+	Candidates             []IngestionChunkingCandidate    `json:"candidates"`
+	SelectedCandidateID    string                          `json:"selected_candidate_id"`
+	SelectionReasonCodes   []string                        `json:"selection_reason_codes"`
+	AgentRun               IngestionAgentRun               `json:"agent_run"`
 }
 
 // DocumentStructureStats describes the complete extracted document, even when
