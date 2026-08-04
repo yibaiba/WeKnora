@@ -60,7 +60,7 @@ func authorizeKnowledgeInSearchTargets(
 	ctx context.Context,
 	searchTargets types.SearchTargets,
 	knowledgeID string,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 ) (*types.Knowledge, error) {
 	knowledgeID = strings.TrimSpace(knowledgeID)
 	if knowledgeID == "" {
@@ -100,7 +100,7 @@ func authorizeChunkInSearchTargets(
 	searchTargets types.SearchTargets,
 	chunkID string,
 	chunkService interfaces.ChunkService,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 ) (*types.Chunk, error) {
 	chunkID = strings.TrimSpace(chunkID)
 	if chunkID == "" {
@@ -152,7 +152,7 @@ func resolveAuthorizedSourceRefs(
 	ctx context.Context,
 	searchTargets types.SearchTargets,
 	refs []string,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 ) ([]string, error) {
 	resolved := make([]string, 0, len(refs))
 	seen := make(map[string]struct{}, len(refs))
@@ -189,7 +189,7 @@ func searchTargetsAllowKnowledgeID(
 	searchTargets types.SearchTargets,
 	knowledgeID string,
 	kbID string,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 ) (bool, error) {
 	if knowledgeID == "" || kbID == "" {
 		return false, nil
@@ -233,7 +233,7 @@ func filterSearchResultsInSearchTargets(
 	searchTargets types.SearchTargets,
 	kbID string,
 	results []*types.SearchResult,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 ) ([]*types.SearchResult, error) {
 	var explicitIDs []string
 	var tagIDs []string

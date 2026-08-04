@@ -14,7 +14,7 @@ import (
 
 type wikiReadSourceDocTool struct {
 	BaseTool
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	chunkService     interfaces.ChunkService
 	sourceACLGuard   interfaces.SourceACLGuardService
 	searchTargets    types.SearchTargets
@@ -22,7 +22,7 @@ type wikiReadSourceDocTool struct {
 }
 
 func NewWikiReadSourceDocTool(
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	chunkService interfaces.ChunkService,
 	sourceACLGuard interfaces.SourceACLGuardService,
 	searchTargets ...types.SearchTargets,

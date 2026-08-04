@@ -104,6 +104,7 @@ type agentService struct {
 	tenantService         interfaces.TenantService
 	storageResolver       interfaces.StorageBackendResolver
 	toolApprovalGate      approval.MCPApproval
+	readOnlyTools         *readOnlyAgentToolFactory
 }
 
 // NewAgentService creates a new agent service
@@ -126,6 +127,7 @@ func NewAgentService(
 	storageResolver interfaces.StorageBackendResolver,
 	toolApprovalGate approval.MCPApproval,
 	sourceACLGuard interfaces.SourceACLGuardService,
+	readOnlyTools *readOnlyAgentToolFactory,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -146,6 +148,7 @@ func NewAgentService(
 		tenantService:         tenantService,
 		storageResolver:       storageResolver,
 		toolApprovalGate:      toolApprovalGate,
+		readOnlyTools:         readOnlyTools,
 	}
 }
 
@@ -589,104 +592,32 @@ func (s *agentService) registerTools(
 	// logger.Infof(ctx, "Registering tools: %v, webSearchEnabled: %v", allowedTools, config.WebSearchEnabled)
 	// Register each allowed tool
 	for _, toolName := range allowedTools {
+		if isSharedReadOnlyAgentTool(toolName) {
+			tool, err := s.readOnlyTools.Build(ctx, toolName, readOnlyAgentToolOptions{
+				Config:          config,
+				KnowledgeReader: s.knowledgeService,
+				RerankModel:     rerankModel,
+				ChatModel:       chatModel,
+				SessionID:       sessionID,
+				WebSearchState:  s.webSearchStateService,
+				WikiScopes:      wikiScopes,
+				WikiKBIDs:       wikiKBIDs,
+				WikiRoutes:      wikiRoutes,
+			})
+			if err != nil {
+				return fmt.Errorf("构造只读工具 %s 失败: %w", toolName, err)
+			}
+			registry.RegisterTool(tool)
+			continue
+		}
 		var toolToRegister types.Tool
 
 		switch toolName {
-		case tools.ToolThinking:
-			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
-		case tools.ToolKnowledgeSearch:
-			toolToRegister = tools.NewKnowledgeSearchTool(
-				s.knowledgeBaseService,
-				s.knowledgeService,
-				s.chunkService,
-				config.SearchTargets,
-				rerankModel,
-				chatModel,
-				s.cfg,
-			)
-		case tools.ToolGrepChunks:
-			toolToRegister = tools.NewGrepChunksTool(
-				s.db,
-				s.knowledgeService,
-				s.sourceACLGuard,
-				config.SearchTargets,
-			)
-			logger.Infof(ctx, "Registered grep_chunks tool with searchTargets: %d targets", len(config.SearchTargets))
-		case tools.ToolListKnowledgeChunks:
-			toolToRegister = tools.NewListKnowledgeChunksTool(
-				s.knowledgeService,
-				s.chunkService,
-				s.sourceACLGuard,
-				config.SearchTargets,
-			)
-		case tools.ToolQueryKnowledgeGraph:
-			toolToRegister = tools.NewQueryKnowledgeGraphTool(s.knowledgeBaseService, config.SearchTargets).
-				WithKnowledgeScope(s.knowledgeService)
-		case tools.ToolGetDocumentInfo:
-			toolToRegister = tools.NewGetDocumentInfoTool(
-				s.knowledgeService,
-				s.chunkService,
-				s.sourceACLGuard,
-				config.SearchTargets,
-			)
-		case tools.ToolDatabaseQuery:
-			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
-		case tools.ToolWebSearch:
-			toolToRegister = tools.NewWebSearchTool(
-				s.webSearchService,
-				s.knowledgeBaseService,
-				s.knowledgeService,
-				s.webSearchStateService,
-				sessionID,
-				config.WebSearchMaxResults,
-				config.WebSearchProviderID,
-			)
-			logger.Infof(ctx, "Registered web_search tool for session: %s, maxResults: %d, providerID: %s", sessionID, config.WebSearchMaxResults, config.WebSearchProviderID)
-
-		case tools.ToolWebFetch:
-			toolToRegister = tools.NewWebFetchTool(chatModel)
-			logger.Infof(ctx, "Registered web_fetch tool for session: %s", sessionID)
-
-		case tools.ToolDataAnalysis:
-			toolToRegister = tools.NewDataAnalysisTool(
-				s.knowledgeBaseService,
-				s.knowledgeService,
-				s.tenantService,
-				s.fileService,
-				s.duckdb,
-				sessionID,
-				s.sourceACLGuard,
-				s.storageResolver,
-			).WithSearchTargets(config.SearchTargets)
-			logger.Infof(ctx, "Registered data_analysis tool for session: %s", sessionID)
-
-		case tools.ToolDataSchema:
-			toolToRegister = tools.NewDataSchemaTool(
-				s.knowledgeService,
-				s.chunkService.GetRepository(),
-				s.sourceACLGuard,
-			).WithSearchTargets(config.SearchTargets)
-			logger.Infof(ctx, "Registered data_schema tool")
-
-		// Wiki tools — only registered when wiki KBs are detected
-		case tools.ToolWikiReadPage:
-			toolToRegister = tools.NewWikiReadPageTool(s.wikiPageService, s.knowledgeService, wikiScopes, wikiRoutes)
-		case tools.ToolWikiSearch:
-			toolToRegister = tools.NewWikiSearchTool(s.wikiPageService, s.knowledgeService, wikiScopes, wikiRoutes)
-		case tools.ToolWikiReadSourceDoc:
-			toolToRegister = tools.NewWikiReadSourceDocTool(
-				s.knowledgeService,
-				s.chunkService,
-				s.sourceACLGuard,
-				config.SearchTargets,
-			)
 		case tools.ToolWikiFlagIssue:
 			toolToRegister = tools.NewWikiFlagIssueTool(s.wikiPageService, wikiKBIDs, wikiRoutes).
 				WithKnowledgeScope(s.knowledgeService, config.SearchTargets)
-		case tools.ToolWikiReadIssue:
-			toolToRegister = tools.NewWikiReadIssueTool(s.wikiPageService, wikiKBIDs)
 		case tools.ToolWikiUpdateIssue:
 			toolToRegister = tools.NewWikiUpdateIssueTool(s.wikiPageService, wikiKBIDs)
 		case tools.ToolWikiWritePage:

@@ -119,6 +119,9 @@ type MCPTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema"` // JSON Schema for tool parameters
+	// ReadOnlyHint is trusted only when explicitly true. Nil and false are
+	// excluded from background read-only Agent runs.
+	ReadOnlyHint *bool `json:"readOnlyHint,omitempty"`
 	// RequireApproval when true: agent execution pauses until the user approves in UI (issue #1173).
 	RequireApproval bool `json:"require_approval,omitempty"`
 }

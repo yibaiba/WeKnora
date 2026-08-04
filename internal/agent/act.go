@@ -103,7 +103,13 @@ func buildToolSpanInput(tc types.LLMToolCall, resolvedArgs map[string]any, sensi
 // update. Extracted from runToolCall so the tool-call pipeline keeps
 // a single assignment per line and the observability-specific logic
 // (payload shaping, error classification) lives in one place.
-func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durationMs int64) {
+func finishToolSpan(
+	span *langfuse.Span,
+	tc types.ToolCall,
+	execErr error,
+	durationMs int64,
+	redacted bool,
+) {
 	if span == nil {
 		return
 	}
@@ -112,7 +118,7 @@ func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durat
 		"success":     success,
 		"duration_ms": durationMs,
 	}
-	if tc.Result != nil {
+	if tc.Result != nil && !redacted {
 		if tc.Result.Output != "" {
 			output["output"] = truncateForLangfuse(tc.Result.Output, langfuseToolOutputPreview)
 			output["output_len"] = len(tc.Result.Output)
@@ -148,6 +154,7 @@ func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durat
 	span.Finish(output, map[string]interface{}{
 		"success":     success,
 		"duration_ms": durationMs,
+		"redacted":    redacted,
 	}, spanErr)
 }
 
@@ -272,6 +279,7 @@ func (e *AgentEngine) executeToolCallsParallel(
 			result = &types.ToolResult{Success: false, Error: "no result"}
 		}
 
+		eventResult := taskSafeToolResult(ctx, result)
 		e.eventBus.Emit(ctx, event.Event{
 			ID:        toolCall.ID + "-tool-result",
 			Type:      event.EventAgentToolResult,
@@ -279,12 +287,12 @@ func (e *AgentEngine) executeToolCallsParallel(
 			Data: event.AgentToolResultData{
 				ToolCallID: toolCall.ID,
 				ToolName:   toolCall.Name,
-				Output:     result.Output,
-				Error:      result.Error,
-				Success:    result.Success,
+				Output:     eventResult.Output,
+				Error:      eventResult.Error,
+				Success:    eventResult.Success,
 				Duration:   toolCall.Duration,
 				Iteration:  iteration,
-				Data:       result.Data,
+				Data:       eventResult.Data,
 			},
 		})
 
@@ -295,10 +303,10 @@ func (e *AgentEngine) executeToolCallsParallel(
 			Data: event.AgentActionData{
 				Iteration:  iteration,
 				ToolName:   toolCall.Name,
-				ToolInput:  toolCall.Args,
-				ToolOutput: result.Output,
-				Success:    result.Success,
-				Error:      result.Error,
+				ToolInput:  taskSafeToolArgs(ctx, toolCall.Args),
+				ToolOutput: eventResult.Output,
+				Success:    eventResult.Success,
+				Error:      eventResult.Error,
 				Duration:   toolCall.Duration,
 			},
 		})
@@ -318,6 +326,7 @@ func (e *AgentEngine) executeSingleToolCall(
 		result = &types.ToolResult{Success: false, Error: "no result"}
 	}
 
+	eventResult := taskSafeToolResult(ctx, result)
 	e.eventBus.Emit(ctx, event.Event{
 		ID:        toolCall.ID + "-tool-result",
 		Type:      event.EventAgentToolResult,
@@ -325,12 +334,12 @@ func (e *AgentEngine) executeSingleToolCall(
 		Data: event.AgentToolResultData{
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
-			Output:     result.Output,
-			Error:      result.Error,
-			Success:    result.Success,
+			Output:     eventResult.Output,
+			Error:      eventResult.Error,
+			Success:    eventResult.Success,
 			Duration:   toolCall.Duration,
 			Iteration:  iteration,
-			Data:       result.Data,
+			Data:       eventResult.Data,
 		},
 	})
 
@@ -341,10 +350,10 @@ func (e *AgentEngine) executeSingleToolCall(
 		Data: event.AgentActionData{
 			Iteration:  iteration,
 			ToolName:   toolCall.Name,
-			ToolInput:  toolCall.Args,
-			ToolOutput: result.Output,
-			Success:    result.Success,
-			Error:      result.Error,
+			ToolInput:  taskSafeToolArgs(ctx, toolCall.Args),
+			ToolOutput: eventResult.Output,
+			Success:    eventResult.Success,
+			Error:      eventResult.Error,
 			Duration:   toolCall.Duration,
 		},
 	})
@@ -429,12 +438,14 @@ func (e *AgentEngine) runToolCall(
 		}
 	}
 
-	logger.Debugf(ctx, "%s Args: %s", toolTag, tc.Function.Arguments)
+	if !agenttools.ToolPayloadsRedacted(ctx) {
+		logger.Debugf(ctx, "%s Args: %s", toolTag, tc.Function.Arguments)
+	}
 
 	toolCallStartTime := time.Now()
 
 	// Emit tool hint for UI progress display
-	toolHint := formatToolHint(tc.Function.Name, args)
+	toolHint := formatToolHint(tc.Function.Name, taskSafeToolArgs(ctx, args))
 	e.eventBus.Emit(ctx, event.Event{
 		ID:        tc.ID + "-tool-hint",
 		Type:      event.EventAgentToolCall,
@@ -442,7 +453,7 @@ func (e *AgentEngine) runToolCall(
 		Data: event.AgentToolCallData{
 			ToolCallID: tc.ID,
 			ToolName:   tc.Function.Name,
-			Arguments:  args,
+			Arguments:  taskSafeToolArgs(ctx, args),
 			Iteration:  iteration,
 			Hint:       toolHint,
 		},
@@ -465,7 +476,8 @@ func (e *AgentEngine) runToolCall(
 	// (toolHintSensitiveArgs) because it exposes implementation details.
 	// Mirror that policy for Langfuse: redact raw arguments to avoid
 	// leaking raw SQL into the observability backend.
-	toolSpanInput := buildToolSpanInput(tc, args, toolHintSensitiveArgs[tc.Function.Name])
+	redacted := agenttools.ToolPayloadsRedacted(ctx)
+	toolSpanInput := buildToolSpanInput(tc, args, redacted || toolHintSensitiveArgs[tc.Function.Name])
 	argumentResolution, _ := toolSpanInput["argument_resolution"].(string)
 	toolCtx, toolSpan := mgr.StartSpan(ctx, langfuse.SpanOptions{
 		Name:  "agent.tool." + tc.Function.Name,
@@ -536,7 +548,7 @@ func (e *AgentEngine) runToolCall(
 			toolTag, duration, success, outputLen)
 	}
 
-	finishToolSpan(toolSpan, toolCall, err, duration)
+	finishToolSpan(toolSpan, toolCall, err, duration, redacted)
 	toolSuccess := toolCall.Result != nil && toolCall.Result.Success
 
 	// Pipeline event for monitoring
@@ -559,7 +571,7 @@ func (e *AgentEngine) runToolCall(
 		common.PipelineWarn(ctx, "Agent", "tool_call_result", pipelineFields)
 	}
 
-	if toolCall.Result != nil && toolCall.Result.Output != "" {
+	if !redacted && toolCall.Result != nil && toolCall.Result.Output != "" {
 		preview := toolCall.Result.Output
 		if len(preview) > 500 {
 			preview = preview[:500] + "... (truncated)"
@@ -571,4 +583,18 @@ func (e *AgentEngine) runToolCall(
 	}
 
 	return toolCall
+}
+
+func taskSafeToolArgs(ctx context.Context, args map[string]any) map[string]any {
+	if agenttools.ToolPayloadsRedacted(ctx) {
+		return nil
+	}
+	return args
+}
+
+func taskSafeToolResult(ctx context.Context, result *types.ToolResult) *types.ToolResult {
+	if !agenttools.ToolPayloadsRedacted(ctx) || result == nil {
+		return result
+	}
+	return &types.ToolResult{Success: result.Success, Error: result.Error}
 }

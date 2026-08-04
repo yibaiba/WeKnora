@@ -110,7 +110,7 @@ type DataAnalysisInput struct {
 type DataAnalysisTool struct {
 	BaseTool
 	knowledgeBaseService interfaces.KnowledgeBaseService
-	knowledgeService     interfaces.KnowledgeService
+	knowledgeService     interfaces.KnowledgeReadService
 	fileService          interfaces.FileService
 	tenantService        interfaces.TenantService
 	db                   *sql.DB
@@ -142,7 +142,7 @@ func (t *DataAnalysisTool) WithSearchTargets(searchTargets types.SearchTargets) 
 
 func NewDataAnalysisTool(
 	knowledgeBaseService interfaces.KnowledgeBaseService,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	tenantService interfaces.TenantService,
 	fileService interfaces.FileService,
 	db *sql.DB,

@@ -446,7 +446,7 @@ func renderWikiPagesWithinBudget(pages []pendingWikiPage, budget int) (string, [
 type wikiReadPageTool struct {
 	BaseTool
 	wikiService      interfaces.WikiPageService
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	scopes           []WikiScope
 	routes           *WikiRouteResolver
 	seenLinks        map[string]bool
@@ -455,7 +455,7 @@ type wikiReadPageTool struct {
 
 func NewWikiReadPageTool(
 	wikiService interfaces.WikiPageService,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	scopes []WikiScope,
 	routes *WikiRouteResolver,
 ) types.Tool {
@@ -752,7 +752,7 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 type wikiSearchTool struct {
 	BaseTool
 	wikiService      interfaces.WikiPageService
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	scopes           []WikiScope
 	routes           *WikiRouteResolver
 	seenSlugs        map[string]bool
@@ -761,7 +761,7 @@ type wikiSearchTool struct {
 
 func NewWikiSearchTool(
 	wikiService interfaces.WikiPageService,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	scopes []WikiScope,
 	routes *WikiRouteResolver,
 ) types.Tool {
@@ -1007,7 +1007,7 @@ func parseStringOrArray(val any) []string {
 
 // resolveSourceRefs enriches plain knowledge UUIDs to "uuid|title" format.
 // Refs already in "uuid|title" format are left unchanged.
-func resolveSourceRefs(ctx context.Context, knowledgeService interfaces.KnowledgeService, refs []string) []string {
+func resolveSourceRefs(ctx context.Context, knowledgeService interfaces.KnowledgeReadService, refs []string) []string {
 	if len(refs) == 0 || knowledgeService == nil {
 		return refs
 	}

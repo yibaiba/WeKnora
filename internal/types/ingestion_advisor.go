@@ -26,15 +26,61 @@ const (
 // IngestionAdvisorConfig opts a file upload or reparse into document analysis.
 // A nil config preserves the historical processing path.
 type IngestionAdvisorConfig struct {
-	Mode          string `json:"mode"`
-	PromptVersion string `json:"prompt_version,omitempty"`
+	Mode             string `json:"mode"`
+	PromptVersion    string `json:"prompt_version,omitempty"`
+	AllowWebAccess   bool   `json:"allow_web_access,omitempty"`
+	AllowReadOnlyMCP bool   `json:"allow_read_only_mcp,omitempty"`
 }
 
 // IngestionAdvisorRequest is immutable input to the advisor boundary.
 type IngestionAdvisorRequest struct {
-	Content       string
-	ModelID       string
-	PromptVersion string
+	Content           string
+	KnowledgeID       string
+	KnowledgeBaseID   string
+	KnowledgeBaseName string
+	KnowledgeBaseType string
+	TenantID          uint64
+	VectorEnabled     bool
+	KeywordEnabled    bool
+	GraphEnabled      bool
+	WikiEnabled       bool
+	ModelID           string
+	PromptVersion     string
+	AllowWebAccess    bool
+	AllowReadOnlyMCP  bool
+	ProgressFn        func(IngestionAgentStep)
+}
+
+type IngestionAgentWarning struct {
+	Code    string `json:"code"`
+	Tool    string `json:"tool,omitempty"`
+	Message string `json:"message"`
+}
+
+type IngestionAgentStep struct {
+	Round       int     `json:"round"`
+	ToolName    string  `json:"tool_name"`
+	Status      string  `json:"status"`
+	DurationMS  int64   `json:"duration_ms,omitempty"`
+	CandidateID string  `json:"candidate_id,omitempty"`
+	Score       float64 `json:"score,omitempty"`
+}
+
+type IngestionAgentRun struct {
+	MaxRounds      int                     `json:"max_rounds"`
+	ActualRounds   int                     `json:"actual_rounds"`
+	AvailableTools []string                `json:"available_tools"`
+	Warnings       []IngestionAgentWarning `json:"warnings"`
+	Steps          []IngestionAgentStep    `json:"steps"`
+	StopReason     string                  `json:"stop_reason"`
+}
+
+type IngestionAdvisorResult struct {
+	Analysis             *IngestionAnalysis
+	Candidates           []IngestionChunkingCandidate
+	SelectedCandidateID  string
+	SelectionReasonCodes []string
+	AgentRun             IngestionAgentRun
 }
 
 // IngestionChunkingRecommendation contains only fields the advisor may own.

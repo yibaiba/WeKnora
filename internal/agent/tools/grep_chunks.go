@@ -67,7 +67,7 @@ type GrepChunksInput struct {
 type GrepChunksTool struct {
 	BaseTool
 	db               *gorm.DB
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	sourceACLGuard   interfaces.SourceACLGuardService
 	searchTargets    types.SearchTargets
 
@@ -78,7 +78,7 @@ type GrepChunksTool struct {
 // NewGrepChunksTool creates a new grep chunks tool
 func NewGrepChunksTool(
 	db *gorm.DB,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	sourceACLGuard interfaces.SourceACLGuardService,
 	searchTargets types.SearchTargets,
 ) *GrepChunksTool {

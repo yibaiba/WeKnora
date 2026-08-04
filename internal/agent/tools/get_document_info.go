@@ -72,7 +72,7 @@ type GetDocumentInfoInput struct {
 // GetDocumentInfoTool retrieves detailed information about a document/knowledge
 type GetDocumentInfoTool struct {
 	BaseTool
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	chunkService     interfaces.ChunkService
 	sourceACLGuard   interfaces.SourceACLGuardService
 	searchTargets    types.SearchTargets // Pre-computed unified search targets with KB-tenant mapping
@@ -80,7 +80,7 @@ type GetDocumentInfoTool struct {
 
 // NewGetDocumentInfoTool creates a new get document info tool
 func NewGetDocumentInfoTool(
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	chunkService interfaces.ChunkService,
 	sourceACLGuard interfaces.SourceACLGuardService,
 	searchTargets types.SearchTargets,

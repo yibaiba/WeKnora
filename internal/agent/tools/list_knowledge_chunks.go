@@ -72,14 +72,14 @@ type ListKnowledgeChunksInput struct {
 type ListKnowledgeChunksTool struct {
 	BaseTool
 	chunkService     interfaces.ChunkService
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	sourceACLGuard   interfaces.SourceACLGuardService
 	searchTargets    types.SearchTargets // Pre-computed unified search targets with KB-tenant mapping
 }
 
 // NewListKnowledgeChunksTool creates a new tool instance.
 func NewListKnowledgeChunksTool(
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	chunkService interfaces.ChunkService,
 	sourceACLGuard interfaces.SourceACLGuardService,
 	searchTargets types.SearchTargets,

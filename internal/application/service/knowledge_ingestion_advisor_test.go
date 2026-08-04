@@ -19,7 +19,7 @@ type ingestionAdvisorStub struct {
 func (s *ingestionAdvisorStub) Analyze(
 	_ context.Context,
 	request types.IngestionAdvisorRequest,
-) (*types.IngestionAnalysis, error) {
+) (*types.IngestionAdvisorResult, error) {
 	call := len(s.requests)
 	s.requests = append(s.requests, request)
 	if call < len(s.errors) && s.errors[call] != nil {
@@ -28,7 +28,7 @@ func (s *ingestionAdvisorStub) Analyze(
 	if call >= len(s.responses) {
 		return nil, errors.New("no stub response")
 	}
-	return s.responses[call], nil
+	return &types.IngestionAdvisorResult{Analysis: s.responses[call]}, nil
 }
 
 type ingestionKnowledgeRepoStub struct {
@@ -93,16 +93,19 @@ func (s *ingestionSpanTrackerStub) SkipSpan(_ context.Context, span *Span, _ str
 }
 
 func validIngestionAnalysis() *types.IngestionAnalysis {
-	response := validAdvisorModelResponse()
 	return &types.IngestionAnalysis{
-		DocumentKind:           response.DocumentKind,
-		Confidence:             response.Confidence,
-		RecommendedContentMode: response.RecommendedContentMode,
-		ReasonCodes:            append([]string(nil), response.ReasonCodes...),
-		Summary:                response.Summary,
-		RecommendedChunking:    cloneChunkingRecommendation(response.RecommendedChunking),
-		ModelID:                "untrusted-model",
-		PromptVersion:          "untrusted-version",
+		DocumentKind:           types.IngestionDocumentKindPolicyManual,
+		Confidence:             0.92,
+		RecommendedContentMode: types.IngestionContentModeDocument,
+		ReasonCodes:            []string{"heading_rich", "long_sections"},
+		Summary:                "层级清晰的制度类文档",
+		RecommendedChunking: types.IngestionChunkingRecommendation{
+			Strategy: "heading", ChunkSize: 700, ChunkOverlap: 100,
+			EnableParentChild: true, ParentChunkSize: 4096, ChildChunkSize: 384,
+			Separators: []string{"\n\n", "\n", "。", "！", "？"},
+		},
+		ModelID:       "untrusted-model",
+		PromptVersion: "untrusted-version",
 	}
 }
 

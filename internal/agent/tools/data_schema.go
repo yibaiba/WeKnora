@@ -22,7 +22,7 @@ type DataSchemaInput struct {
 
 type DataSchemaTool struct {
 	BaseTool
-	knowledgeService interfaces.KnowledgeService
+	knowledgeService interfaces.KnowledgeReadService
 	chunkRepo        interfaces.ChunkRepository
 	sourceACLGuard   interfaces.SourceACLGuardService
 	targetChunkTypes []types.ChunkType
@@ -40,7 +40,7 @@ func (t *DataSchemaTool) WithSearchTargets(searchTargets types.SearchTargets) *D
 }
 
 func NewDataSchemaTool(
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	chunkRepo interfaces.ChunkRepository,
 	sourceACLGuard interfaces.SourceACLGuardService,
 	targetChunkTypes ...types.ChunkType,

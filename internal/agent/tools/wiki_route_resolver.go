@@ -210,7 +210,7 @@ func resolveWikiCreateKB(
 func wikiKnowledgeBasesForSourceRefs(
 	ctx context.Context,
 	refs []string,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	allowedKBIDs []string,
 ) ([]string, error) {
 	if len(refs) == 0 {

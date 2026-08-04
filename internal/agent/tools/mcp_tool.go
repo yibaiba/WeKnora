@@ -416,6 +416,38 @@ func RegisterMCPTools(
 	gate approval.MCPApproval,
 	oauthSess *MCPOAuthSession,
 ) (int, error) {
+	return registerMCPTools(ctx, registry, services, mcpManager, gate, oauthSess, nil)
+}
+
+// RegisterReadOnlyMCPTools registers only tools whose server declaration has
+// readOnlyHint=true. It deliberately receives no interactive OAuth session in
+// background ingestion callers, so missing authorization surfaces as a warning
+// instead of pausing a worker.
+func RegisterReadOnlyMCPTools(
+	ctx context.Context,
+	registry *ToolRegistry,
+	services []*types.MCPService,
+	mcpManager *mcp.MCPManager,
+	gate approval.MCPApproval,
+	oauthSess *MCPOAuthSession,
+) (int, error) {
+	return registerMCPTools(ctx, registry, services, mcpManager, gate, oauthSess, MCPToolIsReadOnly)
+}
+
+// MCPToolIsReadOnly fails closed for absent and false annotations.
+func MCPToolIsReadOnly(tool *types.MCPTool) bool {
+	return tool != nil && tool.ReadOnlyHint != nil && *tool.ReadOnlyHint
+}
+
+func registerMCPTools(
+	ctx context.Context,
+	registry *ToolRegistry,
+	services []*types.MCPService,
+	mcpManager *mcp.MCPManager,
+	gate approval.MCPApproval,
+	oauthSess *MCPOAuthSession,
+	filter func(*types.MCPTool) bool,
+) (int, error) {
 	if len(services) == 0 {
 		return 0, nil
 	}
@@ -492,6 +524,9 @@ func RegisterMCPTools(
 
 		// Register each tool
 		for _, mcpTool := range mcpTools {
+			if filter != nil && !filter(mcpTool) {
+				continue
+			}
 			tool := NewMCPTool(service, mcpTool, mcpManager, gate, authWaitTimeoutSeconds)
 			toolName := tool.Name()
 

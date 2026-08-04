@@ -107,10 +107,11 @@ func (r *ToolRegistry) ExecuteTool(
 	name string,
 	args json.RawMessage,
 ) (*types.ToolResult, error) {
-	common.PipelineInfo(ctx, "AgentTool", "execute_start", map[string]interface{}{
-		"tool": name,
-		"args": args,
-	})
+	startFields := map[string]interface{}{"tool": name}
+	if !ToolPayloadsRedacted(ctx) {
+		startFields["args"] = args
+	}
+	common.PipelineInfo(ctx, "AgentTool", "execute_start", startFields)
 	tool, err := r.GetTool(name)
 	if err != nil {
 		common.PipelineError(ctx, "AgentTool", "execute_failed", map[string]interface{}{
@@ -155,7 +156,9 @@ func (r *ToolRegistry) ExecuteTool(
 
 	fields := map[string]interface{}{
 		"tool": name,
-		"args": args,
+	}
+	if !ToolPayloadsRedacted(ctx) {
+		fields["args"] = args
 	}
 	if result != nil {
 		fields["success"] = result.Success

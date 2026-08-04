@@ -1,0 +1,113 @@
+package service
+
+import (
+	"fmt"
+	"math"
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
+
+var (
+	allowedDocumentKinds = map[string]struct{}{
+		types.IngestionDocumentKindPolicyManual: {}, types.IngestionDocumentKindFAQ: {},
+		types.IngestionDocumentKindTabularData: {}, types.IngestionDocumentKindReport: {},
+		types.IngestionDocumentKindMeetingNotes: {}, types.IngestionDocumentKindPresentation: {},
+		types.IngestionDocumentKindShortArticle: {}, types.IngestionDocumentKindMixedDocument: {},
+	}
+	allowedContentModes = map[string]struct{}{
+		types.IngestionContentModeDocument: {}, types.IngestionContentModeFAQCandidate: {},
+		types.IngestionContentModeWikiCandidate: {},
+	}
+	allowedChunkingStrategies = map[string]struct{}{
+		"auto": {}, "heading": {}, "heuristic": {}, "legacy": {}, "recursive": {},
+	}
+	allowedIngestionSeparators = map[string]struct{}{
+		"\n\n": {}, "\n": {}, "。": {}, "！": {}, "？": {}, "；": {}, ";": {}, " ": {},
+	}
+)
+
+// ValidateIngestionAdvisorConfig rejects unsupported modes and prompt
+// versions without normalizing or mutating the upload payload.
+func ValidateIngestionAdvisorConfig(config *types.IngestionAdvisorConfig) error {
+	if config == nil {
+		return nil
+	}
+	if config.Mode != types.IngestionAdvisorModeSmart && config.Mode != types.IngestionAdvisorModeOff {
+		return fmt.Errorf("ingestion_advisor.mode %q 不受支持", config.Mode)
+	}
+	if config.PromptVersion != "" && config.PromptVersion != types.IngestionPromptVersionV1 {
+		return fmt.Errorf("ingestion_advisor.prompt_version %q 不受支持", config.PromptVersion)
+	}
+	return nil
+}
+
+func ingestionPromptVersion(config *types.IngestionAdvisorConfig) string {
+	if config != nil && config.PromptVersion != "" {
+		return config.PromptVersion
+	}
+	return types.IngestionPromptVersionV1
+}
+
+// ValidateIngestionAnalysis protects the pipeline from both remote model
+// responses and injected advisor implementations.
+func ValidateIngestionAnalysis(analysis *types.IngestionAnalysis) error {
+	if analysis == nil {
+		return fmt.Errorf("文档分析结果为空")
+	}
+	if _, ok := allowedDocumentKinds[analysis.DocumentKind]; !ok {
+		return fmt.Errorf("document_kind %q 不受支持", analysis.DocumentKind)
+	}
+	if math.IsNaN(analysis.Confidence) || math.IsInf(analysis.Confidence, 0) ||
+		analysis.Confidence < 0 || analysis.Confidence > 1 {
+		return fmt.Errorf("confidence 必须在 0 到 1 之间")
+	}
+	if _, ok := allowedContentModes[analysis.RecommendedContentMode]; !ok {
+		return fmt.Errorf("recommended_content_mode %q 不受支持", analysis.RecommendedContentMode)
+	}
+	if len(analysis.ReasonCodes) == 0 || strings.TrimSpace(analysis.Summary) == "" {
+		return fmt.Errorf("reason_codes 和 summary 不能为空")
+	}
+	for _, code := range analysis.ReasonCodes {
+		if strings.TrimSpace(code) == "" {
+			return fmt.Errorf("reason_codes 不能包含空值")
+		}
+	}
+	return ValidateIngestionChunkingRecommendation(analysis.RecommendedChunking)
+}
+
+func ValidateIngestionChunkingRecommendation(value types.IngestionChunkingRecommendation) error {
+	if _, ok := allowedChunkingStrategies[value.Strategy]; !ok {
+		return fmt.Errorf("strategy %q 不受支持", value.Strategy)
+	}
+	if value.ChunkSize < 100 || value.ChunkSize > 4000 {
+		return fmt.Errorf("chunk_size 必须在 100 到 4000 之间")
+	}
+	maxOverlap := min(500, value.ChunkSize/2)
+	if value.ChunkOverlap < 0 || value.ChunkOverlap > maxOverlap {
+		return fmt.Errorf("chunk_overlap 必须在 0 到 %d 之间", maxOverlap)
+	}
+	if value.ParentChunkSize < 512 || value.ParentChunkSize > 8192 {
+		return fmt.Errorf("parent_chunk_size 必须在 512 到 8192 之间")
+	}
+	if value.ChildChunkSize < 64 || value.ChildChunkSize > 2048 {
+		return fmt.Errorf("child_chunk_size 必须在 64 到 2048 之间")
+	}
+	if value.ChildChunkSize > value.ParentChunkSize {
+		return fmt.Errorf("child_chunk_size 不能大于 parent_chunk_size")
+	}
+	if len(value.Separators) == 0 {
+		return fmt.Errorf("separators 不能为空")
+	}
+	for _, separator := range value.Separators {
+		if _, ok := allowedIngestionSeparators[separator]; !ok {
+			return fmt.Errorf("separator %q 不受支持", separator)
+		}
+	}
+	return nil
+}
+
+func cloneChunkingRecommendation(value types.IngestionChunkingRecommendation) types.IngestionChunkingRecommendation {
+	value.Separators = append([]string(nil), value.Separators...)
+	return value
+}

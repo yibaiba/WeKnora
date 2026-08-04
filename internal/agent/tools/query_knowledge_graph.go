@@ -69,7 +69,7 @@ type QueryKnowledgeGraphInput struct {
 type QueryKnowledgeGraphTool struct {
 	BaseTool
 	knowledgeService      interfaces.KnowledgeBaseService
-	scopeKnowledgeService interfaces.KnowledgeService
+	scopeKnowledgeService interfaces.KnowledgeReadService
 	searchTargets         types.SearchTargets
 	scopeEnforced         bool
 }
@@ -78,7 +78,7 @@ type QueryKnowledgeGraphTool struct {
 // calls. The graph backend queries by KB, so the tool must enforce narrower
 // SearchTargets before returning any result to the model.
 func (t *QueryKnowledgeGraphTool) WithKnowledgeScope(
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 ) *QueryKnowledgeGraphTool {
 	t.scopeKnowledgeService = knowledgeService
 	return t

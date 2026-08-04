@@ -39,7 +39,7 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	if err := s.clearPreviousIngestionAnalysis(ctx, run.Knowledge); err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
 	}
-	analysis, err := s.analyzeIngestionContent(ctx, run, promptVersion)
+	analysis, err := s.analyzeIngestionContent(ctx, run, promptVersion, config)
 	if err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
 	}
@@ -69,18 +69,34 @@ func (s *knowledgeService) analyzeIngestionContent(
 	ctx context.Context,
 	run ingestionAdvisorRun,
 	promptVersion string,
+	config *types.IngestionAdvisorConfig,
 ) (*types.IngestionAnalysis, error) {
 	if s.ingestionAdvisor == nil {
 		return nil, fmt.Errorf("文档智能分析服务未配置")
 	}
-	analysis, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
-		Content:       run.Content,
-		ModelID:       run.KB.SummaryModelID,
-		PromptVersion: promptVersion,
+	result, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
+		Content:           run.Content,
+		KnowledgeID:       run.Knowledge.ID,
+		KnowledgeBaseID:   run.KB.ID,
+		KnowledgeBaseName: run.KB.Name,
+		KnowledgeBaseType: run.KB.Type,
+		TenantID:          run.KB.TenantID,
+		VectorEnabled:     run.KB.IsVectorEnabled(),
+		KeywordEnabled:    run.KB.IsKeywordEnabled(),
+		GraphEnabled:      run.KB.IsGraphEnabled(),
+		WikiEnabled:       run.KB.IsWikiEnabled(),
+		ModelID:           run.KB.SummaryModelID,
+		PromptVersion:     promptVersion,
+		AllowWebAccess:    config.AllowWebAccess,
+		AllowReadOnlyMCP:  config.AllowReadOnlyMCP,
 	})
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("文档智能分析未返回结果")
+	}
+	analysis := result.Analysis
 	if err := ValidateIngestionAnalysis(analysis); err != nil {
 		return nil, err
 	}

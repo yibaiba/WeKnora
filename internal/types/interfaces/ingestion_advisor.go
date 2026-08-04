@@ -9,5 +9,5 @@ import (
 // IngestionAdvisor analyzes extracted document text without owning the file,
 // knowledge record, model selection, or chunking lifecycle.
 type IngestionAdvisor interface {
-	Analyze(ctx context.Context, request types.IngestionAdvisorRequest) (*types.IngestionAnalysis, error)
+	Analyze(ctx context.Context, request types.IngestionAdvisorRequest) (*types.IngestionAdvisorResult, error)
 }

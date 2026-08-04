@@ -9,6 +9,15 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// KnowledgeReadService is the query-only surface required by Agent tools.
+// Keeping it separate prevents background task agents from depending on the
+// mutation-capable KnowledgeService and forming a service construction cycle.
+type KnowledgeReadService interface {
+	GetKnowledgeByIDOnly(ctx context.Context, id string) (*types.Knowledge, error)
+	GetKnowledgeBatchByIDsOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error)
+	GetKnowledgeTags(ctx context.Context, knowledgeIDs []string) (map[string][]*types.KnowledgeTag, error)
+}
+
 // KnowledgeService defines the interface for knowledge services.
 type KnowledgeService interface {
 	// CreateKnowledgeFromFile creates knowledge from a file.

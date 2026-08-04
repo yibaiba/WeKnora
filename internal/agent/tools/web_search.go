@@ -79,18 +79,38 @@ type WebSearchTool struct {
 	BaseTool
 	webSearchService      interfaces.WebSearchService
 	knowledgeBaseService  interfaces.KnowledgeBaseService
-	knowledgeService      interfaces.KnowledgeService
+	knowledgeService      interfaces.KnowledgeReadService
 	webSearchStateService interfaces.WebSearchStateService
 	sessionID             string
 	maxResults            int
 	providerID            string // WebSearchProviderEntity ID (resolved from agent config or tenant default)
+	readOnlyMode          bool
+}
+
+// NewReadOnlyWebSearchTool disables temporary-KB compression so background
+// analysis performs only the external search request and never writes local
+// knowledge or session state.
+func NewReadOnlyWebSearchTool(
+	webSearchService interfaces.WebSearchService,
+	knowledgeBaseService interfaces.KnowledgeBaseService,
+	knowledgeService interfaces.KnowledgeReadService,
+	sessionID string,
+	maxResults int,
+	providerID string,
+) *WebSearchTool {
+	tool := NewWebSearchTool(
+		webSearchService, knowledgeBaseService, knowledgeService, nil,
+		sessionID, maxResults, providerID,
+	)
+	tool.readOnlyMode = true
+	return tool
 }
 
 // NewWebSearchTool creates a new web search tool
 func NewWebSearchTool(
 	webSearchService interfaces.WebSearchService,
 	knowledgeBaseService interfaces.KnowledgeBaseService,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	webSearchStateService interfaces.WebSearchStateService,
 	sessionID string,
 	maxResults int,
@@ -167,6 +187,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		searchConfig = types.EffectiveWebSearchConfig(tenant.WebSearchConfig)
 	}
 	searchConfig.MaxResults = t.maxResults
+	if t.readOnlyMode {
+		searchConfig.CompressionMethod = "none"
+	}
 
 	// Perform web search
 	logger.Infof(

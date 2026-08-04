@@ -124,7 +124,7 @@ type searchResultWithMeta struct {
 type KnowledgeSearchTool struct {
 	BaseTool
 	knowledgeBaseService interfaces.KnowledgeBaseService
-	knowledgeService     interfaces.KnowledgeService
+	knowledgeService     interfaces.KnowledgeReadService
 	chunkService         interfaces.ChunkService
 	searchTargets        types.SearchTargets // Pre-computed unified search targets
 	rerankModel          rerank.Reranker
@@ -138,7 +138,7 @@ type KnowledgeSearchTool struct {
 // NewKnowledgeSearchTool creates a new knowledge search tool
 func NewKnowledgeSearchTool(
 	knowledgeBaseService interfaces.KnowledgeBaseService,
-	knowledgeService interfaces.KnowledgeService,
+	knowledgeService interfaces.KnowledgeReadService,
 	chunkService interfaces.ChunkService,
 	searchTargets types.SearchTargets,
 	rerankModel rerank.Reranker,

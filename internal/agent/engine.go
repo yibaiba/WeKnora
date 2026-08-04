@@ -212,6 +212,7 @@ func (e *AgentEngine) ExecuteTask(
 	if request.Options.MaxIterations < 0 {
 		return nil, fmt.Errorf("agent task max iterations cannot be negative")
 	}
+	ctx = agenttools.WithRedactedToolPayloads(ctx)
 	ctx = withTaskRuntime(ctx, request.Options)
 	return e.execute(
 		ctx,
