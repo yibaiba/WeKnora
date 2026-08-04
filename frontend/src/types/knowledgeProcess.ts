@@ -63,7 +63,7 @@ export type IngestionAdvisorMode = 'smart' | 'off'
 
 export interface IngestionAdvisorConfig {
   mode: IngestionAdvisorMode
-  prompt_version?: 'v1'
+  prompt_version?: 'v1' | 'v2'
   allow_web_access?: boolean
   allow_read_only_mcp?: boolean
 }

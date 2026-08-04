@@ -148,7 +148,7 @@ test('builds explicit smart and knowledge-base retry payloads without mutating s
   assert.match(retryBuilder, /const previousAdvisor = source\?\.ingestion_advisor/)
   assert.match(retryBuilder, /previousAdvisor\?\.allow_web_access/)
   assert.match(retryBuilder, /previousAdvisor\?\.allow_read_only_mcp/)
-  assert.match(retryBuilder, /mode,\s*prompt_version: 'v1'/s)
+  assert.match(retryBuilder, /mode,\s*prompt_version: 'v2'/s)
   assert.match(source, /submitRetry\('smart', buildAdvisorRetryOverrides\('smart'\)\)/)
   assert.match(source, /submitRetry\('off', buildAdvisorRetryOverrides\('off'\)\)/)
 })

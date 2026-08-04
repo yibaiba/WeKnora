@@ -704,9 +704,20 @@ func TestValidateIngestionAdvisorConfigModes(t *testing.T) {
 	require.NoError(t, ValidateIngestionAdvisorConfig(nil))
 	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{Mode: types.IngestionAdvisorModeSmart}))
 	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{Mode: types.IngestionAdvisorModeOff}))
+	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{
+		Mode: types.IngestionAdvisorModeSmart, PromptVersion: types.IngestionPromptVersionV1,
+	}))
+	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{
+		Mode: types.IngestionAdvisorModeSmart, PromptVersion: types.IngestionPromptVersionV2,
+	}))
 	require.Error(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{Mode: "automatic"}))
 	require.Error(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{
-		Mode: types.IngestionAdvisorModeSmart, PromptVersion: "v2",
+		Mode: types.IngestionAdvisorModeSmart, PromptVersion: "v3",
+	}))
+	require.Equal(t, types.IngestionPromptVersionV2, ingestionPromptVersion(nil))
+	require.Equal(t, types.IngestionPromptVersionV2, ingestionPromptVersion(&types.IngestionAdvisorConfig{}))
+	require.Equal(t, types.IngestionPromptVersionV1, ingestionPromptVersion(&types.IngestionAdvisorConfig{
+		PromptVersion: types.IngestionPromptVersionV1,
 	}))
 }
 

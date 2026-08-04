@@ -163,12 +163,13 @@ type ServerConfig struct {
 
 // KnowledgeBaseConfig 知识库配置
 type KnowledgeBaseConfig struct {
-	ChunkSize              int                    `yaml:"chunk_size"       json:"chunk_size"`
-	ChunkOverlap           int                    `yaml:"chunk_overlap"    json:"chunk_overlap"`
-	SplitMarkers           []string               `yaml:"split_markers"    json:"split_markers"`
-	KeepSeparator          bool                   `yaml:"keep_separator"   json:"keep_separator"`
-	ImageProcessing        *ImageProcessingConfig `yaml:"image_processing" json:"image_processing"`
-	DocumentProcessTimeout time.Duration          `yaml:"document_process_timeout"  json:"document_process_timeout"`
+	ChunkSize               int                    `yaml:"chunk_size"       json:"chunk_size"`
+	ChunkOverlap            int                    `yaml:"chunk_overlap"    json:"chunk_overlap"`
+	SplitMarkers            []string               `yaml:"split_markers"    json:"split_markers"`
+	KeepSeparator           bool                   `yaml:"keep_separator"   json:"keep_separator"`
+	ImageProcessing         *ImageProcessingConfig `yaml:"image_processing" json:"image_processing"`
+	DocumentProcessTimeout  time.Duration          `yaml:"document_process_timeout"   json:"document_process_timeout"`
+	IngestionAdvisorTimeout time.Duration          `yaml:"ingestion_advisor_timeout"  json:"ingestion_advisor_timeout"`
 	// DocReaderCallTimeout caps a single DocReader RPC. Without this the
 	// gRPC call inherits the asynq task context (whole DocumentProcessTimeout,
 	// default 2h+), so a hung docreader would block a worker for hours and
@@ -179,7 +180,10 @@ type KnowledgeBaseConfig struct {
 
 // DefaultDocumentProcessTimeout is the ceiling for a single document:process
 // Asynq task when document_process_timeout is unset or non-positive.
-const DefaultDocumentProcessTimeout = 2 * time.Hour
+const (
+	DefaultDocumentProcessTimeout  = 2 * time.Hour
+	DefaultIngestionAdvisorTimeout = 8 * time.Minute
+)
 
 // DocumentProcessTimeout returns the effective document-process task timeout.
 // Partial configs (e.g. unit tests) receive the default when unset.
@@ -188,6 +192,14 @@ func DocumentProcessTimeout(cfg *Config) time.Duration {
 		return cfg.KnowledgeBase.DocumentProcessTimeout
 	}
 	return DefaultDocumentProcessTimeout
+}
+
+// IngestionAdvisorTimeout returns the full-text analysis and Agent decision timeout.
+func IngestionAdvisorTimeout(cfg *Config) time.Duration {
+	if cfg != nil && cfg.KnowledgeBase != nil && cfg.KnowledgeBase.IngestionAdvisorTimeout > 0 {
+		return cfg.KnowledgeBase.IngestionAdvisorTimeout
+	}
+	return DefaultIngestionAdvisorTimeout
 }
 
 // ImageProcessingConfig 图像处理配置
@@ -751,6 +763,9 @@ func applyKnowledgeBaseEnvOverrides(cfg *Config) {
 	}
 	if cfg.KnowledgeBase.DocumentProcessTimeout <= 0 {
 		cfg.KnowledgeBase.DocumentProcessTimeout = DefaultDocumentProcessTimeout
+	}
+	if cfg.KnowledgeBase.IngestionAdvisorTimeout <= 0 {
+		cfg.KnowledgeBase.IngestionAdvisorTimeout = DefaultIngestionAdvisorTimeout
 	}
 	if value := strings.TrimSpace(os.Getenv("WEKNORA_DOCUMENT_PROCESS_TIMEOUT")); value != "" {
 		if d, err := time.ParseDuration(value); err == nil {

@@ -4,6 +4,7 @@ const (
 	IngestionAdvisorModeSmart = "smart"
 	IngestionAdvisorModeOff   = "off"
 	IngestionPromptVersionV1  = "v1"
+	IngestionPromptVersionV2  = "v2"
 )
 
 const (

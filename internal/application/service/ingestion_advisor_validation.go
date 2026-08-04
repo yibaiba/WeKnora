@@ -37,7 +37,9 @@ func ValidateIngestionAdvisorConfig(config *types.IngestionAdvisorConfig) error 
 	if config.Mode != types.IngestionAdvisorModeSmart && config.Mode != types.IngestionAdvisorModeOff {
 		return fmt.Errorf("ingestion_advisor.mode %q 不受支持", config.Mode)
 	}
-	if config.PromptVersion != "" && config.PromptVersion != types.IngestionPromptVersionV1 {
+	if config.PromptVersion != "" &&
+		config.PromptVersion != types.IngestionPromptVersionV1 &&
+		config.PromptVersion != types.IngestionPromptVersionV2 {
 		return fmt.Errorf("ingestion_advisor.prompt_version %q 不受支持", config.PromptVersion)
 	}
 	return nil
@@ -47,7 +49,7 @@ func ingestionPromptVersion(config *types.IngestionAdvisorConfig) string {
 	if config != nil && config.PromptVersion != "" {
 		return config.PromptVersion
 	}
-	return types.IngestionPromptVersionV1
+	return types.IngestionPromptVersionV2
 }
 
 // ValidateIngestionAnalysis protects the pipeline from both remote model

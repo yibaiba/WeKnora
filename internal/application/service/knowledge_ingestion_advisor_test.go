@@ -238,7 +238,7 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	persisted, err := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, err)
 	require.Equal(t, "summary-1", persisted.ModelID)
-	require.Equal(t, types.IngestionPromptVersionV1, persisted.PromptVersion)
+	require.Equal(t, types.IngestionPromptVersionV2, persisted.PromptVersion)
 	require.Equal(t, persisted.RecommendedChunking, persisted.AppliedChunking)
 	require.Equal(t, "cand_test", persisted.SelectedCandidateID)
 	require.Equal(t, []string{"heading_rich", "long_sections"}, persisted.SelectionReasonCodes)
