@@ -136,26 +136,29 @@ func finishToolSpan(
 			output["image_count"] = len(tc.Result.Images)
 		}
 	}
-	// Classify the span's outcome: a non-nil execErr is always an error, and
-	// a result with Success=false is treated as an error too (matches the
-	// user-visible behaviour — the LLM would see this as a failed tool call
-	// and try a different approach).
-	var spanErr error
-	switch {
-	case execErr != nil:
-		spanErr = execErr
-	case tc.Result != nil && !tc.Result.Success:
-		msg := tc.Result.Error
-		if msg == "" {
-			msg = "tool returned success=false"
-		}
-		spanErr = errors.New(msg)
-	}
+	spanErr := toolSpanError(tc, execErr, redacted)
 	span.Finish(output, map[string]interface{}{
 		"success":     success,
 		"duration_ms": durationMs,
 		"redacted":    redacted,
 	}, spanErr)
+}
+
+func toolSpanError(tc types.ToolCall, execErr error, redacted bool) error {
+	if execErr == nil && (tc.Result == nil || tc.Result.Success) {
+		return nil
+	}
+	if redacted {
+		return errors.New(agenttools.RedactedToolFailureMessage)
+	}
+	if execErr != nil {
+		return execErr
+	}
+	message := tc.Result.Error
+	if message == "" {
+		message = "tool returned success=false"
+	}
+	return errors.New(message)
 }
 
 // dataKeys returns the sorted top-level keys of a tool's Data map.
@@ -597,7 +600,8 @@ func (e *AgentEngine) runToolCall(
 	}
 
 	if err != nil {
-		logger.Errorf(ctx, "%s Failed in %dms: %v", toolTag, duration, err)
+		logger.Errorf(ctx, "%s Failed in %dms: %s", toolTag, duration,
+			agenttools.ToolErrorForObservability(ctx, err.Error()))
 		toolCall.Result = &types.ToolResult{
 			Success: false,
 			Error:   err.Error(),
@@ -625,7 +629,7 @@ func (e *AgentEngine) runToolCall(
 		"success":      toolSuccess,
 	}
 	if toolCall.Result != nil && toolCall.Result.Error != "" {
-		pipelineFields["error"] = toolCall.Result.Error
+		pipelineFields["error"] = agenttools.ToolErrorForObservability(ctx, toolCall.Result.Error)
 	}
 	if err != nil {
 		common.PipelineError(ctx, "Agent", "tool_call_result", pipelineFields)
@@ -642,7 +646,7 @@ func (e *AgentEngine) runToolCall(
 		}
 		logger.Debugf(ctx, "%s Output preview:\n%s", toolTag, preview)
 	}
-	if toolCall.Result != nil && toolCall.Result.Error != "" {
+	if !redacted && toolCall.Result != nil && toolCall.Result.Error != "" {
 		logger.Debugf(ctx, "%s Tool error: %s", toolTag, toolCall.Result.Error)
 	}
 
@@ -660,5 +664,8 @@ func taskSafeToolResult(ctx context.Context, result *types.ToolResult) *types.To
 	if !agenttools.ToolPayloadsRedacted(ctx) || result == nil {
 		return result
 	}
-	return &types.ToolResult{Success: result.Success, Error: result.Error}
+	return &types.ToolResult{
+		Success: result.Success,
+		Error:   agenttools.ToolErrorForObservability(ctx, result.Error),
+	}
 }

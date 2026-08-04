@@ -22,6 +22,12 @@ import (
 // appLogger 使用私有实例，避免外部依赖改写 logrus 全局状态导致日志丢失
 var appLogger = logrus.New()
 
+var suppressedLogger = func() *logrus.Logger {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	return logger
+}()
+
 var (
 	loggerMu      sync.Mutex
 	activeLogFile io.WriteCloser
@@ -284,6 +290,12 @@ func GetLogger(c context.Context) *logrus.Entry {
 		return logger.(*logrus.Entry)
 	}
 	return logrus.NewEntry(appLogger)
+}
+
+// WithSuppressedOutput prevents a sensitive operation's internal logs from
+// bypassing a sanitized summary emitted by its caller.
+func WithSuppressedOutput(c context.Context) context.Context {
+	return context.WithValue(c, types.LoggerContextKey, logrus.NewEntry(suppressedLogger))
 }
 
 // SetOutput overrides the internal logger's output destination.

@@ -307,6 +307,8 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 
 			require.Error(t, err)
 			require.Equal(t, test.code, ingestionAdvisorRunErrorCode(err))
+			require.Contains(t, err.Error(), "详情已脱敏")
+			require.NotContains(t, err.Error(), "cand_unknown")
 			require.NotNil(t, result)
 			require.Nil(t, result.Analysis)
 		})

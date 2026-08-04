@@ -145,19 +145,12 @@ func firstFailedIngestionCoreTool(state *types.AgentState) error {
 			if !isIngestionCoreTool(call.Name) || (call.Result != nil && call.Result.Success) {
 				continue
 			}
-			message := ""
-			if call.Result != nil {
-				message = call.Result.Error
-			}
-			if message == "" {
-				message = "工具未返回成功结果"
-			}
 			code := ingestionAdvisorErrorCoreTool
 			if call.Name == previewIngestionChunkingTool || call.Name == submitIngestionDecisionTool {
 				code = ingestionAdvisorErrorCandidate
 			}
 			return newIngestionAdvisorRunError(
-				code, "入库核心工具 %s 执行失败: %s", call.Name, message,
+				code, "入库核心工具 %s 执行失败，详情已脱敏", call.Name,
 			)
 		}
 	}

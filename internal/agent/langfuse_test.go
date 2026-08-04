@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
 
+	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -120,8 +122,32 @@ func TestFinishToolSpanNilSafe(t *testing.T) {
 			t.Fatalf("finishToolSpan panicked on nil span: %v", r)
 		}
 	}()
-	finishToolSpan(nil, types.ToolCall{}, errors.New("boom"), 123)
-	finishToolSpan(nil, types.ToolCall{Result: &types.ToolResult{Success: true}}, nil, 0)
+	finishToolSpan(nil, types.ToolCall{}, errors.New("boom"), 123, true)
+	finishToolSpan(nil, types.ToolCall{Result: &types.ToolResult{Success: true}}, nil, 0, false)
+}
+
+func TestToolSpanErrorRedactsFailureDetails(t *testing.T) {
+	sensitive := errors.New(`invalid regex query "customer-secret"`)
+	redacted := toolSpanError(types.ToolCall{}, sensitive, true)
+	if redacted.Error() != agenttools.RedactedToolFailureMessage {
+		t.Fatalf("redacted error = %q", redacted)
+	}
+	if got := toolSpanError(types.ToolCall{}, sensitive, false); !errors.Is(got, sensitive) {
+		t.Fatalf("ordinary error = %v; want original", got)
+	}
+}
+
+func TestTaskSafeToolResultRedactsOnlyObservableCopy(t *testing.T) {
+	ctx := agenttools.WithRedactedToolPayloads(context.Background())
+	original := &types.ToolResult{Success: false, Error: `invalid regex query "customer-secret"`}
+	observed := taskSafeToolResult(ctx, original)
+
+	if observed.Error != agenttools.RedactedToolFailureMessage {
+		t.Fatalf("observed error = %q", observed.Error)
+	}
+	if original.Error != `invalid regex query "customer-secret"` {
+		t.Fatalf("model-context error was mutated: %q", original.Error)
+	}
 }
 
 // TestIterOutcomeString locks in the string labels that surface in Langfuse

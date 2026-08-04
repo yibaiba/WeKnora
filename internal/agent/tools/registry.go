@@ -116,7 +116,7 @@ func (r *ToolRegistry) ExecuteTool(
 	if err != nil {
 		common.PipelineError(ctx, "AgentTool", "execute_failed", map[string]interface{}{
 			"tool":  name,
-			"error": err.Error(),
+			"error": ToolErrorForObservability(ctx, err.Error()),
 		})
 		return &types.ToolResult{
 			Success: false,
@@ -134,7 +134,7 @@ func (r *ToolRegistry) ExecuteTool(
 		errMsg := FormatValidationErrors(validationErrs) + toolErrorHint
 		common.PipelineWarn(ctx, "AgentTool", "validation_failed", map[string]interface{}{
 			"tool":   name,
-			"errors": errMsg,
+			"errors": ToolErrorForObservability(ctx, errMsg),
 		})
 		return &types.ToolResult{
 			Success: false,
@@ -145,7 +145,11 @@ func (r *ToolRegistry) ExecuteTool(
 	// Publish the ceiling so budget-aware tools can shape a batched result
 	// themselves; the truncation below stays as the fallback for the rest.
 	maxOutput := r.getMaxToolOutput()
-	result, execErr := tool.Execute(WithOutputBudget(ctx, maxOutput), args)
+	executionCtx := WithOutputBudget(ctx, maxOutput)
+	if ToolPayloadsRedacted(ctx) {
+		executionCtx = logger.WithSuppressedOutput(executionCtx)
+	}
+	result, execErr := tool.Execute(executionCtx, args)
 
 	// Truncate large tool outputs to prevent context window poisoning. The
 	// limit is counted in runes to match TruncateToolOutput; comparing bytes
@@ -163,11 +167,11 @@ func (r *ToolRegistry) ExecuteTool(
 	if result != nil {
 		fields["success"] = result.Success
 		if result.Error != "" {
-			fields["error"] = result.Error
+			fields["error"] = ToolErrorForObservability(ctx, result.Error)
 		}
 	}
 	if execErr != nil {
-		fields["error"] = execErr.Error()
+		fields["error"] = ToolErrorForObservability(ctx, execErr.Error())
 		common.PipelineError(ctx, "AgentTool", "execute_done", fields)
 	} else if result != nil && !result.Success {
 		// Append error hint to guide LLM to retry with a different approach
