@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
@@ -27,26 +28,51 @@ type ingestionAgentSession struct {
 	content string
 	profile types.IngestionDocumentProfile
 
-	mu         sync.RWMutex
-	candidates map[string]types.IngestionChunkingCandidate
-	order      []string
-	decision   *types.IngestionAnalysis
-	selectedID string
+	mu             sync.RWMutex
+	candidates     map[string]types.IngestionChunkingCandidate
+	inFlight       map[string]*ingestionCandidateFlight
+	buildCandidate ingestionCandidateBuilder
+	decision       *types.IngestionAnalysis
+	selectedID     string
+}
+
+type ingestionCandidateBuilder func(
+	content string,
+	config types.IngestionChunkingRecommendation,
+	id string,
+) (types.IngestionChunkingCandidate, error)
+
+type ingestionCandidateFlight struct {
+	done      chan struct{}
+	candidate types.IngestionChunkingCandidate
+	err       error
+}
+
+type ingestionCandidateBuildResult struct {
+	candidate types.IngestionChunkingCandidate
+	err       error
 }
 
 func newIngestionAgentSession(content string) *ingestionAgentSession {
 	return &ingestionAgentSession{
-		content:    content,
-		profile:    BuildIngestionDocumentProfile(content),
-		candidates: make(map[string]types.IngestionChunkingCandidate),
+		content:        content,
+		profile:        BuildIngestionDocumentProfile(content),
+		candidates:     make(map[string]types.IngestionChunkingCandidate),
+		inFlight:       make(map[string]*ingestionCandidateFlight),
+		buildCandidate: buildIngestionCandidate,
 	}
 }
 
 func (s *ingestionAgentSession) candidateSnapshot() []types.IngestionChunkingCandidate {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	result := make([]types.IngestionChunkingCandidate, 0, len(s.order))
-	for _, id := range s.order {
+	ids := make([]string, 0, len(s.candidates))
+	for id := range s.candidates {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	result := make([]types.IngestionChunkingCandidate, 0, len(ids))
+	for _, id := range ids {
 		result = append(result, cloneIngestionCandidate(s.candidates[id]))
 	}
 	return result
@@ -89,21 +115,56 @@ func (s *ingestionAgentSession) preview(
 		return types.IngestionChunkingCandidate{}, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if candidate, ok := s.candidates[id]; ok {
-		return cloneIngestionCandidate(candidate), nil
-	}
-	if len(s.order) >= maxIngestionCandidates {
-		return types.IngestionChunkingCandidate{}, fmt.Errorf("每个文档最多预览 %d 个不同候选", maxIngestionCandidates)
-	}
-	candidate, err := buildIngestionCandidate(s.content, normalized, id)
+	candidate, flight, owner, err := s.reservePreview(id)
 	if err != nil {
 		return types.IngestionChunkingCandidate{}, err
 	}
-	s.candidates[id] = candidate
-	s.order = append(s.order, id)
-	return cloneIngestionCandidate(candidate), nil
+	if candidate.ID != "" {
+		return candidate, nil
+	}
+	if !owner {
+		<-flight.done
+		return cloneIngestionCandidate(flight.candidate), flight.err
+	}
+	candidate, err = s.buildCandidate(s.content, normalized, id)
+	s.completePreview(id, flight, ingestionCandidateBuildResult{candidate: candidate, err: err})
+	return cloneIngestionCandidate(candidate), err
+}
+
+func (s *ingestionAgentSession) reservePreview(
+	id string,
+) (types.IngestionChunkingCandidate, *ingestionCandidateFlight, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if candidate, ok := s.candidates[id]; ok {
+		return cloneIngestionCandidate(candidate), nil, false, nil
+	}
+	if flight, ok := s.inFlight[id]; ok {
+		return types.IngestionChunkingCandidate{}, flight, false, nil
+	}
+	if len(s.candidates)+len(s.inFlight) >= maxIngestionCandidates {
+		return types.IngestionChunkingCandidate{}, nil, false,
+			fmt.Errorf("每个文档最多预览 %d 个不同候选", maxIngestionCandidates)
+	}
+	flight := &ingestionCandidateFlight{done: make(chan struct{})}
+	s.inFlight[id] = flight
+	return types.IngestionChunkingCandidate{}, flight, true, nil
+}
+
+func (s *ingestionAgentSession) completePreview(
+	id string,
+	flight *ingestionCandidateFlight,
+	result ingestionCandidateBuildResult,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.inFlight, id)
+	if result.err == nil {
+		s.candidates[id] = result.candidate
+	}
+	flight.candidate = result.candidate
+	flight.err = result.err
+	close(flight.done)
 }
 
 func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*types.IngestionAnalysis, error) {

@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -61,6 +64,145 @@ func TestIngestionPreviewDeduplicatesAndCapsDistinctCandidates(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.preview(ingestionTestConfig(600))
 	require.ErrorContains(t, err, "最多预览 3 个")
+}
+
+func TestIngestionPreviewBuildsDistinctCandidatesConcurrently(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	session.buildCandidate = func(
+		content string, config types.IngestionChunkingRecommendation, id string,
+	) (types.IngestionChunkingCandidate, error) {
+		started <- struct{}{}
+		<-release
+		return buildIngestionCandidate(content, config, id)
+	}
+
+	results := make(chan error, 2)
+	go func() { _, err := session.preview(ingestionTestConfig(300)); results <- err }()
+	go func() { _, err := session.preview(ingestionTestConfig(400)); results <- err }()
+	waitForIngestionPreviewSignals(t, started, 2)
+	close(release)
+	require.NoError(t, <-results)
+	require.NoError(t, <-results)
+
+	snapshot := session.candidateSnapshot()
+	require.Len(t, snapshot, 2)
+	require.Less(t, snapshot[0].ID, snapshot[1].ID)
+}
+
+func TestIngestionPreviewSharesSameCandidateInFlight(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var buildCalls atomic.Int32
+	session.buildCandidate = func(
+		content string, config types.IngestionChunkingRecommendation, id string,
+	) (types.IngestionChunkingCandidate, error) {
+		buildCalls.Add(1)
+		started <- struct{}{}
+		<-release
+		return buildIngestionCandidate(content, config, id)
+	}
+
+	type previewResult struct {
+		candidate types.IngestionChunkingCandidate
+		err       error
+	}
+	results := make(chan previewResult, 2)
+	go func() {
+		candidate, err := session.preview(ingestionTestConfig(300))
+		results <- previewResult{candidate: candidate, err: err}
+	}()
+	waitForIngestionPreviewSignals(t, started, 1)
+	go func() {
+		candidate, err := session.preview(ingestionTestConfig(300))
+		results <- previewResult{candidate: candidate, err: err}
+	}()
+	close(release)
+	first, second := <-results, <-results
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.Equal(t, int32(1), buildCalls.Load())
+	require.Equal(t, first.candidate.ID, second.candidate.ID)
+}
+
+func TestIngestionPreviewFailureReleasesReservation(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	var buildCalls atomic.Int32
+	session.buildCandidate = func(
+		content string, config types.IngestionChunkingRecommendation, id string,
+	) (types.IngestionChunkingCandidate, error) {
+		if buildCalls.Add(1) == 1 {
+			return types.IngestionChunkingCandidate{}, errors.New("chunker unavailable")
+		}
+		return buildIngestionCandidate(content, config, id)
+	}
+
+	_, err := session.preview(ingestionTestConfig(300))
+	require.ErrorContains(t, err, "chunker unavailable")
+	candidate, err := session.preview(ingestionTestConfig(300))
+	require.NoError(t, err)
+	require.NotEmpty(t, candidate.ID)
+	require.Len(t, session.candidateSnapshot(), 1)
+}
+
+func TestIngestionPreviewFlightPropagatesFailureToWaiter(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	normalized, err := normalizeIngestionPreviewConfig(ingestionTestConfig(300))
+	require.NoError(t, err)
+	id, err := ingestionCandidateID(normalized)
+	require.NoError(t, err)
+
+	_, ownerFlight, owner, err := session.reservePreview(id)
+	require.NoError(t, err)
+	require.True(t, owner)
+	_, waiterFlight, waiterOwns, err := session.reservePreview(id)
+	require.NoError(t, err)
+	require.False(t, waiterOwns)
+	require.Same(t, ownerFlight, waiterFlight)
+
+	buildErr := errors.New("chunker unavailable")
+	session.completePreview(id, ownerFlight, ingestionCandidateBuildResult{err: buildErr})
+	<-waiterFlight.done
+	require.ErrorIs(t, waiterFlight.err, buildErr)
+	require.Empty(t, session.candidateSnapshot())
+}
+
+func TestIngestionPreviewConcurrentReservationsEnforceCandidateCap(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	started := make(chan struct{}, maxIngestionCandidates)
+	release := make(chan struct{})
+	session.buildCandidate = func(
+		content string, config types.IngestionChunkingRecommendation, id string,
+	) (types.IngestionChunkingCandidate, error) {
+		started <- struct{}{}
+		<-release
+		return buildIngestionCandidate(content, config, id)
+	}
+
+	results := make(chan error, maxIngestionCandidates)
+	for _, size := range []int{300, 400, 500} {
+		go func() { _, err := session.preview(ingestionTestConfig(size)); results <- err }()
+	}
+	waitForIngestionPreviewSignals(t, started, maxIngestionCandidates)
+	_, err := session.preview(ingestionTestConfig(600))
+	require.ErrorContains(t, err, "最多预览 3 个")
+	close(release)
+	for range maxIngestionCandidates {
+		require.NoError(t, <-results)
+	}
+}
+
+func waitForIngestionPreviewSignals(t *testing.T, signals <-chan struct{}, count int) {
+	t.Helper()
+	for range count {
+		select {
+		case <-signals:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for concurrent ingestion previews")
+		}
+	}
 }
 
 func TestIngestionPreviewUsesNormalizedRealChunkerWithoutMutatingInput(t *testing.T) {
