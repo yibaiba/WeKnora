@@ -1,14 +1,41 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+type langfuseErrorChat struct {
+	err error
+}
+
+func (c *langfuseErrorChat) Chat(
+	context.Context, []Message, *ChatOptions,
+) (*types.ChatResponse, error) {
+	return nil, c.err
+}
+
+func (c *langfuseErrorChat) ChatStream(
+	context.Context, []Message, *ChatOptions,
+) (<-chan types.StreamResponse, error) {
+	return nil, c.err
+}
+
+func (c *langfuseErrorChat) GetModelName() string { return "error-model" }
+func (c *langfuseErrorChat) GetModelID() string   { return "error-model-id" }
 
 func TestBuildLangfuseGenerationOutput(t *testing.T) {
 	toolCalls := []types.LLMToolCall{{ID: "call_1", Type: "function"}}
@@ -120,6 +147,52 @@ func TestBuildLangfuseGenerationOutputRedactsSensitiveTaskResponse(t *testing.T)
 	}
 	if !strings.Contains(tracePayload, "preview_ingestion_chunking") {
 		t.Fatalf("redacted output omitted tool name: %s", tracePayload)
+	}
+}
+
+func TestLangfuseWrapperRedactsExportedErrorsWithoutChangingCallerError(t *testing.T) {
+	const sensitive = "provider echoed private document body"
+	providerErr := errors.New(sensitive)
+	var exported bytes.Buffer
+	var exportedMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		payload, _ := io.ReadAll(request.Body)
+		exportedMu.Lock()
+		exported.Write(payload)
+		exportedMu.Unlock()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	manager, err := langfuse.Init(langfuse.Config{
+		Enabled: true, Host: server.URL, PublicKey: "pk", SecretKey: "sk",
+		FlushAt: 1, FlushInterval: time.Second, QueueSize: 16,
+		RequestTimeout: time.Second, SampleRate: 1,
+	})
+	if err != nil {
+		t.Fatalf("init Langfuse: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = manager.Shutdown(context.Background())
+		_, _ = langfuse.Init(langfuse.Config{Enabled: false})
+	})
+	wrapped := &langfuseChat{inner: &langfuseErrorChat{err: providerErr}}
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, chatErr := wrapped.Chat(ctx, []Message{{Role: "user", Content: "private"}}, nil)
+	_, streamErr := wrapped.ChatStream(ctx, []Message{{Role: "user", Content: "private"}}, nil)
+	if !errors.Is(chatErr, providerErr) || !errors.Is(streamErr, providerErr) {
+		t.Fatalf("caller errors changed: chat=%v stream=%v", chatErr, streamErr)
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := manager.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("shutdown Langfuse: %v", err)
+	}
+	_, _ = langfuse.Init(langfuse.Config{Enabled: false})
+	exportedMu.Lock()
+	defer exportedMu.Unlock()
+	if bytes.Contains(exported.Bytes(), []byte(sensitive)) {
+		t.Fatalf("OTLP export leaked provider error: %q", exported.String())
 	}
 }
 

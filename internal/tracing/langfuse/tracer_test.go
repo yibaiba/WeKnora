@@ -3,10 +3,12 @@ package langfuse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -131,6 +133,73 @@ func TestSpan_FinishWithError(t *testing.T) {
 		return
 	}
 	t.Fatal("boom span not exported")
+}
+
+func TestSpanFinishRedactsErrorDetailsFromSensitiveContext(t *testing.T) {
+	m, exp := newTestManager(t)
+	const sensitive = "agent error echoed aggregated document evidence"
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, span := m.StartSpan(ctx, SpanOptions{Name: "redacted-agent"})
+	span.Finish(nil, nil, errors.New(sensitive))
+
+	exported := exportedSpanByName(t, exp.GetSpans(), "redacted-agent")
+	if strings.Contains(exported.Status.Description, sensitive) {
+		t.Fatalf("redacted span status leaked error: %q", exported.Status.Description)
+	}
+	for _, event := range exported.Events {
+		if strings.Contains(fmt.Sprint(event.Attributes), sensitive) {
+			t.Fatalf("redacted span error event leaked error: %v", event.Attributes)
+		}
+	}
+}
+
+func TestGenerationFinishRedactsErrorDetailsFromSensitiveContext(t *testing.T) {
+	m, exp := newTestManager(t)
+	const sensitive = "provider echoed private document body"
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, generation := m.StartGeneration(ctx, GenerationOptions{Name: "redacted-llm", Model: "m"})
+	generation.Finish(nil, nil, errors.New(sensitive))
+
+	span := exportedSpanByName(t, exp.GetSpans(), "redacted-llm")
+	if span.Status.Code != codes.Error {
+		t.Fatalf("span status = %v; want Error", span.Status.Code)
+	}
+	if strings.Contains(span.Status.Description, sensitive) {
+		t.Fatalf("redacted status leaked provider error: %q", span.Status.Description)
+	}
+	for _, event := range span.Events {
+		if strings.Contains(fmt.Sprint(event.Attributes), sensitive) {
+			t.Fatalf("redacted error event leaked provider error: %v", event.Attributes)
+		}
+	}
+}
+
+func TestGenerationFinishPreservesUnredactedErrorDetails(t *testing.T) {
+	m, exp := newTestManager(t)
+	const providerError = "provider unavailable"
+
+	_, generation := m.StartGeneration(
+		context.Background(), GenerationOptions{Name: "unredacted-llm", Model: "m"},
+	)
+	generation.Finish(nil, nil, errors.New(providerError))
+
+	span := exportedSpanByName(t, exp.GetSpans(), "unredacted-llm")
+	if span.Status.Description != providerError {
+		t.Fatalf("status description = %q; want %q", span.Status.Description, providerError)
+	}
+}
+
+func exportedSpanByName(t *testing.T, spans tracetest.SpanStubs, name string) tracetest.SpanStub {
+	t.Helper()
+	for _, span := range spans {
+		if span.Name == name {
+			return span
+		}
+	}
+	t.Fatalf("span %q not exported", name)
+	return tracetest.SpanStub{}
 }
 
 // TestManager_FullRoundTrip asserts a generation carries the model name and
