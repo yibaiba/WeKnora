@@ -786,6 +786,8 @@ export default {
       warningsTitle: 'Optional tool warnings',
       phase: {
         analyze_document: 'Analyze document',
+        map_document: 'Analyze full-text units',
+        reduce_document: 'Merge full-text evidence',
         readonly_tools: 'Call read-only tools',
         preview_candidates: 'Preview candidates',
         evaluate_and_refine: 'Evaluate and refine',
@@ -870,6 +872,8 @@ export default {
     errorCode: {
       DOCUMENT_ANALYSIS_FAILED: 'Document analysis failed',
       DOCUMENT_ANALYSIS_FAILED_SUGGESTION: 'Review the raw error below. Fix the model configuration and retry smart analysis, or use the knowledge base chunking settings.',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED: 'Full-document analysis failed',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED_SUGGESTION: 'The full-text Map-Reduce analysis did not finish. Check the summary model, provider status, and timeout configuration, then retry or use the knowledge base chunking settings.',
       INGESTION_MODEL_UNAVAILABLE: 'Summary model unavailable',
       INGESTION_MODEL_UNAVAILABLE_SUGGESTION: 'Configure an available summary model for this knowledge base and retry, or use the knowledge base chunking settings.',
       INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED: 'Model does not support tool calling',

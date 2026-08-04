@@ -5039,6 +5039,8 @@ export default {
     errorCode: {
       DOCUMENT_ANALYSIS_FAILED: '文档智能分析失败',
       DOCUMENT_ANALYSIS_FAILED_SUGGESTION: '查看下方原始错误；修复模型配置后智能重试，或改用知识库切分配置。',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED: '文档全文分析失败',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED_SUGGESTION: '全文 Map-Reduce 分析未完成；检查摘要模型、供应商状态和超时配置后智能重试，或改用知识库切分配置。',
       INGESTION_MODEL_UNAVAILABLE: '摘要模型不可用',
       INGESTION_MODEL_UNAVAILABLE_SUGGESTION: '为知识库配置可用的摘要模型后智能重试，或改用知识库切分配置。',
       INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED: '模型不支持工具调用',
@@ -5128,6 +5130,8 @@ export default {
       warningsTitle: '可选工具提示',
       phase: {
         analyze_document: '分析文档',
+        map_document: '分段分析全文',
+        reduce_document: '归并全文证据',
         readonly_tools: '调用只读工具',
         preview_candidates: '预览候选',
         evaluate_and_refine: '评估与修正',

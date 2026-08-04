@@ -5039,6 +5039,8 @@ export default {
     errorCode: {
       DOCUMENT_ANALYSIS_FAILED: 'Ошибка интеллектуального анализа документа',
       DOCUMENT_ANALYSIS_FAILED_SUGGESTION: 'Проверьте исходную ошибку ниже. Исправьте настройку модели и выполните умный повтор или используйте настройки разбиения базы знаний.',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED: 'Ошибка анализа полного текста документа',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED_SUGGESTION: 'Полнотекстовый анализ Map-Reduce не завершён. Проверьте модель суммаризации, состояние провайдера и настройку тайм-аута, затем повторите анализ или используйте настройки разбиения базы знаний.',
       INGESTION_MODEL_UNAVAILABLE: 'Модель суммаризации недоступна',
       INGESTION_MODEL_UNAVAILABLE_SUGGESTION: 'Настройте доступную модель суммаризации и повторите анализ либо используйте настройки базы знаний.',
       INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED: 'Модель не поддерживает вызов инструментов',
@@ -5128,6 +5130,8 @@ export default {
       warningsTitle: 'Предупреждения дополнительных инструментов',
       phase: {
         analyze_document: 'Анализ документа',
+        map_document: 'Анализ частей полного текста',
+        reduce_document: 'Объединение свидетельств полного текста',
         readonly_tools: 'Вызов инструментов только для чтения',
         preview_candidates: 'Предпросмотр кандидатов',
         evaluate_and_refine: 'Оценка и корректировка',

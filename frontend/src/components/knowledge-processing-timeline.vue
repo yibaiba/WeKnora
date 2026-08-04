@@ -1024,16 +1024,19 @@ function localizedStatus(status: string): string {
   return localized === key ? status : localized
 }
 
+function documentAnalysisPhase(name: string): string | null {
+  const phaseMatch = /^document_analysis\.([a-z_]+)/.exec(name)
+  return phaseMatch?.[1] ?? null
+}
+
 function rowLabel(row: FlatRow): string {
   if (row.isRoot) return t('knowledgeStages.root')
   if (row.isStage) return t(`knowledgeStages.stage.${row.node.name}`)
-  if (row.node.name.startsWith('document_analysis.')) {
-    const phase = (row.node.input as Record<string, unknown> | undefined)?.phase
-    if (typeof phase === 'string') {
-      const key = `knowledgeStages.analysis.phase.${phase}`
-      const localized = t(key)
-      if (localized !== key) return localized
-    }
+  const phase = documentAnalysisPhase(row.node.name)
+  if (phase) {
+    const key = `knowledgeStages.analysis.phase.${phase}`
+    const localized = t(key)
+    if (localized !== key) return localized
   }
   if (row.node.name === 'postprocess.graph') return t('knowledgeStages.processConfig.graph')
   const graphChunk = /^postprocess\.graph\.chunk\[(\d+)\]$/.exec(row.node.name)

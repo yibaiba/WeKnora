@@ -120,6 +120,7 @@ test('validates persisted candidate and agent-run shapes before rendering', () =
 
 test('localizes every structured ingestion failure category in all supported locales', () => {
   const codes = [
+    'INGESTION_DOCUMENT_ANALYSIS_FAILED',
     'INGESTION_MODEL_UNAVAILABLE',
     'INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED',
     'INGESTION_CORE_TOOL_FAILED',
@@ -154,7 +155,7 @@ test('builds explicit smart and knowledge-base retry payloads without mutating s
 })
 
 test('shows both recovery actions only for document analysis failures', () => {
-  assert.match(source, /error_code === 'DOCUMENT_ANALYSIS_FAILED'/)
+  assert.match(source, /errorCode === 'DOCUMENT_ANALYSIS_FAILED'/)
   assert.match(source, /errorCode\.startsWith\('INGESTION_'\)/)
   assert.match(source, /stage\.status === 'failed' && !!stage\.span_id/)
   assert.match(source, /v-if="documentAnalysisFailed"/)
@@ -165,8 +166,15 @@ test('shows both recovery actions only for document analysis failures', () => {
 test('localizes document analysis child spans from their redacted phase identifiers', () => {
   const labels = source.slice(source.indexOf('function rowLabel'), source.indexOf('function rowKindLabel'))
 
-  assert.match(labels, /row\.node\.name\.startsWith\('document_analysis\.'\)/)
+  assert.match(source, /function documentAnalysisPhase/)
+  assert.match(source, /const phaseMatch = \/\^document_analysis/)
+  assert.match(labels, /documentAnalysisPhase\(row\.node\.name\)/)
   assert.match(labels, /knowledgeStages\.analysis\.phase\.\$\{phase\}/)
+  assert.doesNotMatch(labels, /row\.node\.input/)
+  for (const locale of localeSources) {
+    assert.match(locale, /map_document:/)
+    assert.match(locale, /reduce_document:/)
+  }
 })
 
 test('does not reuse stale analysis metadata for a skipped latest attempt', () => {

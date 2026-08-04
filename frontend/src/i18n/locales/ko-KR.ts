@@ -5039,6 +5039,8 @@ export default {
     errorCode: {
       DOCUMENT_ANALYSIS_FAILED: '문서 스마트 분석 실패',
       DOCUMENT_ANALYSIS_FAILED_SUGGESTION: '아래 원본 오류를 확인하세요. 모델 설정을 수정한 뒤 스마트 재시도하거나 지식베이스 청킹 설정을 사용하세요.',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED: '문서 전체 텍스트 분석 실패',
+      INGESTION_DOCUMENT_ANALYSIS_FAILED_SUGGESTION: '전체 텍스트 Map-Reduce 분석이 완료되지 않았습니다. 요약 모델, 공급자 상태 및 시간 제한 설정을 확인한 뒤 다시 시도하거나 지식베이스 청킹 설정을 사용하세요.',
       INGESTION_MODEL_UNAVAILABLE: '요약 모델을 사용할 수 없음',
       INGESTION_MODEL_UNAVAILABLE_SUGGESTION: '지식베이스에 사용 가능한 요약 모델을 설정한 뒤 재시도하거나 지식베이스 청킹 설정을 사용하세요.',
       INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED: '모델이 도구 호출을 지원하지 않음',
@@ -5128,6 +5130,8 @@ export default {
       warningsTitle: '선택 도구 경고',
       phase: {
         analyze_document: '문서 분석',
+        map_document: '전체 텍스트 단위 분석',
+        reduce_document: '전체 텍스트 근거 병합',
         readonly_tools: '읽기 전용 도구 호출',
         preview_candidates: '후보 미리보기',
         evaluate_and_refine: '평가 및 수정',
