@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
+	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"go.uber.org/dig"
@@ -28,6 +31,7 @@ var sharedReadOnlyAgentTools = map[string]struct{}{
 	agenttools.ToolDataSchema:          {},
 	agenttools.ToolWebSearch:           {},
 	agenttools.ToolWebFetch:            {},
+	agenttools.ToolReadSkill:           {},
 	agenttools.ToolWikiReadPage:        {},
 	agenttools.ToolWikiSearch:          {},
 	agenttools.ToolWikiReadSourceDoc:   {},
@@ -54,8 +58,10 @@ type readOnlyAgentToolFactoryParams struct {
 }
 
 type readOnlyAgentToolFactory struct {
-	params readOnlyAgentToolFactoryParams
-	reader interfaces.KnowledgeReadService
+	params       readOnlyAgentToolFactoryParams
+	reader       interfaces.KnowledgeReadService
+	skillsMu     sync.Mutex
+	skillsReader *skills.Manager
 }
 
 type readOnlyAgentToolOptions struct {
@@ -84,7 +90,7 @@ func isSharedReadOnlyAgentTool(name string) bool {
 }
 
 func (f *readOnlyAgentToolFactory) Build(
-	_ context.Context,
+	ctx context.Context,
 	name string,
 	options readOnlyAgentToolOptions,
 ) (types.Tool, error) {
@@ -99,6 +105,12 @@ func (f *readOnlyAgentToolFactory) Build(
 	switch name {
 	case agenttools.ToolThinking:
 		return agenttools.NewSequentialThinkingTool(), nil
+	case agenttools.ToolReadSkill:
+		manager, err := f.readOnlySkillsManager(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return agenttools.NewReadSkillTool(manager), nil
 	case agenttools.ToolKnowledgeSearch:
 		if err := f.requireKnowledgeTools(reader); err != nil {
 			return nil, err
@@ -190,6 +202,28 @@ func (f *readOnlyAgentToolFactory) Build(
 	default:
 		return nil, fmt.Errorf("工具 %q 不是共享只读工具", name)
 	}
+}
+
+func (f *readOnlyAgentToolFactory) readOnlySkillsManager(ctx context.Context) (*skills.Manager, error) {
+	f.skillsMu.Lock()
+	defer f.skillsMu.Unlock()
+	if f.skillsReader != nil {
+		return f.skillsReader, nil
+	}
+	manager := skills.NewManager(&skills.ManagerConfig{
+		SkillDirs: []string{getPreloadedSkillsDir()}, Enabled: true,
+	}, sandbox.NewDisabledManager())
+	if err := manager.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("初始化只读 skill 目录失败: %w", err)
+	}
+	f.skillsReader = manager
+	return manager, nil
+}
+
+func (f *readOnlyAgentToolFactory) loadedSkillsManager() *skills.Manager {
+	f.skillsMu.Lock()
+	defer f.skillsMu.Unlock()
+	return f.skillsReader
 }
 
 func (f *readOnlyAgentToolFactory) RegisterMCP(

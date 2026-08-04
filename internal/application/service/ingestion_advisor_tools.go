@@ -15,7 +15,7 @@ func (a *modelIngestionAdvisor) registerOptionalTools(
 	chatModel chat.Chat,
 	request types.IngestionAdvisorRequest,
 ) []types.IngestionAgentWarning {
-	warnings := []types.IngestionAgentWarning{skillReadWarning()}
+	warnings := []types.IngestionAgentWarning{}
 	if a.readOnlyTools == nil {
 		return append(warnings, types.IngestionAgentWarning{
 			Code: "readonly_tools_unavailable", Message: "只读 Agent 工具工厂未配置",
@@ -41,7 +41,7 @@ func (a *modelIngestionAdvisor) registerOptionalTools(
 }
 
 func ingestionReadOnlyToolNames(request types.IngestionAdvisorRequest) ([]string, []string) {
-	names := []string{agenttools.ToolThinking}
+	names := []string{agenttools.ToolThinking, agenttools.ToolReadSkill}
 	if request.VectorEnabled || request.KeywordEnabled {
 		names = append(names,
 			agenttools.ToolKnowledgeSearch, agenttools.ToolGrepChunks,
@@ -99,11 +99,4 @@ func (a *modelIngestionAdvisor) registerIngestionMCP(
 		}}
 	}
 	return nil
-}
-
-func skillReadWarning() types.IngestionAgentWarning {
-	return types.IngestionAgentWarning{
-		Code: "skill_read_unavailable", Tool: agenttools.ToolReadSkill,
-		Message: "入库任务未配置可读取的 skill 目录",
-	}
 }

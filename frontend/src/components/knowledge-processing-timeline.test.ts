@@ -8,6 +8,10 @@ const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(join(here, 'knowledge-processing-timeline.vue'), 'utf8')
 const analysisDetail = readFileSync(join(here, 'knowledge-ingestion-analysis-detail.vue'), 'utf8')
 const agentRunDetail = readFileSync(join(here, 'knowledge-ingestion-agent-run-detail.vue'), 'utf8')
+const analysisNormalizer = readFileSync(join(here, '../utils/ingestionAnalysis.ts'), 'utf8')
+const localeSources = ['en-US', 'zh-CN', 'ru-RU', 'ko-KR'].map(locale =>
+  readFileSync(join(here, `../i18n/locales/${locale}.ts`), 'utf8'),
+)
 
 test('orders document analysis between parsing and chunking', () => {
   assert.match(
@@ -91,6 +95,46 @@ test('renders only structured ingestion phases, candidate scores, and redacted t
   assert.match(agentRunDetail, /analysis\.agent_run\.steps/)
   assert.match(agentRunDetail, /analysis\.candidates/)
   assert.doesNotMatch(agentRunDetail, /thought|reasoning_content|raw_arguments|raw_output/i)
+})
+
+test('validates persisted candidate and agent-run shapes before rendering', () => {
+  for (const field of [
+    'minimum',
+    'maximum',
+    'average',
+    'p50',
+    'p95',
+    'tier_chain',
+    'rejected',
+    'available_tools',
+    'warnings',
+    'steps',
+  ]) {
+    assert.match(analysisNormalizer, new RegExp(field))
+  }
+  assert.match(analysisNormalizer, /Number\.isFinite/)
+  assert.match(analysisNormalizer, /run\.warnings\.filter\(isAgentWarning\)/)
+  assert.match(analysisNormalizer, /run\.steps\.filter\(isAgentStep\)/)
+  assert.doesNotMatch(analysisNormalizer, /thought|reasoning_content|raw_arguments|raw_output/i)
+})
+
+test('localizes every structured ingestion failure category in all supported locales', () => {
+  const codes = [
+    'INGESTION_MODEL_UNAVAILABLE',
+    'INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED',
+    'INGESTION_CORE_TOOL_FAILED',
+    'INGESTION_CANDIDATE_INVALID',
+    'INGESTION_AGENT_MAX_ROUNDS',
+    'INGESTION_DECISION_NOT_SUBMITTED',
+    'INGESTION_AGENT_EXECUTION_FAILED',
+  ]
+
+  for (const locale of localeSources) {
+    for (const code of codes) {
+      assert.match(locale, new RegExp(`${code}:`))
+      assert.match(locale, new RegExp(`${code}_SUGGESTION:`))
+    }
+  }
 })
 
 test('builds explicit smart and knowledge-base retry payloads without mutating stored overrides', () => {

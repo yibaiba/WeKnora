@@ -52,6 +52,16 @@ func newTestMCPTool(serviceName, serviceID, toolName string) *MCPTool {
 	}
 }
 
+func TestMCPToolIsReadOnlyFailsClosed(t *testing.T) {
+	readOnly := true
+	writeCapable := false
+
+	assert.False(t, MCPToolIsReadOnly(nil))
+	assert.False(t, MCPToolIsReadOnly(&types.MCPTool{Name: "missing_annotation"}))
+	assert.False(t, MCPToolIsReadOnly(&types.MCPTool{Name: "write", ReadOnlyHint: &writeCapable}))
+	assert.True(t, MCPToolIsReadOnly(&types.MCPTool{Name: "read", ReadOnlyHint: &readOnly}))
+}
+
 func TestMCPToolName_UsesServiceNameNotUUID(t *testing.T) {
 	tool := newTestMCPTool("hazardous_chemicals", "ed606721-b7a5-4e74-8917-40ebfd29f17a", "getHazardousChemicals")
 

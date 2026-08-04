@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -20,6 +21,7 @@ type ingestionAdvisorScriptedModel struct {
 	responses [][]types.StreamResponse
 	calls     [][]chat.Message
 	options   []*chat.ChatOptions
+	streamErr error
 }
 
 func (m *ingestionAdvisorScriptedModel) Chat(
@@ -37,6 +39,9 @@ func (m *ingestionAdvisorScriptedModel) ChatStream(
 ) (<-chan types.StreamResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.streamErr != nil {
+		return nil, m.streamErr
+	}
 	index := len(m.calls)
 	if index >= len(m.responses) {
 		return nil, fmt.Errorf("unexpected ChatStream call %d", index+1)
@@ -103,12 +108,23 @@ func validIngestionAdvisorRequest() types.IngestionAdvisorRequest {
 }
 
 func toolResponse(id, name, arguments string) []types.StreamResponse {
+	return toolCallsResponse(types.LLMToolCall{
+		ID: id, Function: types.FunctionCall{Name: name, Arguments: arguments},
+	})
+}
+
+func toolCallsResponse(calls ...types.LLMToolCall) []types.StreamResponse {
 	return []types.StreamResponse{{
 		ResponseType: types.ResponseTypeAnswer,
-		ToolCalls: []types.LLMToolCall{{
-			ID: id, Function: types.FunctionCall{Name: name, Arguments: arguments},
-		}},
-		Done: true, FinishReason: "tool_calls",
+		ToolCalls:    calls,
+		Done:         true, FinishReason: "tool_calls",
+	}}
+}
+
+func naturalResponse(content string) []types.StreamResponse {
+	return []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer, Content: content,
+		Done: true, FinishReason: "stop",
 	}}
 }
 
@@ -131,8 +147,11 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
 	}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+	request := validIngestionAdvisorRequest()
+	request.AllowWebAccess = true
+	request.AllowReadOnlyMCP = true
 
-	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+	result, err := advisor.Analyze(context.Background(), request)
 
 	require.NoError(t, err)
 	require.NotNil(t, result.Analysis)
@@ -147,15 +166,102 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 	require.Contains(t, result.AgentRun.AvailableTools, inspectIngestionDocumentTool)
 	require.Contains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionDecisionTool)
+	require.Contains(t, result.AgentRun.Warnings, types.IngestionAgentWarning{
+		Code: "readonly_tools_unavailable", Message: "只读 Agent 工具工厂未配置",
+	})
+}
+
+func TestBuildIngestionAgentRunRedactsPayloadsAndWarnsOnOptionalToolFailure(t *testing.T) {
+	state := &types.AgentState{RoundSteps: []types.AgentStep{{
+		Iteration: 0, Thought: "private chain of thought", ReasoningContent: "private reasoning content",
+		ToolCalls: []types.ToolCall{{
+			Name: agenttools.ToolWebSearch,
+			Args: map[string]interface{}{"query": "raw document excerpt"},
+			Result: &types.ToolResult{
+				Success: false, Output: "complete external output", Error: "service unavailable",
+			},
+		}},
+	}}}
+
+	run := buildIngestionAgentRun(newIngestionAgentRun(nil, nil), state)
+	persistable, err := json.Marshal(run)
+
+	require.NoError(t, err)
+	require.Contains(t, run.Warnings, types.IngestionAgentWarning{
+		Code: "optional_tool_failed", Tool: agenttools.ToolWebSearch,
+		Message: "可选只读工具执行失败",
+	})
+	require.NotContains(t, string(persistable), "private chain of thought")
+	require.NotContains(t, string(persistable), "private reasoning content")
+	require.NotContains(t, string(persistable), "raw document excerpt")
+	require.NotContains(t, string(persistable), "complete external output")
+}
+
+func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	request.Content = ingestionTestContent()
+	roughBoundaryConfig := ingestionTestConfig(100)
+	roughBoundaryConfig.ChunkOverlap = 0
+	roughBoundaryConfig.Separators = []string{" "}
+	configs := []types.IngestionChunkingRecommendation{
+		roughBoundaryConfig, ingestionTestConfig(420), ingestionTestConfig(960),
+	}
+	probe := newIngestionAgentSession(request.Content)
+	probed := make([]types.IngestionChunkingCandidate, 0, len(configs))
+	for _, config := range configs {
+		candidate, err := probe.preview(config)
+		require.NoError(t, err)
+		probed = append(probed, candidate)
+	}
+	selected, highest := probed[0], probed[0]
+	for _, candidate := range probed[1:] {
+		if candidate.Score.Total < selected.Score.Total {
+			selected = candidate
+		}
+		if candidate.Score.Total > highest.Score.Total {
+			highest = candidate
+		}
+	}
+	require.Less(t, selected.Score.Total, highest.Score.Total, "fixture must provide a deliberate lower-score choice")
+
+	calls := []types.LLMToolCall{{
+		ID: "inspect-1", Function: types.FunctionCall{
+			Name: inspectIngestionDocumentTool, Arguments: `{"offset":0,"limit":8000}`,
+		},
+	}}
+	for index, config := range configs {
+		arguments, err := jsonMarshalForTest(config)
+		require.NoError(t, err)
+		calls = append(calls, types.LLMToolCall{
+			ID:       fmt.Sprintf("preview-%d", index+1),
+			Function: types.FunctionCall{Name: previewIngestionChunkingTool, Arguments: arguments},
+		})
+	}
+	submitArgs := fmt.Sprintf(
+		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.83,`+
+			`"recommended_content_mode":"document","reason_codes":["deliberate_structure_tradeoff"],`+
+			`"summary":"选择分数较低但边界更符合当前文档结构的已预览候选"}`,
+		selected.ID,
+	)
+	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
+		toolCallsResponse(calls...),
+		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
+	}}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), request)
+
+	require.NoError(t, err)
+	require.Equal(t, selected.ID, result.SelectedCandidateID)
+	require.Equal(t, []string{"deliberate_structure_tradeoff"}, result.SelectionReasonCodes)
+	require.Len(t, result.Candidates, 3)
+	require.Len(t, result.AgentRun.Steps, 5)
+	require.NotNil(t, model.options[0].ParallelToolCalls)
+	require.True(t, *model.options[0].ParallelToolCalls)
 }
 
 func TestModelIngestionAdvisorRejectsNaturalAnswerWithoutTools(t *testing.T) {
-	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{{{
-		ResponseType: types.ResponseTypeAnswer,
-		Content:      "plain answer",
-		Done:         true,
-		FinishReason: "stop",
-	}}}}
+	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{naturalResponse("plain answer")}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
 	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
@@ -163,6 +269,89 @@ func TestModelIngestionAdvisorRejectsNaturalAnswerWithoutTools(t *testing.T) {
 	require.ErrorContains(t, err, "不支持原生工具调用")
 	require.NotNil(t, result)
 	require.Nil(t, result.Analysis)
+	require.Equal(t, ingestionAdvisorErrorToolCalling, ingestionAdvisorRunErrorCode(err))
+}
+
+func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		args     string
+		code     string
+	}{
+		{name: "inspect hard limit", toolName: inspectIngestionDocumentTool,
+			args: `{"offset":0,"limit":8001}`, code: ingestionAdvisorErrorCoreTool},
+		{name: "invalid preview arguments", toolName: previewIngestionChunkingTool,
+			args: `{"strategy":"legacy","chunk_size":"bad"}`, code: ingestionAdvisorErrorCandidate},
+		{name: "unknown candidate", toolName: submitIngestionDecisionTool,
+			args: `{"candidate_id":"cand_unknown","document_kind":"policy_manual","confidence":0.8,"recommended_content_mode":"document","reason_codes":["unknown"],"summary":"unknown"}`,
+			code: ingestionAdvisorErrorCandidate},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
+				toolResponse("tool-1", test.toolName, test.args), naturalResponse("stop without decision"),
+			}}
+			advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+			result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+
+			require.Error(t, err)
+			require.Equal(t, test.code, ingestionAdvisorRunErrorCode(err))
+			require.NotNil(t, result)
+			require.Nil(t, result.Analysis)
+		})
+	}
+}
+
+func TestModelIngestionAdvisorFailsAtFourRoundsWithoutSubmission(t *testing.T) {
+	responses := make([][]types.StreamResponse, 0, ingestionAdvisorMaxRounds)
+	for round := 1; round <= ingestionAdvisorMaxRounds; round++ {
+		responses = append(responses, toolResponse(
+			fmt.Sprintf("inspect-%d", round), inspectIngestionDocumentTool,
+			`{"offset":0,"limit":1}`,
+		))
+	}
+	model := &ingestionAdvisorScriptedModel{responses: responses}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorMaxRounds, ingestionAdvisorRunErrorCode(err))
+	require.Equal(t, ingestionAdvisorMaxRounds, result.AgentRun.ActualRounds)
+	require.Equal(t, "max_iterations", result.AgentRun.StopReason)
+	persistable, marshalErr := json.Marshal(result.AgentRun)
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(persistable), "First section")
+}
+
+func TestModelIngestionAdvisorRejectsPreviewWithoutSubmission(t *testing.T) {
+	arguments, err := jsonMarshalForTest(ingestionTestConfig(300))
+	require.NoError(t, err)
+	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
+		toolResponse("preview-1", previewIngestionChunkingTool, arguments),
+		naturalResponse("I am done"),
+	}}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorNotSubmitted, ingestionAdvisorRunErrorCode(err))
+	require.NotEmpty(t, result.Candidates)
+	require.Nil(t, result.Analysis)
+}
+
+func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T) {
+	model := &ingestionAdvisorScriptedModel{streamErr: errors.New("tool calling unsupported by provider")}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), validIngestionAdvisorRequest())
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorToolCalling, ingestionAdvisorRunErrorCode(err))
+	require.NotNil(t, result)
 }
 
 func TestModelIngestionAdvisorSurfacesMissingModelAndProviderErrors(t *testing.T) {
@@ -208,6 +397,38 @@ func TestValidateIngestionAnalysisRejectsInvalidEnumsAndBounds(t *testing.T) {
 			require.Error(t, ValidateIngestionAnalysis(value))
 		})
 	}
+}
+
+func TestValidateIngestionAdvisorResultRequiresPreviewedHardValidSelection(t *testing.T) {
+	newResult := func() *types.IngestionAdvisorResult {
+		analysis := validReactIngestionAnalysis()
+		candidate := types.IngestionChunkingCandidate{
+			ID: "cand_valid", Config: cloneChunkingRecommendation(analysis.RecommendedChunking),
+			HardValid: true,
+		}
+		return &types.IngestionAdvisorResult{
+			Analysis: analysis, Candidates: []types.IngestionChunkingCandidate{candidate},
+			SelectedCandidateID: "cand_valid", SelectionReasonCodes: []string{"previewed"},
+		}
+	}
+
+	require.NoError(t, ValidateIngestionAdvisorResult(newResult()))
+
+	unknown := newResult()
+	unknown.SelectedCandidateID = "cand_unknown"
+	require.ErrorContains(t, ValidateIngestionAdvisorResult(unknown), "不存在")
+
+	invalid := newResult()
+	invalid.Candidates[0].HardValid = false
+	require.ErrorContains(t, ValidateIngestionAdvisorResult(invalid), "未通过硬校验")
+
+	mismatched := newResult()
+	mismatched.Candidates[0].Config.ChunkSize++
+	require.ErrorContains(t, ValidateIngestionAdvisorResult(mismatched), "不一致")
+
+	missingReasons := newResult()
+	missingReasons.SelectionReasonCodes = nil
+	require.ErrorContains(t, ValidateIngestionAdvisorResult(missingReasons), "selection_reason_codes")
 }
 
 func TestValidateIngestionAdvisorConfigModes(t *testing.T) {

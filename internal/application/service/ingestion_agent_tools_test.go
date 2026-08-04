@@ -85,6 +85,22 @@ func TestIngestionPreviewUsesNormalizedRealChunkerWithoutMutatingInput(t *testin
 	require.Equal(t, string(diagnostics.SelectedTier), candidate.Diagnostics.SelectedTier)
 }
 
+func TestIngestionPreviewValidatesProductionParentChildMapping(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	config := ingestionTestConfig(300)
+	config.EnableParentChild = true
+	config.ParentChunkSize = 900
+	config.ChildChunkSize = 180
+
+	candidate, err := session.preview(config)
+
+	require.NoError(t, err)
+	require.True(t, candidate.HardValid)
+	require.NotZero(t, candidate.ChunkCount)
+	require.NotZero(t, candidate.ParentChunkCount)
+	require.Equal(t, parentChildWeight, candidate.Score.ParentChild)
+}
+
 func TestIngestionCandidateHardValidationRejectsInvalidPositions(t *testing.T) {
 	err := validateIngestionChunkPositions("正文", []chunker.Chunk{{
 		Content: "错误", Start: 0, End: 2,
@@ -115,6 +131,35 @@ func TestIngestionCandidateScoresAllNamedDimensions(t *testing.T) {
 	require.Equal(t, parentChildWeight, metrics.score.ParentChild)
 	require.Equal(t, 100.0, metrics.score.Total)
 	require.ElementsMatch(t, []string{"heading", "faq", "table"}, metrics.structure.PresentTypes)
+}
+
+func TestIngestionCandidateScoreComponentsPenalizeMismatches(t *testing.T) {
+	spans := []sourceSpan{{kind: "heading", start: 0, end: 10}}
+	_, retained := scoreStructureRetention(spans, []chunker.Chunk{{Start: 0, End: 10}})
+	_, split := scoreStructureRetention(spans, []chunker.Chunk{{Start: 0, End: 5}, {Start: 5, End: 10}})
+	require.Equal(t, 1.0, retained)
+	require.Zero(t, split)
+
+	balanced := []chunker.Chunk{{Content: strings.Repeat("a", 100)}, {Content: "tail"}}
+	unbalanced := []chunker.Chunk{{Content: strings.Repeat("a", 40)}, {Content: "tail"}}
+	require.Equal(t, 1.0, scoreChunkSizeBalance(balanced, 100))
+	require.Zero(t, scoreChunkSizeBalance(unbalanced, 100))
+
+	content := "alpha\n\nbeta"
+	goodBoundary := []chunker.Chunk{{Start: 0, End: 7}, {Start: 7, End: len([]rune(content))}}
+	badBoundary := []chunker.Chunk{{Start: 0, End: 5}, {Start: 5, End: len([]rune(content))}}
+	require.Equal(t, 1.0, scoreBoundaryQuality(content, goodBoundary, nil, []string{"\n\n"}))
+	require.Zero(t, scoreBoundaryQuality(content, badBoundary, nil, []string{"\n\n"}))
+
+	matchedOverlap := []chunker.Chunk{{Start: 0, End: 100}, {Start: 80, End: 150}}
+	mismatchedOverlap := []chunker.Chunk{{Start: 0, End: 100}, {Start: 100, End: 150}}
+	require.Equal(t, 1.0, scoreOverlapEfficiency(matchedOverlap, 20))
+	require.Zero(t, scoreOverlapEfficiency(mismatchedOverlap, 20))
+
+	children := []chunker.Chunk{{Start: 10, End: 20}}
+	parents := []chunker.Chunk{{Start: 0, End: 30}}
+	require.Equal(t, 1.0, scoreParentChild(children, parents, []int{0}, true))
+	require.Zero(t, scoreParentChild(children, parents, []int{1}, true))
 }
 
 func TestSubmitIngestionDecisionRequiresPreviewAndRejectsDuplicate(t *testing.T) {

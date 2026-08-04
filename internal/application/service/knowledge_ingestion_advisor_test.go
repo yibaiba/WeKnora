@@ -70,12 +70,13 @@ func (s *ingestionKnowledgeRepoStub) UpdateKnowledgeColumn(
 
 type ingestionSpanTrackerStub struct {
 	noopSpanTracker
-	spans    map[string]*Span
-	ended    []string
-	failed   []string
-	skipped  []string
-	subspans []string
-	subEnded []string
+	spans     map[string]*Span
+	ended     []string
+	failed    []string
+	failCodes []string
+	skipped   []string
+	subspans  []string
+	subEnded  []string
 }
 
 func newIngestionSpanTrackerStub() *ingestionSpanTrackerStub {
@@ -120,8 +121,9 @@ func (s *ingestionSpanTrackerStub) EndSpan(_ context.Context, span *Span, _ type
 	s.ended = append(s.ended, span.Name)
 }
 
-func (s *ingestionSpanTrackerStub) FailSpan(_ context.Context, span *Span, _, _ string, _ error) {
+func (s *ingestionSpanTrackerStub) FailSpan(_ context.Context, span *Span, code, _ string, _ error) {
 	s.failed = append(s.failed, span.Name)
+	s.failCodes = append(s.failCodes, code)
 }
 
 func (s *ingestionSpanTrackerStub) SkipSpan(_ context.Context, span *Span, _ string) {
@@ -162,6 +164,14 @@ func ingestionAdvisorResultForTest(analysis *types.IngestionAnalysis) *types.Ing
 			AvailableTools: []string{
 				inspectIngestionDocumentTool, previewIngestionChunkingTool, submitIngestionDecisionTool,
 			},
+			Warnings: []types.IngestionAgentWarning{{
+				Code: "optional_tool_failed", Tool: agenttools.ToolWebSearch,
+				Message: "可选只读工具执行失败",
+			}},
+			Steps: []types.IngestionAgentStep{{
+				Round: 1, ToolName: previewIngestionChunkingTool, Status: "succeeded",
+				DurationMS: 5, CandidateID: "cand_test", Score: 88,
+			}},
 			StopReason: "termination_tool",
 		},
 	}
@@ -199,6 +209,11 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	advisor := &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{original}}
 	service := &knowledgeService{repo: repo, ingestionAdvisor: advisor, spanTracker: tracker}
 	run := smartIngestionRun(newSmartIngestionKnowledge(t, "doc-1"))
+	overrides, err := run.Knowledge.ProcessOverrides()
+	require.NoError(t, err)
+	overrides.IngestionAdvisor.AllowWebAccess = true
+	overrides.IngestionAdvisor.AllowReadOnlyMCP = true
+	require.NoError(t, run.Knowledge.SetProcessOverrides(overrides))
 
 	effective, err := service.applyIngestionAdvisor(withAttempt(context.Background(), 1), run)
 
@@ -211,6 +226,8 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, "builtin", effective.ChunkingConfig.ParserEngineRules[0].Engine)
 	require.Equal(t, []string{"old"}, run.Effective.ChunkingConfig.Separators)
 	require.Equal(t, "untrusted-model", original.ModelID, "advisor-owned result must not be mutated")
+	require.True(t, advisor.requests[0].AllowWebAccess)
+	require.True(t, advisor.requests[0].AllowReadOnlyMCP)
 
 	persisted, err := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, err)
@@ -221,6 +238,8 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, []string{"heading_rich", "long_sections"}, persisted.SelectionReasonCodes)
 	require.Len(t, persisted.Candidates, 1)
 	require.Equal(t, "termination_tool", persisted.AgentRun.StopReason)
+	require.Equal(t, "cand_test", persisted.AgentRun.Steps[0].CandidateID)
+	require.Equal(t, "optional_tool_failed", persisted.AgentRun.Warnings[0].Code)
 	require.Empty(t, original.Candidates, "advisor-owned result must remain immutable")
 	persistedJSON, marshalErr := json.Marshal(persisted)
 	require.NoError(t, marshalErr)
@@ -299,11 +318,35 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 	require.ErrorIs(t, err, advisorErr)
 	require.Equal(t, types.ParseStatusFailed, run.Knowledge.ParseStatus)
 	require.Equal(t, []string{types.StageDocumentAnalysis}, tracker.failed)
+	require.Equal(t, []string{ingestionAdvisorErrorExecution}, tracker.failCodes)
 	require.NotContains(t, tracker.spans, types.StageChunking)
 	require.NotContains(t, tracker.spans, types.StageEmbedding)
 	analysis, parseErr := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, parseErr)
 	require.Nil(t, analysis)
+}
+
+func TestApplyIngestionAdvisorClearsStaleAnalysisBeforeFailedRetry(t *testing.T) {
+	repo := &ingestionKnowledgeRepoStub{}
+	knowledge := newSmartIngestionKnowledge(t, "doc-stale")
+	require.NoError(t, knowledge.SetIngestionAnalysis(validIngestionAnalysis()))
+	service := &knowledgeService{
+		repo: repo,
+		ingestionAdvisor: &ingestionAdvisorStub{
+			errors: []error{newIngestionAdvisorRunError(
+				ingestionAdvisorErrorMaxRounds, "four rounds exhausted",
+			)},
+		},
+	}
+
+	_, err := service.applyIngestionAdvisor(context.Background(), smartIngestionRun(knowledge))
+
+	require.Error(t, err)
+	persisted, parseErr := knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Nil(t, persisted)
+	require.Equal(t, 1, repo.updateColumnCalls)
+	require.Equal(t, types.ParseStatusFailed, knowledge.ParseStatus)
 }
 
 func TestApplyIngestionAdvisorSkipsLegacyOffAndUnsupportedSources(t *testing.T) {

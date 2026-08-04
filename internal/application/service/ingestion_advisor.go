@@ -60,6 +60,7 @@ func (a *modelIngestionAdvisor) Analyze(
 	)
 	if a.readOnlyTools != nil {
 		engine.SetAppConfig(a.readOnlyTools.params.Config)
+		engine.SetSkillsManager(a.readOnlyTools.loadedSkillsManager())
 	}
 	query, err := buildIngestionAgentQuery(session.profile)
 	if err != nil {
