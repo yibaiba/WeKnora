@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ingestionAdvisorMaxRounds    = 4
+	ingestionAdvisorMaxRounds    = 6
 	ingestionAdvisorTimeout      = 8 * time.Minute
 	ingestionWebCleanupTimeout   = time.Minute
 	ingestionWebSearchMaxResults = 5
@@ -49,31 +49,37 @@ func (a *modelIngestionAdvisor) Analyze(
 		)
 	}
 
-	session := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
-	query, err := buildIngestionAgentQuery(session.profile)
+	promptVersion := effectiveIngestionPromptVersion(request.PromptVersion)
+	session := newIngestionAgentSessionForPromptVersion(
+		request.Content, request.ChunkingConstraints, promptVersion,
+	)
+	preparation, err := prepareIngestionAgent(ctx, ingestionAgentPreparationRequest{
+		Model: chatModel, Request: request, Session: session, PromptVersion: promptVersion,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("构建文档分析请求失败: %w", err)
+		return nil, err
 	}
 	webState := a.newIngestionWebSearchState(request, runtime)
-	registry := agenttools.NewToolRegistry()
-	registerIngestionCoreTools(registry, session)
 	config := buildIngestionAgentConfig(request)
-	warnings := a.registerOptionalTools(ctx, registry, ingestionOptionalToolOptions{
+	warnings := a.registerOptionalTools(ctx, preparation.Registry, ingestionOptionalToolOptions{
 		config: config, chatModel: chatModel, request: request,
 		webSearchKnowledge: runtime.WebSearchKnowledge, webSearchState: webState,
 	})
-	config.AllowedTools = registry.ListTools()
+	config.AllowedTools = preparation.Registry.ListTools()
 	run := newIngestionAgentRun(config.AllowedTools, warnings)
 
 	engine := agent.NewAgentEngine(
-		config, chatModel, registry, event.NewEventBus(),
+		config, chatModel, preparation.Registry, event.NewEventBus(),
 		ingestionKnowledgeBaseInfo(request), nil, ingestionAgentSessionID(request), "",
 	)
 	if a.readOnlyTools != nil {
 		engine.SetAppConfig(a.readOnlyTools.params.Config)
 		engine.SetSkillsManager(a.readOnlyTools.loadedSkillsManager())
 	}
-	state, executeErr := executeIngestionAgent(ctx, engine, request, query)
+	state, executeErr := executeIngestionAgent(ctx, executeIngestionAgentRequest{
+		Engine: engine, Request: request, Query: preparation.Query,
+		SystemPrompt: preparation.SystemPrompt,
+	})
 	run = buildIngestionAgentRun(run, state)
 	result := buildIngestionAdvisorResult(session, run)
 	cleanupErr := cleanupIngestionWebSearch(ctx, webState, ingestionAgentSessionID(request))
@@ -117,25 +123,27 @@ func cleanupIngestionWebSearch(
 	return state.DeleteWebSearchTempKBState(cleanupCtx, sessionID)
 }
 
-func executeIngestionAgent(
-	ctx context.Context,
-	engine interfaces.AgentEngine,
-	request types.IngestionAdvisorRequest,
-	query string,
-) (*types.AgentState, error) {
+type executeIngestionAgentRequest struct {
+	Engine       interfaces.AgentEngine
+	Request      types.IngestionAdvisorRequest
+	Query        string
+	SystemPrompt string
+}
+
+func executeIngestionAgent(ctx context.Context, request executeIngestionAgentRequest) (*types.AgentState, error) {
 	callCtx, cancel := context.WithTimeout(ctx, ingestionAdvisorTimeout)
 	defer cancel()
 	callCtx = types.WithLLMCallMetadata(callCtx, "document_analysis", "")
-	return engine.ExecuteTask(callCtx, interfaces.AgentTaskRequest{
-		SessionID: ingestionAgentSessionID(request),
-		MessageID: request.KnowledgeID,
-		Query:     query,
+	return request.Engine.ExecuteTask(callCtx, interfaces.AgentTaskRequest{
+		SessionID: ingestionAgentSessionID(request.Request),
+		MessageID: request.Request.KnowledgeID,
+		Query:     request.Query,
 		Options: interfaces.AgentTaskOptions{
-			SystemPrompt:      ingestionAgentSystemPrompt,
+			SystemPrompt:      request.SystemPrompt,
 			MaxIterations:     ingestionAdvisorMaxRounds,
 			TerminationTool:   submitIngestionDecisionTool,
 			SkipFinalAnswer:   true,
-			StructuredEventFn: ingestionProgressReceiver(request.ProgressFn),
+			StructuredEventFn: ingestionProgressReceiver(request.Request.ProgressFn),
 		},
 	})
 }
@@ -146,7 +154,9 @@ func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.Ing
 			ingestionAdvisorErrorModelUnavailable, "知识库未配置摘要模型，无法执行文档智能分析",
 		)
 	}
-	if request.PromptVersion != types.IngestionPromptVersionV1 {
+	if request.PromptVersion != "" &&
+		request.PromptVersion != types.IngestionPromptVersionV1 &&
+		request.PromptVersion != types.IngestionPromptVersionV2 {
 		return fmt.Errorf("不支持的文档分析 Prompt 版本 %q", request.PromptVersion)
 	}
 	if a == nil || a.modelService == nil {
@@ -160,6 +170,11 @@ func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.Ing
 
 func registerIngestionCoreTools(registry *agenttools.ToolRegistry, session *ingestionAgentSession) {
 	registry.RegisterTool(newInspectIngestionDocument(session))
+	registry.RegisterTool(newPreviewIngestionChunking(session))
+	registry.RegisterTool(newSubmitIngestionDecision(session))
+}
+
+func registerIngestionDecisionTools(registry *agenttools.ToolRegistry, session *ingestionAgentSession) {
 	registry.RegisterTool(newPreviewIngestionChunking(session))
 	registry.RegisterTool(newSubmitIngestionDecision(session))
 }
@@ -209,7 +224,7 @@ func ingestionAgentSessionID(request types.IngestionAdvisorRequest) string {
 	return "ingestion-" + request.KnowledgeID
 }
 
-const ingestionAgentSystemPrompt = `你是智能文档入库 Agent。你的唯一目标是为当前文档选择经过真实预览验证的切分候选。
+const ingestionAgentV1SystemPrompt = `你是智能文档入库 Agent。你的唯一目标是为当前文档选择经过真实预览验证的切分候选。
 
 必须遵循：
 1. 需要原文时用 inspect_ingestion_document 按 rune 偏移查看，每次最多 8000 字符。

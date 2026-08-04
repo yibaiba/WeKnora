@@ -116,6 +116,9 @@ func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAg
 	if state.TerminatedByTool == submitIngestionDecisionTool && session.decisionSnapshot() != nil {
 		return validateIngestionAnalysisWithConstraints(session.decisionSnapshot(), session.constraints)
 	}
+	if state.StopReason == "max_iterations" && session.candidateCount() > 0 {
+		return ingestionAdvisorMaxRoundsError()
+	}
 	if err := firstFailedIngestionCoreTool(state); err != nil {
 		return err
 	}
@@ -125,14 +128,18 @@ func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAg
 		)
 	}
 	if state.StopReason == "max_iterations" {
-		return newIngestionAdvisorRunError(
-			ingestionAdvisorErrorMaxRounds,
-			"文档分析 Agent 达到 %d 轮上限但未提交决策", ingestionAdvisorMaxRounds,
-		)
+		return ingestionAdvisorMaxRoundsError()
 	}
 	return newIngestionAdvisorRunError(
 		ingestionAdvisorErrorNotSubmitted,
 		"文档分析 Agent 未通过 submit_ingestion_decision 提交决策",
+	)
+}
+
+func ingestionAdvisorMaxRoundsError() error {
+	return newIngestionAdvisorRunError(
+		ingestionAdvisorErrorMaxRounds,
+		"文档分析 Agent 达到 %d 轮上限但未提交决策", ingestionAdvisorMaxRounds,
 	)
 }
 

@@ -350,7 +350,7 @@ func TestApplyIngestionAdvisorClearsStaleAnalysisBeforeFailedRetry(t *testing.T)
 		repo: repo,
 		ingestionAdvisor: &ingestionAdvisorStub{
 			errors: []error{newIngestionAdvisorRunError(
-				ingestionAdvisorErrorMaxRounds, "four rounds exhausted",
+				ingestionAdvisorErrorMaxRounds, "six rounds exhausted",
 			)},
 		},
 	}

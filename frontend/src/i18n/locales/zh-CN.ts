@@ -5048,7 +5048,7 @@ export default {
       INGESTION_CANDIDATE_INVALID: '切分候选无效',
       INGESTION_CANDIDATE_INVALID_SUGGESTION: 'Agent 提交了未预览或未通过硬校验的候选；可智能重试或改用知识库配置。',
       INGESTION_AGENT_MAX_ROUNDS: 'Agent 达到轮数上限',
-      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'Agent 在四轮内未完成决策；可智能重试或改用知识库配置。',
+      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'Agent 在六轮内未完成决策；可智能重试或改用知识库配置。',
       INGESTION_DECISION_NOT_SUBMITTED: 'Agent 未提交切分决策',
       INGESTION_DECISION_NOT_SUBMITTED_SUGGESTION: '模型没有调用提交工具；请改用支持工具调用的模型重试。',
       INGESTION_AGENT_EXECUTION_FAILED: '入库 Agent 执行失败',

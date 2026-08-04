@@ -5048,7 +5048,7 @@ export default {
       INGESTION_CANDIDATE_INVALID: 'Недопустимый кандидат разбиения',
       INGESTION_CANDIDATE_INVALID_SUGGESTION: 'Agent выбрал непросмотренный или не прошедший строгую проверку вариант; повторите анализ либо используйте настройки базы.',
       INGESTION_AGENT_MAX_ROUNDS: 'Agent достиг лимита раундов',
-      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'Agent не принял решение за четыре раунда; повторите анализ либо используйте настройки базы.',
+      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'Agent не принял решение за шесть раундов; повторите анализ либо используйте настройки базы.',
       INGESTION_DECISION_NOT_SUBMITTED: 'Agent не отправил решение о разбиении',
       INGESTION_DECISION_NOT_SUBMITTED_SUGGESTION: 'Модель не вызвала инструмент отправки; повторите с моделью, поддерживающей tool calling.',
       INGESTION_AGENT_EXECUTION_FAILED: 'Ошибка выполнения Agent загрузки',

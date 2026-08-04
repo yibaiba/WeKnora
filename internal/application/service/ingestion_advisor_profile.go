@@ -16,14 +16,20 @@ const (
 // BuildIngestionDocumentProfile derives full-document statistics and a
 // deterministic, rune-safe prompt sample without mutating caller data.
 func BuildIngestionDocumentProfile(content string) types.IngestionDocumentProfile {
+	return types.IngestionDocumentProfile{
+		Statistics: BuildIngestionDocumentStatistics(content),
+		Sample:     sampleDocumentContent([]rune(content)),
+	}
+}
+
+// BuildIngestionDocumentStatistics profiles the complete extracted text
+// without retaining any body sample.
+func BuildIngestionDocumentStatistics(content string) types.DocumentStructureStats {
 	lines := strings.Split(content, "\n")
 	stats := profileDocumentLines(lines)
 	profileParagraphs(content, &stats)
 	profileLanguage(content, &stats)
-	return types.IngestionDocumentProfile{
-		Statistics: stats,
-		Sample:     sampleDocumentContent([]rune(content)),
-	}
+	return stats
 }
 
 func profileDocumentLines(lines []string) types.DocumentStructureStats {

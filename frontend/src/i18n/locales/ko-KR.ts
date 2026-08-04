@@ -5048,7 +5048,7 @@ export default {
       INGESTION_CANDIDATE_INVALID: '유효하지 않은 청킹 후보',
       INGESTION_CANDIDATE_INVALID_SUGGESTION: 'Agent가 미리 보지 않았거나 강제 검증을 통과하지 못한 후보를 제출했습니다. 재시도하거나 지식베이스 설정을 사용하세요.',
       INGESTION_AGENT_MAX_ROUNDS: 'Agent가 라운드 제한에 도달함',
-      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'Agent가 네 라운드 안에 결정을 완료하지 못했습니다. 재시도하거나 지식베이스 설정을 사용하세요.',
+      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'Agent가 6라운드 안에 결정을 완료하지 못했습니다. 재시도하거나 지식베이스 설정을 사용하세요.',
       INGESTION_DECISION_NOT_SUBMITTED: 'Agent가 청킹 결정을 제출하지 않음',
       INGESTION_DECISION_NOT_SUBMITTED_SUGGESTION: '모델이 제출 도구를 호출하지 않았습니다. 도구 호출 모델로 재시도하세요.',
       INGESTION_AGENT_EXECUTION_FAILED: '입고 Agent 실행 실패',

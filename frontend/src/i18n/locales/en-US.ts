@@ -879,7 +879,7 @@ export default {
       INGESTION_CANDIDATE_INVALID: 'Invalid chunking candidate',
       INGESTION_CANDIDATE_INVALID_SUGGESTION: 'The Agent submitted a candidate that was not previewed or did not pass hard validation; retry or use knowledge base settings.',
       INGESTION_AGENT_MAX_ROUNDS: 'Agent reached the round limit',
-      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'The Agent did not finish within four rounds; retry or use knowledge base settings.',
+      INGESTION_AGENT_MAX_ROUNDS_SUGGESTION: 'The Agent did not finish within six rounds; retry or use knowledge base settings.',
       INGESTION_DECISION_NOT_SUBMITTED: 'Agent did not submit a chunking decision',
       INGESTION_DECISION_NOT_SUBMITTED_SUGGESTION: 'The model did not call the submission tool; retry with a tool-calling model.',
       INGESTION_AGENT_EXECUTION_FAILED: 'Ingestion Agent execution failed',

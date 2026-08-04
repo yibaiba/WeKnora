@@ -546,7 +546,7 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 	}
 }
 
-func TestModelIngestionAdvisorFailsAtFourRoundsWithoutSubmission(t *testing.T) {
+func TestModelIngestionAdvisorFailsAtMaxRoundsWithoutSubmission(t *testing.T) {
 	responses := make([][]types.StreamResponse, 0, ingestionAdvisorMaxRounds)
 	for round := 1; round <= ingestionAdvisorMaxRounds; round++ {
 		responses = append(responses, toolResponse(

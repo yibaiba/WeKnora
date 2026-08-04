@@ -438,3 +438,21 @@ func TestValidateIngestionAgentOutcomeTreatsSuccessfulSubmitAsAuthoritative(t *t
 	}
 	require.NoError(t, validateIngestionAgentOutcome(state, session))
 }
+
+func TestValidateIngestionAgentOutcomeReportsMaxRoundsAfterRecoveredPreview(t *testing.T) {
+	session := newTestIngestionAgentSession(ingestionTestContent())
+	_, err := session.preview(ingestionTestConfig(300))
+	require.NoError(t, err)
+	state := &types.AgentState{
+		StopReason: "max_iterations",
+		RoundSteps: []types.AgentStep{{ToolCalls: []types.ToolCall{
+			{Name: previewIngestionChunkingTool, Result: &types.ToolResult{Success: false}},
+			{Name: previewIngestionChunkingTool, Result: &types.ToolResult{Success: true}},
+		}}},
+	}
+
+	err = validateIngestionAgentOutcome(state, session)
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorMaxRounds, ingestionAdvisorRunErrorCode(err))
+}
