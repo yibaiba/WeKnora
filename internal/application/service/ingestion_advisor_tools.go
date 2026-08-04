@@ -86,17 +86,32 @@ func (a *modelIngestionAdvisor) registerIngestionMCP(
 	registry *agenttools.ToolRegistry,
 	tenantID uint64,
 ) []types.IngestionAgentWarning {
-	registered, err := a.readOnlyTools.RegisterMCP(ctx, registry, tenantID)
+	registered, diagnostics, err := a.readOnlyTools.RegisterMCP(ctx, registry, tenantID)
+	return ingestionMCPWarnings(registered, diagnostics, err)
+}
+
+func ingestionMCPWarnings(
+	registered int,
+	diagnostics []agenttools.MCPRegistrationDiagnostic,
+	err error,
+) []types.IngestionAgentWarning {
 	if err != nil {
 		return []types.IngestionAgentWarning{{
-			Code: "readonly_mcp_unavailable", Message: err.Error(),
+			Code: "readonly_mcp_unavailable", Message: "MCP 只读工具注册失败",
 		}}
+	}
+	warnings := make([]types.IngestionAgentWarning, 0, len(diagnostics)+1)
+	for _, diagnostic := range diagnostics {
+		warnings = append(warnings, types.IngestionAgentWarning{
+			Code: "readonly_mcp_service_" + diagnostic.Code,
+			Tool: diagnostic.Service, Message: diagnostic.Message,
+		})
 	}
 	if registered == 0 {
-		return []types.IngestionAgentWarning{{
+		warnings = append(warnings, types.IngestionAgentWarning{
 			Code:    "readonly_mcp_unavailable",
 			Message: "没有可用且声明 readOnlyHint=true 的 MCP 工具",
-		}}
+		})
 	}
-	return nil
+	return warnings
 }

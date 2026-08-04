@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
@@ -76,4 +77,29 @@ func TestIngestionAgentConfigPinsTenantAndKnowledgeBaseScope(t *testing.T) {
 	require.Equal(t, "kb-scoped", config.SearchTargets[0].KnowledgeBaseID)
 	require.True(t, config.WebSearchEnabled)
 	require.True(t, config.ParallelToolCalls)
+}
+
+func TestIngestionMCPWarningsRetainPartialServiceDiagnostics(t *testing.T) {
+	warnings := ingestionMCPWarnings(1, []agenttools.MCPRegistrationDiagnostic{
+		{Code: "connection_failed", Service: "offline_service", Message: "MCP 服务连接失败"},
+		{Code: "tool_list_failed", Service: "broken_catalog", Message: "MCP 服务工具列表不可用"},
+	}, nil)
+
+	require.Len(t, warnings, 2)
+	require.Equal(t, "readonly_mcp_service_connection_failed", warnings[0].Code)
+	require.Equal(t, "offline_service", warnings[0].Tool)
+	require.Equal(t, "readonly_mcp_service_tool_list_failed", warnings[1].Code)
+	require.NotContains(t, warnings[0].Message+warnings[1].Message, "credential")
+}
+
+func TestIngestionMCPWarningsReportGlobalAndEmptyFailures(t *testing.T) {
+	global := ingestionMCPWarnings(0, nil, errors.New("Bearer secret-registry-response"))
+	require.Equal(t, "readonly_mcp_unavailable", global[0].Code)
+	require.NotContains(t, global[0].Message, "secret")
+
+	empty := ingestionMCPWarnings(0, nil, nil)
+	require.Equal(t, "readonly_mcp_unavailable", empty[0].Code)
+	require.Contains(t, empty[0].Message, "readOnlyHint=true")
+
+	require.Empty(t, ingestionMCPWarnings(2, nil, nil))
 }

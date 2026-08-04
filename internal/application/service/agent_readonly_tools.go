@@ -230,15 +230,17 @@ func (f *readOnlyAgentToolFactory) RegisterMCP(
 	ctx context.Context,
 	registry *agenttools.ToolRegistry,
 	tenantID uint64,
-) (int, error) {
+) (int, []agenttools.MCPRegistrationDiagnostic, error) {
 	if f == nil || f.params.MCPServiceService == nil || f.params.MCPManager == nil {
-		return 0, fmt.Errorf("MCP 只读工具服务未配置")
+		return 0, nil, fmt.Errorf("MCP 只读工具服务未配置")
 	}
 	services, err := f.params.MCPServiceService.ListMCPServices(ctx, tenantID)
 	if err != nil {
-		return 0, fmt.Errorf("列出 MCP 服务失败: %w", err)
+		return 0, nil, fmt.Errorf("列出 MCP 服务失败: %w", err)
 	}
-	return agenttools.RegisterReadOnlyMCPTools(ctx, registry, services, f.params.MCPManager, nil, nil)
+	return agenttools.RegisterReadOnlyMCPToolsWithDiagnostics(
+		ctx, registry, services, f.params.MCPManager, nil, nil,
+	)
 }
 
 func (f *readOnlyAgentToolFactory) requireKnowledgeTools(reader interfaces.KnowledgeReadService) error {
