@@ -327,3 +327,30 @@ func TestSubmitIngestionDecisionRequiresPreviewAndRejectsDuplicate(t *testing.T)
 	_, err = session.submit(input)
 	require.ErrorContains(t, err, "已经提交")
 }
+
+func TestValidateIngestionAgentOutcomeTreatsSuccessfulSubmitAsAuthoritative(t *testing.T) {
+	session := newIngestionAgentSession(ingestionTestContent())
+	candidate, err := session.preview(ingestionTestConfig(300))
+	require.NoError(t, err)
+	_, err = session.submit(submitIngestionDecisionInput{
+		CandidateID:            candidate.ID,
+		DocumentKind:           types.IngestionDocumentKindPolicyManual,
+		Confidence:             0.9,
+		RecommendedContentMode: types.IngestionContentModeDocument,
+		ReasonCodes:            []string{"structure_retained"},
+		Summary:                "选择已经真实预览的候选",
+	})
+	require.NoError(t, err)
+
+	state := &types.AgentState{
+		TerminatedByTool: submitIngestionDecisionTool,
+		RoundSteps: []types.AgentStep{{ToolCalls: []types.ToolCall{{
+			Name: previewIngestionChunkingTool,
+			Result: &types.ToolResult{
+				Success: false,
+				Error:   "earlier candidate was invalid",
+			},
+		}}}},
+	}
+	require.NoError(t, validateIngestionAgentOutcome(state, session))
+}

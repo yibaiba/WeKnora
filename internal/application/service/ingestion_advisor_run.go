@@ -110,14 +110,14 @@ func buildIngestionAdvisorResult(
 }
 
 func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAgentSession) error {
-	if err := firstFailedIngestionCoreTool(state); err != nil {
-		return err
-	}
 	if state == nil {
 		return fmt.Errorf("文档分析 Agent 未返回运行状态")
 	}
 	if state.TerminatedByTool == submitIngestionDecisionTool && session.decisionSnapshot() != nil {
 		return ValidateIngestionAnalysis(session.decisionSnapshot())
+	}
+	if err := firstFailedIngestionCoreTool(state); err != nil {
+		return err
 	}
 	if countAgentToolCalls(state) == 0 {
 		return newIngestionAdvisorRunError(

@@ -229,8 +229,22 @@ func (e *AgentEngine) executeToolCalls(
 	n := len(response.ToolCalls)
 	logger.Infof(ctx, "[Agent][Round-%d] Executing %d tool call(s)", round, n)
 
-	// Use parallel execution when enabled and there are multiple tool calls
+	// A task submission is authoritative. Run termination calls before the
+	// parallel batch so a successful submit does not wait for, or get negated
+	// by, unrelated sibling work. Ordinary chat runs have no termination tool.
 	if e.config.ParallelToolCalls && n >= 2 {
+		batch := taskTerminationBatch{
+			ctx: ctx, response: response, step: step, iteration: iteration,
+			round: round, sessionID: sessionID, assistantMessageID: assistantMessageID,
+		}
+		remaining, found, terminated := e.executeTaskTerminationCalls(batch)
+		if terminated {
+			return
+		}
+		if found {
+			e.executeRemainingParallel(batch, remaining)
+			return
+		}
 		e.executeToolCallsParallel(ctx, response, step, iteration, sessionID, assistantMessageID)
 		return
 	}
@@ -241,6 +255,56 @@ func (e *AgentEngine) executeToolCalls(
 			return
 		}
 	}
+}
+
+type taskTerminationBatch struct {
+	ctx                context.Context
+	response           *types.ChatResponse
+	step               *types.AgentStep
+	iteration          int
+	round              int
+	sessionID          string
+	assistantMessageID string
+}
+
+func (e *AgentEngine) executeTaskTerminationCalls(
+	batch taskTerminationBatch,
+) (remaining []types.LLMToolCall, found, terminated bool) {
+	terminationTool := configuredTerminationTool(batch.ctx)
+	if terminationTool == "" {
+		return nil, false, false
+	}
+	remaining = make([]types.LLMToolCall, 0, len(batch.response.ToolCalls))
+	for index, toolCall := range batch.response.ToolCalls {
+		if toolCall.Function.Name != terminationTool {
+			remaining = append(remaining, toolCall)
+			continue
+		}
+		found = true
+		e.executeSingleToolCall(
+			batch.ctx, toolCall, index, batch.step, batch.iteration, batch.round,
+			batch.sessionID, batch.assistantMessageID,
+		)
+		if _, terminated = terminationToolHit(batch.ctx); terminated {
+			return nil, true, true
+		}
+	}
+	return remaining, found, false
+}
+
+func (e *AgentEngine) executeRemainingParallel(
+	batch taskTerminationBatch,
+	remaining []types.LLMToolCall,
+) {
+	if len(remaining) == 0 {
+		return
+	}
+	response := *batch.response
+	response.ToolCalls = remaining
+	e.executeToolCallsParallel(
+		batch.ctx, &response, batch.step, batch.iteration,
+		batch.sessionID, batch.assistantMessageID,
+	)
 }
 
 // executeToolCallsParallel runs all tool calls concurrently using errgroup,

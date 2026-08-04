@@ -22,6 +22,12 @@ type countingTool struct {
 	calls int
 }
 
+type fixedResultTool struct {
+	agenttools.BaseTool
+	result types.ToolResult
+	calls  int
+}
+
 func newCountingTool(name string) *countingTool {
 	return &countingTool{BaseTool: agenttools.NewBaseTool(name, "test", json.RawMessage(`{"type":"object"}`))}
 }
@@ -29,6 +35,19 @@ func newCountingTool(name string) *countingTool {
 func (t *countingTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	t.calls++
 	return &types.ToolResult{Success: true, Output: "executed"}, nil
+}
+
+func newFixedResultTool(name string, result types.ToolResult) *fixedResultTool {
+	return &fixedResultTool{
+		BaseTool: agenttools.NewBaseTool(name, "test", json.RawMessage(`{"type":"object"}`)),
+		result:   result,
+	}
+}
+
+func (t *fixedResultTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
+	t.calls++
+	result := t.result
+	return &result, nil
 }
 
 func TestBuildAgentSpanInputRedactsSensitiveTaskQuery(t *testing.T) {
@@ -253,6 +272,12 @@ func withMaxIterations(n int) testEngineOption {
 func withCitationsEnabled(enabled bool) testEngineOption {
 	return func(cfg *types.AgentConfig) {
 		cfg.CitationEnabled = &enabled
+	}
+}
+
+func withParallelToolCalls(enabled bool) testEngineOption {
+	return func(cfg *types.AgentConfig) {
+		cfg.ParallelToolCalls = enabled
 	}
 }
 
@@ -609,6 +634,108 @@ func TestExecuteTaskStopsAfterSuccessfulTerminationTool(t *testing.T) {
 	require.Contains(t, model.calls[0][0].Content, "task-only system prompt")
 	require.Contains(t, events, interfaces.AgentTaskEvent{
 		Kind: taskEventToolFinished, Round: 1, ToolName: tool.Name(), Status: "succeeded",
+	})
+}
+
+func TestExecuteTaskPrioritizesSuccessfulTerminationOverParallelSibling(t *testing.T) {
+	model := taskToolCallModel(
+		types.LLMToolCall{ID: "slow-1", Function: types.FunctionCall{Name: "slow_read", Arguments: `{}`}},
+		types.LLMToolCall{ID: "submit-1", Function: types.FunctionCall{Name: "submit_task_result", Arguments: `{}`}},
+	)
+	engine := newTestEngine(t, model, withParallelToolCalls(true))
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	submit := newCountingTool("submit_task_result")
+	slow := newCountingTool("slow_read")
+	engine.toolRegistry.RegisterTool(submit)
+	engine.toolRegistry.RegisterTool(slow)
+
+	state, err := executeTerminationTask(engine, submit.Name())
+
+	require.NoError(t, err)
+	require.Equal(t, "termination_tool", state.StopReason)
+	require.Equal(t, 1, submit.calls)
+	require.Zero(t, slow.calls, "successful submit must not launch unrelated sibling work")
+	require.Len(t, state.RoundSteps[0].ToolCalls, 1)
+}
+
+func TestExecuteToolCallsParallelOrdinaryChatStillRunsEverySibling(t *testing.T) {
+	engine := newTestEngine(t, &mockChat{}, withParallelToolCalls(true))
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	first := newCountingTool("first_read")
+	second := newCountingTool("second_read")
+	engine.toolRegistry.RegisterTool(first)
+	engine.toolRegistry.RegisterTool(second)
+	response := &types.ChatResponse{ToolCalls: []types.LLMToolCall{
+		{ID: "first-1", Function: types.FunctionCall{Name: first.Name(), Arguments: `{}`}},
+		{ID: "second-1", Function: types.FunctionCall{Name: second.Name(), Arguments: `{}`}},
+	}}
+	step := &types.AgentStep{}
+
+	engine.executeToolCalls(context.Background(), response, step, 0, "session", "message")
+
+	require.Equal(t, 1, first.calls)
+	require.Equal(t, 1, second.calls)
+	require.Len(t, step.ToolCalls, 2)
+}
+
+func TestExecuteTaskRunsOnlyFirstSuccessfulDuplicateTermination(t *testing.T) {
+	model := taskToolCallModel(
+		types.LLMToolCall{ID: "submit-1", Function: types.FunctionCall{Name: "submit_task_result", Arguments: `{}`}},
+		types.LLMToolCall{ID: "submit-2", Function: types.FunctionCall{Name: "submit_task_result", Arguments: `{}`}},
+	)
+	engine := newTestEngine(t, model, withParallelToolCalls(true))
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	submit := newCountingTool("submit_task_result")
+	engine.toolRegistry.RegisterTool(submit)
+
+	state, err := executeTerminationTask(engine, submit.Name())
+
+	require.NoError(t, err)
+	require.Equal(t, "termination_tool", state.StopReason)
+	require.Equal(t, 1, submit.calls)
+	require.Len(t, state.RoundSteps[0].ToolCalls, 1)
+}
+
+func TestExecuteTaskContinuesParallelSiblingsAfterFailedTermination(t *testing.T) {
+	model := taskToolCallModel(
+		types.LLMToolCall{ID: "read-1", Function: types.FunctionCall{Name: "read_task", Arguments: `{}`}},
+		types.LLMToolCall{ID: "submit-1", Function: types.FunctionCall{Name: "submit_task_result", Arguments: `{}`}},
+	)
+	engine := newTestEngine(t, model, withParallelToolCalls(true))
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	submit := newFixedResultTool("submit_task_result", types.ToolResult{Success: false, Error: "invalid decision"})
+	read := newCountingTool("read_task")
+	engine.toolRegistry.RegisterTool(submit)
+	engine.toolRegistry.RegisterTool(read)
+
+	state, err := executeTerminationTask(engine, submit.Name())
+
+	require.NoError(t, err)
+	require.Equal(t, "max_iterations", state.StopReason)
+	require.Equal(t, 1, submit.calls)
+	require.Equal(t, 1, read.calls)
+	require.Len(t, state.RoundSteps[0].ToolCalls, 2)
+}
+
+func taskToolCallModel(toolCalls ...types.LLMToolCall) *mockChat {
+	return &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		ToolCalls:    toolCalls,
+		Done:         true,
+		FinishReason: "tool_calls",
+	}}}}}
+}
+
+func executeTerminationTask(engine *AgentEngine, terminationTool string) (*types.AgentState, error) {
+	return engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
+		SessionID: "task-session",
+		MessageID: "task-message",
+		Query:     "perform task",
+		Options: interfaces.AgentTaskOptions{
+			MaxIterations:   1,
+			TerminationTool: terminationTool,
+			SkipFinalAnswer: true,
+		},
 	})
 }
 

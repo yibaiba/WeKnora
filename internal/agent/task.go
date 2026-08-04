@@ -45,6 +45,14 @@ func shouldSkipFinalAnswer(ctx context.Context) bool {
 	return runtime != nil && runtime.options.SkipFinalAnswer
 }
 
+func configuredTerminationTool(ctx context.Context) string {
+	runtime := taskRuntimeFromContext(ctx)
+	if runtime == nil {
+		return ""
+	}
+	return runtime.options.TerminationTool
+}
+
 func emitTaskEvent(ctx context.Context, event interfaces.AgentTaskEvent) {
 	runtime := taskRuntimeFromContext(ctx)
 	if runtime == nil || runtime.options.StructuredEventFn == nil {
