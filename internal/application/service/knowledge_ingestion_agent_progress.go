@@ -56,6 +56,26 @@ func (p *ingestionAgentSpanProgress) Handle(step types.IngestionAgentStep) {
 	p.finishToolSpan(key, step)
 }
 
+func (p *ingestionAgentSpanProgress) HandleAnalysis(event types.IngestionDocumentAnalysisProgress) {
+	if p == nil || p.parent == nil || !isIngestionAnalysisPhase(event.Phase) {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	span := p.tracker.BeginSubSpan(
+		p.ctx, p.parent, p.nextSpanName(event.Phase), types.SpanKindSubSpan,
+		ingestionAnalysisProgressPayload(event),
+	)
+	if event.Failed {
+		p.tracker.FailSpan(
+			p.ctx, span, ingestionAdvisorErrorDocumentAnalysis,
+			fmt.Sprintf("文档全文 %s 阶段失败", event.Phase), nil,
+		)
+		return
+	}
+	p.tracker.EndSpan(p.ctx, span, types.JSONMap{})
+}
+
 func (p *ingestionAgentSpanProgress) RecordEvaluation(result *types.IngestionAdvisorResult) {
 	if p == nil || p.parent == nil || result == nil {
 		return
@@ -126,5 +146,19 @@ func ingestionPhaseForTool(toolName string) string {
 		return "evaluate_and_refine"
 	default:
 		return "readonly_tools"
+	}
+}
+
+func isIngestionAnalysisPhase(phase string) bool {
+	return phase == "map_document" || phase == "reduce_document"
+}
+
+func ingestionAnalysisProgressPayload(event types.IngestionDocumentAnalysisProgress) types.JSONMap {
+	return types.JSONMap{
+		"unit_count":         event.UnitCount,
+		"completed":          event.Completed,
+		"level":              event.Level,
+		"duration_ms":        event.DurationMS,
+		"covered_characters": event.CoveredCharacters,
 	}
 }

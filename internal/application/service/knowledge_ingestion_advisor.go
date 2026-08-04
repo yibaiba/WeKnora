@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	appconfig "github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -44,7 +45,10 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	if err := s.clearPreviousIngestionAnalysis(ctx, run.Knowledge); err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
 	}
-	advisorResult, err := s.analyzeIngestionContent(ctx, run, promptVersion, config, progress.Handle)
+	advisorResult, err := s.analyzeIngestionContent(ctx, ingestionContentAnalysisRequest{
+		Run: run, PromptVersion: promptVersion, Config: config,
+		AgentProgress: progress.Handle, AnalysisProgress: progress.HandleAnalysis,
+	})
 	progress.RecordEvaluation(advisorResult)
 	if err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
@@ -71,16 +75,22 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	return run.Effective, nil
 }
 
+type ingestionContentAnalysisRequest struct {
+	Run              ingestionAdvisorRun
+	PromptVersion    string
+	Config           *types.IngestionAdvisorConfig
+	AgentProgress    func(types.IngestionAgentStep)
+	AnalysisProgress func(types.IngestionDocumentAnalysisProgress)
+}
+
 func (s *knowledgeService) analyzeIngestionContent(
 	ctx context.Context,
-	run ingestionAdvisorRun,
-	promptVersion string,
-	config *types.IngestionAdvisorConfig,
-	progress func(types.IngestionAgentStep),
+	request ingestionContentAnalysisRequest,
 ) (*types.IngestionAdvisorResult, error) {
 	if s.ingestionAdvisor == nil {
 		return nil, fmt.Errorf("文档智能分析服务未配置")
 	}
+	run := request.Run
 	constraints := ingestionChunkingConstraintsFromConfig(run.Effective.ChunkingConfig)
 	result, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
 		Content:             run.Content,
@@ -94,11 +104,13 @@ func (s *knowledgeService) analyzeIngestionContent(
 		GraphEnabled:        run.KB.IsGraphEnabled(),
 		WikiEnabled:         run.KB.IsWikiEnabled(),
 		ModelID:             run.KB.SummaryModelID,
-		PromptVersion:       promptVersion,
-		AllowWebAccess:      config.AllowWebAccess,
-		AllowReadOnlyMCP:    config.AllowReadOnlyMCP,
+		PromptVersion:       request.PromptVersion,
+		AllowWebAccess:      request.Config.AllowWebAccess,
+		AllowReadOnlyMCP:    request.Config.AllowReadOnlyMCP,
 		ChunkingConstraints: constraints,
-		ProgressFn:          progress,
+		ProgressFn:          request.AgentProgress,
+		AnalysisProgressFn:  request.AnalysisProgress,
+		Timeout:             appconfig.IngestionAdvisorTimeout(s.config),
 	}, interfaces.IngestionAdvisorRuntime{WebSearchKnowledge: s})
 	if err != nil {
 		return result, err

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	appconfig "github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -17,7 +18,7 @@ import (
 
 const (
 	ingestionAdvisorMaxRounds    = 6
-	ingestionAdvisorTimeout      = 8 * time.Minute
+	ingestionAdvisorTimeout      = appconfig.DefaultIngestionAdvisorTimeout
 	ingestionWebCleanupTimeout   = time.Minute
 	ingestionWebSearchMaxResults = 5
 )
@@ -42,6 +43,27 @@ func (a *modelIngestionAdvisor) Analyze(
 	if err := validateIngestionAdvisorRequest(a, request); err != nil {
 		return nil, err
 	}
+	timeout := request.Timeout
+	if timeout <= 0 {
+		timeout = ingestionAdvisorTimeout
+	}
+	analysisCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	result, err := a.analyze(analysisCtx, request, runtime)
+	if effectiveIngestionPromptVersion(request.PromptVersion) == types.IngestionPromptVersionV2 &&
+		analysisCtx.Err() == context.DeadlineExceeded {
+		return result, newIngestionAdvisorRunError(
+			ingestionAdvisorErrorDocumentAnalysis, "文档全文分析与入库决策超过总超时 %s", timeout,
+		)
+	}
+	return result, err
+}
+
+func (a *modelIngestionAdvisor) analyze(
+	ctx context.Context,
+	request types.IngestionAdvisorRequest,
+	runtime interfaces.IngestionAdvisorRuntime,
+) (*types.IngestionAdvisorResult, error) {
 	chatModel, err := a.modelService.GetChatModel(ctx, request.ModelID)
 	if err != nil {
 		return nil, wrapIngestionAdvisorRunError(
@@ -131,9 +153,7 @@ type executeIngestionAgentRequest struct {
 }
 
 func executeIngestionAgent(ctx context.Context, request executeIngestionAgentRequest) (*types.AgentState, error) {
-	callCtx, cancel := context.WithTimeout(ctx, ingestionAdvisorTimeout)
-	defer cancel()
-	callCtx = types.WithLLMCallMetadata(callCtx, "document_analysis", "")
+	callCtx := types.WithLLMCallMetadata(ctx, "document_analysis", "")
 	return request.Engine.ExecuteTask(callCtx, interfaces.AgentTaskRequest{
 		SessionID: ingestionAgentSessionID(request.Request),
 		MessageID: request.Request.KnowledgeID,

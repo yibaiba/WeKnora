@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -14,8 +15,10 @@ import (
 )
 
 type ingestionAdvisorV2Model struct {
-	agent  *ingestionAdvisorScriptedModel
-	mapErr error
+	agent               *ingestionAdvisorScriptedModel
+	mapErr              error
+	mapWaitForContext   bool
+	agentWaitForContext bool
 
 	mu         sync.Mutex
 	mapCalls   [][]chat.Message
@@ -23,7 +26,7 @@ type ingestionAdvisorV2Model struct {
 }
 
 func (m *ingestionAdvisorV2Model) Chat(
-	_ context.Context,
+	ctx context.Context,
 	messages []chat.Message,
 	options *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
@@ -31,6 +34,10 @@ func (m *ingestionAdvisorV2Model) Chat(
 	m.mapCalls = append(m.mapCalls, append([]chat.Message(nil), messages...))
 	m.mapOptions = append(m.mapOptions, *options)
 	m.mu.Unlock()
+	if m.mapWaitForContext {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if m.mapErr != nil {
 		return nil, m.mapErr
 	}
@@ -42,6 +49,10 @@ func (m *ingestionAdvisorV2Model) ChatStream(
 	messages []chat.Message,
 	options *chat.ChatOptions,
 ) (<-chan types.StreamResponse, error) {
+	if m.agentWaitForContext {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return m.agent.ChatStream(ctx, messages, options)
 }
 
@@ -105,6 +116,44 @@ func TestModelIngestionAdvisorV2AnalysisFailureDoesNotStartAgent(t *testing.T) {
 	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
 	require.NotContains(t, err.Error(), "private body")
 	require.Empty(t, agentModel.calls)
+}
+
+func TestModelIngestionAdvisorV2TotalTimeoutStopsDuringMap(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	request.PromptVersion = types.IngestionPromptVersionV2
+	request.Timeout = 20 * time.Millisecond
+	agentModel := &ingestionAdvisorScriptedModel{}
+	model := &ingestionAdvisorV2Model{agent: agentModel, mapWaitForContext: true}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+	started := time.Now()
+
+	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
+	require.Contains(t, err.Error(), "总超时")
+	require.Less(t, time.Since(started), time.Second)
+	require.Empty(t, agentModel.calls)
+}
+
+func TestModelIngestionAdvisorV2TotalTimeoutCoversAgent(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	request.PromptVersion = types.IngestionPromptVersionV2
+	request.Timeout = 20 * time.Millisecond
+	model := &ingestionAdvisorV2Model{
+		agent: &ingestionAdvisorScriptedModel{}, agentWaitForContext: true,
+	}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+	started := time.Now()
+
+	_, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
+	require.Contains(t, err.Error(), "总超时")
+	require.Less(t, time.Since(started), time.Second)
+	require.Len(t, model.mapCalls, 1)
 }
 
 func TestNewIngestionAgentSessionV2DoesNotRetainSampleBody(t *testing.T) {

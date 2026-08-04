@@ -5,18 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	appconfig "github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 )
 
 type ingestionAdvisorStub struct {
-	responses []*types.IngestionAnalysis
-	errors    []error
-	requests  []types.IngestionAdvisorRequest
-	runtimes  []interfaces.IngestionAdvisorRuntime
+	responses        []*types.IngestionAnalysis
+	errors           []error
+	requests         []types.IngestionAdvisorRequest
+	runtimes         []interfaces.IngestionAdvisorRuntime
+	analysisProgress []types.IngestionDocumentAnalysisProgress
 }
 
 func (s *ingestionAdvisorStub) Analyze(
@@ -27,16 +30,35 @@ func (s *ingestionAdvisorStub) Analyze(
 	call := len(s.requests)
 	s.requests = append(s.requests, request)
 	s.runtimes = append(s.runtimes, runtime)
+	if request.AnalysisProgressFn != nil {
+		for _, event := range s.analysisProgress {
+			request.AnalysisProgressFn(event)
+		}
+	}
 	if call < len(s.errors) && s.errors[call] != nil {
 		return nil, s.errors[call]
 	}
 	if call >= len(s.responses) {
 		return nil, errors.New("no stub response")
 	}
+	if request.AnalysisProgressFn != nil && len(s.analysisProgress) == 0 {
+		emitIngestionAnalysisProgressForTest(request.AnalysisProgressFn)
+	}
 	if request.ProgressFn != nil {
 		emitIngestionProgressForTest(request.ProgressFn)
 	}
 	return ingestionAdvisorResultForTest(s.responses[call]), nil
+}
+
+func emitIngestionAnalysisProgressForTest(progress func(types.IngestionDocumentAnalysisProgress)) {
+	progress(types.IngestionDocumentAnalysisProgress{
+		Phase: "map_document", UnitCount: 2, Completed: 2,
+		DurationMS: 7, CoveredCharacters: 22,
+	})
+	progress(types.IngestionDocumentAnalysisProgress{
+		Phase: "reduce_document", UnitCount: 1, Completed: 1, Level: 1,
+		DurationMS: 3, CoveredCharacters: 22,
+	})
 }
 
 func emitIngestionProgressForTest(progress func(types.IngestionAgentStep)) {
@@ -73,13 +95,15 @@ func (s *ingestionKnowledgeRepoStub) UpdateKnowledgeColumn(
 
 type ingestionSpanTrackerStub struct {
 	noopSpanTracker
-	spans     map[string]*Span
-	ended     []string
-	failed    []string
-	failCodes []string
-	skipped   []string
-	subspans  []string
-	subEnded  []string
+	spans      map[string]*Span
+	ended      []string
+	failed     []string
+	failCodes  []string
+	skipped    []string
+	subspans   []string
+	subEnded   []string
+	subInputs  []types.JSONMap
+	subOutputs []types.JSONMap
 }
 
 func newIngestionSpanTrackerStub() *ingestionSpanTrackerStub {
@@ -107,18 +131,20 @@ func (s *ingestionSpanTrackerStub) BeginSubSpan(
 	parent *Span,
 	name string,
 	kind string,
-	_ types.JSONMap,
+	input types.JSONMap,
 ) *Span {
 	s.subspans = append(s.subspans, name)
+	s.subInputs = append(s.subInputs, input)
 	return &Span{
 		KnowledgeID: parent.KnowledgeID, Attempt: parent.Attempt,
 		SpanID: name, ParentSpanID: parent.SpanID, Name: name, Kind: kind,
 	}
 }
 
-func (s *ingestionSpanTrackerStub) EndSpan(_ context.Context, span *Span, _ types.JSONMap) {
+func (s *ingestionSpanTrackerStub) EndSpan(_ context.Context, span *Span, output types.JSONMap) {
 	if span.Kind == types.SpanKindSubSpan {
 		s.subEnded = append(s.subEnded, span.Name)
+		s.subOutputs = append(s.subOutputs, output)
 		return
 	}
 	s.ended = append(s.ended, span.Name)
@@ -234,6 +260,7 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Same(t, service, advisor.runtimes[0].WebSearchKnowledge)
 	require.Equal(t, 1024, advisor.requests[0].ChunkingConstraints.TokenLimit)
 	require.Equal(t, []string{"de"}, advisor.requests[0].ChunkingConstraints.Languages)
+	require.Equal(t, appconfig.DefaultIngestionAdvisorTimeout, advisor.requests[0].Timeout)
 
 	persisted, err := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, err)
@@ -256,13 +283,46 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, 1, repo.updateColumnCalls)
 	require.Equal(t, 1, repo.updateCalls)
 	require.Equal(t, []string{types.StageDocumentAnalysis}, tracker.ended)
-	require.Len(t, tracker.subspans, 5)
-	require.Len(t, tracker.subEnded, 5)
+	require.Len(t, tracker.subspans, 7)
+	require.Len(t, tracker.subEnded, 7)
 	require.Contains(t, tracker.subspans[0], "analyze_document")
-	require.Contains(t, tracker.subspans[1], "readonly_tools")
-	require.Contains(t, tracker.subspans[2], "preview_candidates")
-	require.Contains(t, tracker.subspans[3], "submit_decision")
-	require.Contains(t, tracker.subspans[4], "evaluate_and_refine")
+	require.Contains(t, tracker.subspans[1], "map_document")
+	require.Contains(t, tracker.subspans[2], "reduce_document")
+	require.Contains(t, tracker.subspans[3], "readonly_tools")
+	require.Contains(t, tracker.subspans[4], "preview_candidates")
+	require.Contains(t, tracker.subspans[5], "submit_decision")
+	require.Contains(t, tracker.subspans[6], "evaluate_and_refine")
+	require.Equal(t, types.JSONMap{
+		"unit_count": 2, "completed": 2, "level": 0,
+		"duration_ms": int64(7), "covered_characters": 22,
+	}, tracker.subInputs[1])
+	require.Equal(t, types.JSONMap{
+		"unit_count": 1, "completed": 1, "level": 1,
+		"duration_ms": int64(3), "covered_characters": 22,
+	}, tracker.subInputs[2])
+	progressJSON, marshalProgressErr := json.Marshal([]types.JSONMap{
+		tracker.subInputs[1], tracker.subInputs[2], tracker.subOutputs[1], tracker.subOutputs[2],
+	})
+	require.NoError(t, marshalProgressErr)
+	require.NotContains(t, string(progressJSON), run.Content)
+	require.NotContains(t, string(progressJSON), "aggregated_evidence")
+}
+
+func TestApplyIngestionAdvisorUsesConfiguredTotalTimeout(t *testing.T) {
+	advisor := &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{validIngestionAnalysis()}}
+	service := &knowledgeService{
+		config: &appconfig.Config{KnowledgeBase: &appconfig.KnowledgeBaseConfig{
+			IngestionAdvisorTimeout: 12 * time.Minute,
+		}},
+		repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
+	}
+
+	_, err := service.applyIngestionAdvisor(
+		context.Background(), smartIngestionRun(newSmartIngestionKnowledge(t, "configured-timeout")),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, 12*time.Minute, advisor.requests[0].Timeout)
 }
 
 func TestApplyIngestionAdvisorPreservesExplicitZeroOverlap(t *testing.T) {
@@ -323,9 +383,19 @@ func TestApplyIngestionAdvisorPersistsTokenNormalizedAppliedValues(t *testing.T)
 func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 	repo := &ingestionKnowledgeRepoStub{}
 	tracker := newIngestionSpanTrackerStub()
-	advisorErr := errors.New("model timeout")
+	advisorErr := newIngestionAdvisorRunError(
+		ingestionAdvisorErrorDocumentAnalysis, "文档全文 Map 分析失败：调用超时或已取消",
+	)
 	service := &knowledgeService{
-		repo: repo, ingestionAdvisor: &ingestionAdvisorStub{errors: []error{advisorErr}}, spanTracker: tracker,
+		repo: repo,
+		ingestionAdvisor: &ingestionAdvisorStub{
+			errors: []error{advisorErr},
+			analysisProgress: []types.IngestionDocumentAnalysisProgress{{
+				Phase: "map_document", UnitCount: 2, Completed: 1,
+				DurationMS: 9, CoveredCharacters: 8000, Failed: true,
+			}},
+		},
+		spanTracker: tracker,
 	}
 	run := smartIngestionRun(newSmartIngestionKnowledge(t, "doc-1"))
 
@@ -333,8 +403,12 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 
 	require.ErrorIs(t, err, advisorErr)
 	require.Equal(t, types.ParseStatusFailed, run.Knowledge.ParseStatus)
-	require.Equal(t, []string{types.StageDocumentAnalysis}, tracker.failed)
-	require.Equal(t, []string{ingestionAdvisorErrorExecution}, tracker.failCodes)
+	require.Len(t, tracker.failed, 2)
+	require.Equal(t, []string{
+		ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorErrorDocumentAnalysis,
+	}, tracker.failCodes)
+	require.Contains(t, tracker.failed[0], "map_document")
+	require.Equal(t, types.StageDocumentAnalysis, tracker.failed[1])
 	require.NotContains(t, tracker.spans, types.StageChunking)
 	require.NotContains(t, tracker.spans, types.StageEmbedding)
 	analysis, parseErr := run.Knowledge.IngestionAnalysis()
