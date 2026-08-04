@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 const (
 	IngestionAdvisorModeSmart = "smart"
 	IngestionAdvisorModeOff   = "off"
@@ -51,6 +53,18 @@ type IngestionAdvisorRequest struct {
 	AllowReadOnlyMCP    bool
 	ChunkingConstraints IngestionChunkingConstraints
 	ProgressFn          func(IngestionAgentStep)
+	AnalysisProgressFn  func(IngestionDocumentAnalysisProgress)
+	Timeout             time.Duration
+}
+
+type IngestionDocumentAnalysisProgress struct {
+	Phase             string
+	UnitCount         int
+	Completed         int
+	Level             int
+	DurationMS        int64
+	CoveredCharacters int
+	Failed            bool
 }
 
 // IngestionChunkingConstraints are knowledge-base-owned splitter inputs. The

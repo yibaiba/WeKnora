@@ -13,6 +13,7 @@ const (
 	ingestionAdvisorErrorMaxRounds        = "INGESTION_AGENT_MAX_ROUNDS"
 	ingestionAdvisorErrorNotSubmitted     = "INGESTION_DECISION_NOT_SUBMITTED"
 	ingestionAdvisorErrorExecution        = "INGESTION_AGENT_EXECUTION_FAILED"
+	ingestionAdvisorErrorDocumentAnalysis = "INGESTION_DOCUMENT_ANALYSIS_FAILED"
 )
 
 type ingestionAdvisorRunError struct {
