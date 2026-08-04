@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(join(here, 'knowledge-processing-timeline.vue'), 'utf8')
 const analysisDetail = readFileSync(join(here, 'knowledge-ingestion-analysis-detail.vue'), 'utf8')
+const agentRunDetail = readFileSync(join(here, 'knowledge-ingestion-agent-run-detail.vue'), 'utf8')
 
 test('orders document analysis between parsing and chunking', () => {
   assert.match(
@@ -56,12 +57,40 @@ test('renders every persisted ingestion analysis field and compares chunking val
     'applied_chunking',
     'model_id',
     'prompt_version',
+    'candidates',
+    'selected_candidate_id',
+    'selection_reason_codes',
+    'agent_run',
   ]) {
-    assert.match(analysisDetail, new RegExp(`analysis\\.${field}`))
+    assert.match(`${analysisDetail}\n${agentRunDetail}`, new RegExp(`analysis\\.${field}`))
   }
   assert.match(analysisDetail, /comparisonRows\(analysis\)/)
   assert.match(analysisDetail, /scope="col"/)
   assert.match(analysisDetail, /scope="row"/)
+})
+
+test('renders only structured ingestion phases, candidate scores, and redacted tool summaries', () => {
+  for (const phase of [
+    'analyze_document',
+    'readonly_tools',
+    'preview_candidates',
+    'evaluate_and_refine',
+    'submit_decision',
+  ]) {
+    assert.match(agentRunDetail, new RegExp(phase))
+  }
+  for (const score of [
+    'structure_integrity',
+    'chunk_size_balance',
+    'boundary_quality',
+    'overlap_efficiency',
+    'parent_child',
+  ]) {
+    assert.match(agentRunDetail, new RegExp(score))
+  }
+  assert.match(agentRunDetail, /analysis\.agent_run\.steps/)
+  assert.match(agentRunDetail, /analysis\.candidates/)
+  assert.doesNotMatch(agentRunDetail, /thought|reasoning_content|raw_arguments|raw_output/i)
 })
 
 test('builds explicit smart and knowledge-base retry payloads without mutating stored overrides', () => {
@@ -72,17 +101,28 @@ test('builds explicit smart and knowledge-base retry payloads without mutating s
 
   assert.match(retryBuilder, /source \? \{ \.\.\.source \} : \{\}/)
   assert.match(retryBuilder, /if \(mode === 'off'\) delete overrides\.chunking_config/)
-  assert.match(retryBuilder, /overrides\.ingestion_advisor = \{ mode, prompt_version: 'v1' \}/)
+  assert.match(retryBuilder, /const previousAdvisor = source\?\.ingestion_advisor/)
+  assert.match(retryBuilder, /previousAdvisor\?\.allow_web_access/)
+  assert.match(retryBuilder, /previousAdvisor\?\.allow_read_only_mcp/)
+  assert.match(retryBuilder, /mode,\s*prompt_version: 'v1'/s)
   assert.match(source, /submitRetry\('smart', buildAdvisorRetryOverrides\('smart'\)\)/)
   assert.match(source, /submitRetry\('off', buildAdvisorRetryOverrides\('off'\)\)/)
 })
 
 test('shows both recovery actions only for document analysis failures', () => {
   assert.match(source, /error_code === 'DOCUMENT_ANALYSIS_FAILED'/)
+  assert.match(source, /errorCode\.startsWith\('INGESTION_'\)/)
   assert.match(source, /stage\.status === 'failed' && !!stage\.span_id/)
   assert.match(source, /v-if="documentAnalysisFailed"/)
   assert.match(source, /knowledgeStages\.smartRetry/)
   assert.match(source, /knowledgeStages\.kbRetry/)
+})
+
+test('localizes document analysis child spans from their redacted phase identifiers', () => {
+  const labels = source.slice(source.indexOf('function rowLabel'), source.indexOf('function rowKindLabel'))
+
+  assert.match(labels, /row\.node\.name\.startsWith\('document_analysis\.'\)/)
+  assert.match(labels, /knowledgeStages\.analysis\.phase\.\$\{phase\}/)
 })
 
 test('does not reuse stale analysis metadata for a skipped latest attempt', () => {

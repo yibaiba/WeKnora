@@ -73,6 +73,30 @@ test('only opts eligible file uploads and file reparses into the advisor', () =>
   assert.match(payload, /if \(advisorModeAvailable\.value\)/)
   assert.match(payload, /mode: state\.ingestionAdvisorMode/)
   assert.match(payload, /prompt_version: 'v1'/)
+  assert.match(payload, /state\.allowSmartWebAccess/)
+  assert.match(payload, /allow_web_access: true/)
+  assert.match(payload, /state\.allowSmartReadOnlyMcp/)
+  assert.match(payload, /allow_read_only_mcp: true/)
+})
+
+test('keeps external smart tools opt-in and explains source-content transfer', () => {
+  const defaults = dialog.slice(
+    dialog.indexOf('function createDefaultUIState'),
+    dialog.indexOf('function initFromKbInfo'),
+  )
+  const restoration = dialog.slice(
+    dialog.indexOf('function applyOverridesToState'),
+    dialog.indexOf('function initializeIngestionAdvisorMode'),
+  )
+
+  assert.match(defaults, /allowSmartWebAccess: false/)
+  assert.match(defaults, /allowSmartReadOnlyMcp: false/)
+  assert.match(restoration, /allow_web_access === true/)
+  assert.match(restoration, /allow_read_only_mcp === true/)
+  assert.match(dialog, /uploadConfirm\.smartWebAccessDescription/)
+  assert.match(dialog, /uploadConfirm\.smartMcpAccessDescription/)
+  assert.match(dialog, /aria-labelledby="smart-web-access-label"/)
+  assert.match(dialog, /aria-labelledby="smart-mcp-access-label"/)
 })
 
 test('carries explicit provenance for reparses and isolates URL payloads in mixed batches', () => {

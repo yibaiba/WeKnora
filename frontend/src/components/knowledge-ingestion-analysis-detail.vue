@@ -4,6 +4,7 @@ import type {
   IngestionAnalysis,
   IngestionChunkingRecommendation,
 } from '@/types/knowledgeProcess'
+import KnowledgeIngestionAgentRunDetail from './knowledge-ingestion-agent-run-detail.vue'
 
 defineProps<{
   analysis: IngestionAnalysis
@@ -113,6 +114,7 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
         </tbody>
       </table>
     </div>
+    <KnowledgeIngestionAgentRunDetail :analysis="analysis" />
   </section>
 </template>
 

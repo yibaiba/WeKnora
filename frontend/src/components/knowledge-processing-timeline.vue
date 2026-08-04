@@ -10,11 +10,11 @@ import {
   type KnowledgeTraceNode,
 } from '@/utils/knowledgeTrace'
 import { resolveTimelineHeaderStatus } from '@/utils/knowledgeProcessingStatus'
+import { asIngestionAnalysis } from '@/utils/ingestionAnalysis'
 import KnowledgeIngestionAnalysisDetail from './knowledge-ingestion-analysis-detail.vue'
 import type {
   IngestionAnalysis,
   IngestionAdvisorMode,
-  IngestionChunkingRecommendation,
   KnowledgeProcessOverrides,
 } from '@/types/knowledgeProcess'
 
@@ -486,14 +486,21 @@ const documentAnalysisFailed = computed(() => {
   const stageFailed = stages.value.some(stage =>
     stage.name === 'document_analysis' && stage.status === 'failed' && !!stage.span_id,
   )
-  return stageFailed || data.value.last_error?.error_code === 'DOCUMENT_ANALYSIS_FAILED'
+  const errorCode = data.value.last_error?.error_code || ''
+  return stageFailed || errorCode === 'DOCUMENT_ANALYSIS_FAILED' || errorCode.startsWith('INGESTION_')
 })
 
 function buildAdvisorRetryOverrides(mode: IngestionAdvisorMode): KnowledgeProcessOverrides {
   const source = processOverrides.value
   const overrides: KnowledgeProcessOverrides = source ? { ...source } : {}
   if (mode === 'off') delete overrides.chunking_config
-  overrides.ingestion_advisor = { mode, prompt_version: 'v1' }
+  const previousAdvisor = source?.ingestion_advisor
+  overrides.ingestion_advisor = {
+    mode,
+    prompt_version: 'v1',
+    ...(mode === 'smart' && previousAdvisor?.allow_web_access ? { allow_web_access: true } : {}),
+    ...(mode === 'smart' && previousAdvisor?.allow_read_only_mcp ? { allow_read_only_mcp: true } : {}),
+  }
   return overrides
 }
 
@@ -1020,6 +1027,14 @@ function localizedStatus(status: string): string {
 function rowLabel(row: FlatRow): string {
   if (row.isRoot) return t('knowledgeStages.root')
   if (row.isStage) return t(`knowledgeStages.stage.${row.node.name}`)
+  if (row.node.name.startsWith('document_analysis.')) {
+    const phase = (row.node.input as Record<string, unknown> | undefined)?.phase
+    if (typeof phase === 'string') {
+      const key = `knowledgeStages.analysis.phase.${phase}`
+      const localized = t(key)
+      if (localized !== key) return localized
+    }
+  }
   if (row.node.name === 'postprocess.graph') return t('knowledgeStages.processConfig.graph')
   const graphChunk = /^postprocess\.graph\.chunk\[(\d+)\]$/.exec(row.node.name)
   if (graphChunk) return `${t('knowledgeStages.processConfig.graph')} #${Number(graphChunk[1]) + 1}`
@@ -1339,36 +1354,6 @@ const traceMetadata = computed(() => {
   const m = data.value?.trace?.metadata
   return hasContent(m) ? m : null
 })
-
-function isChunkingRecommendation(value: unknown): value is IngestionChunkingRecommendation {
-  if (!value || typeof value !== 'object') return false
-  const chunking = value as Record<string, unknown>
-  return typeof chunking.strategy === 'string' &&
-    typeof chunking.chunk_size === 'number' &&
-    typeof chunking.chunk_overlap === 'number' &&
-    typeof chunking.enable_parent_child === 'boolean' &&
-    typeof chunking.parent_chunk_size === 'number' &&
-    typeof chunking.child_chunk_size === 'number' &&
-    Array.isArray(chunking.separators) &&
-    chunking.separators.every(separator => typeof separator === 'string')
-}
-
-function asIngestionAnalysis(value: unknown): IngestionAnalysis | null {
-  if (!value || typeof value !== 'object') return null
-  const analysis = value as Record<string, unknown>
-  if (typeof analysis.document_kind !== 'string' ||
-    typeof analysis.confidence !== 'number' ||
-    !Number.isFinite(analysis.confidence) ||
-    typeof analysis.recommended_content_mode !== 'string' ||
-    !Array.isArray(analysis.reason_codes) ||
-    !analysis.reason_codes.every(reason => typeof reason === 'string') ||
-    typeof analysis.summary !== 'string' ||
-    typeof analysis.model_id !== 'string' ||
-    typeof analysis.prompt_version !== 'string') return null
-  if (!isChunkingRecommendation(analysis.recommended_chunking) ||
-    !isChunkingRecommendation(analysis.applied_chunking)) return null
-  return analysis as unknown as IngestionAnalysis
-}
 
 const selectedIngestionAnalysis = computed<IngestionAnalysis | null>(() => {
   const row = selectedRow.value

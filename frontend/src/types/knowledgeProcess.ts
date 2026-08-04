@@ -64,6 +64,8 @@ export type IngestionAdvisorMode = 'smart' | 'off'
 export interface IngestionAdvisorConfig {
   mode: IngestionAdvisorMode
   prompt_version?: 'v1'
+  allow_web_access?: boolean
+  allow_read_only_mcp?: boolean
 }
 
 export interface IngestionChunkingRecommendation {
@@ -76,6 +78,61 @@ export interface IngestionChunkingRecommendation {
   separators: string[]
 }
 
+export interface IngestionCandidateScore {
+  structure_integrity: number
+  chunk_size_balance: number
+  boundary_quality: number
+  overlap_efficiency: number
+  parent_child: number
+  total: number
+}
+
+export interface IngestionChunkingCandidate {
+  id: string
+  config: IngestionChunkingRecommendation
+  chunk_count: number
+  parent_chunk_count: number
+  lengths: {
+    minimum: number
+    maximum: number
+    average: number
+    p50: number
+    p95: number
+  }
+  structure: {
+    present_types: string[]
+    heading_retention: number
+    faq_retention: number
+    table_retention: number
+  }
+  diagnostics: {
+    selected_tier: string
+    tier_chain: string[]
+    rejected: Array<{ tier: string; reason: string }>
+  }
+  score: IngestionCandidateScore
+  hard_valid: boolean
+  violations: string[]
+}
+
+export interface IngestionAgentStep {
+  round: number
+  tool_name: string
+  status: string
+  duration_ms?: number
+  candidate_id?: string
+  score?: number
+}
+
+export interface IngestionAgentRun {
+  max_rounds: number
+  actual_rounds: number
+  available_tools: string[]
+  warnings: Array<{ code: string; tool?: string; message: string }>
+  steps: IngestionAgentStep[]
+  stop_reason: string
+}
+
 export interface IngestionAnalysis {
   document_kind: string
   confidence: number
@@ -86,6 +143,10 @@ export interface IngestionAnalysis {
   applied_chunking: IngestionChunkingRecommendation
   model_id: string
   prompt_version: string
+  candidates: IngestionChunkingCandidate[]
+  selected_candidate_id: string
+  selection_reason_codes: string[]
+  agent_run: IngestionAgentRun
 }
 
 export interface KnowledgeProcessOverrides {

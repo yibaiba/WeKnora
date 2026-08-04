@@ -208,6 +208,30 @@
                             <p v-else-if="localUrls.length > 0">{{ t('uploadConfirm.smartUrlsUseKb') }}</p>
                           </div>
                         </div>
+                        <div v-if="isSmartAnalysis" class="smart-external-options">
+                          <div class="smart-external-option">
+                            <div>
+                              <label id="smart-web-access-label">{{ t('uploadConfirm.smartWebAccess') }}</label>
+                              <p>{{ t('uploadConfirm.smartWebAccessDescription') }}</p>
+                            </div>
+                            <t-switch
+                              v-model="uiState.allowSmartWebAccess"
+                              size="medium"
+                              aria-labelledby="smart-web-access-label"
+                            />
+                          </div>
+                          <div class="smart-external-option">
+                            <div>
+                              <label id="smart-mcp-access-label">{{ t('uploadConfirm.smartMcpAccess') }}</label>
+                              <p>{{ t('uploadConfirm.smartMcpAccessDescription') }}</p>
+                            </div>
+                            <t-switch
+                              v-model="uiState.allowSmartReadOnlyMcp"
+                              size="medium"
+                              aria-labelledby="smart-mcp-access-label"
+                            />
+                          </div>
+                        </div>
                       </div>
                       <div class="settings-group">
                         <div class="setting-row" :class="{ 'setting-row--advisor-owned': isSmartAnalysis }">
@@ -629,6 +653,8 @@ interface ChunkingUIConfig {
 
 interface UploadUIState {
   ingestionAdvisorMode: IngestionAdvisorMode
+  allowSmartWebAccess: boolean
+  allowSmartReadOnlyMcp: boolean
   chunkingConfig: ChunkingUIConfig
   multimodalConfig: { enabled: boolean; vllmModelId: string; descriptionLanguage?: string; customInstructions?: string }
   asrConfig: { enabled: boolean; modelId: string; language: string }
@@ -1043,6 +1069,8 @@ function goToSection(key: ConfigSectionKey) {
 function createDefaultUIState(): UploadUIState {
   return {
     ingestionAdvisorMode: 'off',
+    allowSmartWebAccess: false,
+    allowSmartReadOnlyMcp: false,
     chunkingConfig: {
       chunkSize: 512,
       chunkOverlap: 80,
@@ -1080,6 +1108,8 @@ function initFromKbInfo(kb: any) {
 
   uiState.value = {
     ingestionAdvisorMode: 'off',
+    allowSmartWebAccess: false,
+    allowSmartReadOnlyMcp: false,
     chunkingConfig: {
       chunkSize: kb.chunking_config?.chunk_size || 512,
       chunkOverlap: kb.chunking_config?.chunk_overlap || 80,
@@ -1175,6 +1205,12 @@ function buildProcessOverrides(): KnowledgeProcessOverrides {
     overrides.ingestion_advisor = {
       mode: state.ingestionAdvisorMode,
       prompt_version: 'v1',
+      ...(state.ingestionAdvisorMode === 'smart' && state.allowSmartWebAccess
+        ? { allow_web_access: true }
+        : {}),
+      ...(state.ingestionAdvisorMode === 'smart' && state.allowSmartReadOnlyMcp
+        ? { allow_read_only_mcp: true }
+        : {}),
     }
   }
 
@@ -1190,6 +1226,8 @@ function buildProcessOverrides(): KnowledgeProcessOverrides {
 function applyOverridesToState(o?: KnowledgeProcessOverrides | null) {
   if (!o) return
   const s = uiState.value
+  s.allowSmartWebAccess = o.ingestion_advisor?.allow_web_access === true
+  s.allowSmartReadOnlyMcp = o.ingestion_advisor?.allow_read_only_mcp === true
   const cc = o.chunking_config
   if (cc) {
     if (cc.chunk_size != null) s.chunkingConfig.chunkSize = cc.chunk_size
@@ -1994,6 +2032,42 @@ const handleConfirm = () => {
   }
 }
 
+.smart-external-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.smart-external-option {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  background: var(--td-bg-color-container);
+
+  label {
+    color: var(--td-text-color-primary);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  p {
+    margin: 3px 0 0;
+    color: var(--td-text-color-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  :deep(.t-switch) {
+    flex-shrink: 0;
+  }
+}
+
 .setting-row--advisor-owned {
   .setting-info .desc {
     opacity: 0.72;
@@ -2230,6 +2304,10 @@ const handleConfirm = () => {
   .processing-mode-header {
     flex-direction: column;
     gap: 12px;
+  }
+
+  .smart-external-options {
+    grid-template-columns: 1fr;
   }
 }
 
