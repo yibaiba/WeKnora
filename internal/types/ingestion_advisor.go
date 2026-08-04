@@ -48,6 +48,54 @@ type IngestionChunkingRecommendation struct {
 	Separators        []string `json:"separators"`
 }
 
+type IngestionLengthDistribution struct {
+	Minimum int     `json:"minimum"`
+	Maximum int     `json:"maximum"`
+	Average float64 `json:"average"`
+	P50     int     `json:"p50"`
+	P95     int     `json:"p95"`
+}
+
+type IngestionStructureMetrics struct {
+	PresentTypes     []string `json:"present_types"`
+	HeadingRetention float64  `json:"heading_retention"`
+	FAQRetention     float64  `json:"faq_retention"`
+	TableRetention   float64  `json:"table_retention"`
+}
+
+type IngestionCandidateScore struct {
+	StructureIntegrity float64 `json:"structure_integrity"`
+	ChunkSizeBalance   float64 `json:"chunk_size_balance"`
+	BoundaryQuality    float64 `json:"boundary_quality"`
+	OverlapEfficiency  float64 `json:"overlap_efficiency"`
+	ParentChild        float64 `json:"parent_child"`
+	Total              float64 `json:"total"`
+}
+
+type IngestionTierRejection struct {
+	Tier   string `json:"tier"`
+	Reason string `json:"reason"`
+}
+
+type IngestionChunkerDiagnostics struct {
+	SelectedTier string                   `json:"selected_tier"`
+	TierChain    []string                 `json:"tier_chain"`
+	Rejected     []IngestionTierRejection `json:"rejected"`
+}
+
+type IngestionChunkingCandidate struct {
+	ID               string                          `json:"id"`
+	Config           IngestionChunkingRecommendation `json:"config"`
+	ChunkCount       int                             `json:"chunk_count"`
+	ParentChunkCount int                             `json:"parent_chunk_count"`
+	Lengths          IngestionLengthDistribution     `json:"lengths"`
+	Structure        IngestionStructureMetrics       `json:"structure"`
+	Diagnostics      IngestionChunkerDiagnostics     `json:"diagnostics"`
+	Score            IngestionCandidateScore         `json:"score"`
+	HardValid        bool                            `json:"hard_valid"`
+	Violations       []string                        `json:"violations"`
+}
+
 // IngestionAnalysis is persisted in knowledge.metadata.ingestion_analysis.
 type IngestionAnalysis struct {
 	DocumentKind           string                          `json:"document_kind"`
