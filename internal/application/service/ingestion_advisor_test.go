@@ -337,6 +337,43 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 	})
 }
 
+func TestModelIngestionAdvisorReservesFinalRoundForSubmission(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	firstConfig := ingestionTestConfig(300)
+	secondConfig := ingestionTestConfig(400)
+	normalized, err := normalizeIngestionPreviewConfig(firstConfig, request.ChunkingConstraints)
+	require.NoError(t, err)
+	candidateID, err := ingestionCandidateID(normalized)
+	require.NoError(t, err)
+	firstArgs, err := jsonMarshalForTest(firstConfig)
+	require.NoError(t, err)
+	secondArgs, err := jsonMarshalForTest(secondConfig)
+	require.NoError(t, err)
+	submitArgs := fmt.Sprintf(
+		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.9,`+
+			`"recommended_content_mode":"document","reason_codes":["final_round_selection"],`+
+			`"summary":"最后一轮从已预览候选中提交决策"}`,
+		candidateID,
+	)
+	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
+		toolResponse("inspect-1", inspectIngestionDocumentTool, `{"offset":0,"limit":8000}`),
+		toolResponse("preview-1", previewIngestionChunkingTool, firstArgs),
+		toolResponse("preview-2", previewIngestionChunkingTool, secondArgs),
+		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
+	}}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
+
+	require.NoError(t, err)
+	require.Equal(t, candidateID, result.SelectedCandidateID)
+	require.Len(t, model.options, ingestionAdvisorMaxRounds)
+	finalOptions := model.options[ingestionAdvisorMaxRounds-1]
+	require.Equal(t, submitIngestionDecisionTool, finalOptions.ToolChoice)
+	require.Len(t, finalOptions.Tools, 1)
+	require.Equal(t, submitIngestionDecisionTool, finalOptions.Tools[0].Function.Name)
+}
+
 func TestModelIngestionAdvisorCompressesWebResultsAndCleansTemporaryKnowledge(t *testing.T) {
 	request := validIngestionAdvisorRequest()
 	request.VectorEnabled = false

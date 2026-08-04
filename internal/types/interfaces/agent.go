@@ -34,6 +34,7 @@ type AgentTaskOptions struct {
 	SystemPrompt      string
 	MaxIterations     int
 	TerminationTool   string
+	FinalRoundTool    string
 	SkipFinalAnswer   bool
 	StructuredEventFn func(AgentTaskEvent)
 }

@@ -516,6 +516,10 @@ func (e *AgentEngine) runReActIteration(
 	roundStart := time.Now()
 	round := state.CurrentRound + 1
 	maxIterations := maxIterationsForRun(parentCtx, e.config.MaxIterations)
+	roundTools, err := taskToolsForRound(parentCtx, tools, round, maxIterations)
+	if err != nil {
+		return iterOutcomeNext, err
+	}
 	emitTaskEvent(parentCtx, interfaces.AgentTaskEvent{
 		Kind: taskEventRoundStarted, Round: round, Status: "running",
 	})
@@ -580,18 +584,18 @@ func (e *AgentEngine) runReActIteration(
 	}
 
 	logger.Infof(ctx, "[Agent][Round-%d/%d] Starting: %d messages, %d tools, est_tokens=%d",
-		round, maxIterations, len(*messagesPtr), len(tools), currentTokens)
+		round, maxIterations, len(*messagesPtr), len(roundTools), currentTokens)
 	common.PipelineInfo(ctx, "Agent", "round_start", map[string]interface{}{
 		"iteration":      state.CurrentRound,
 		"round":          round,
 		"message_count":  len(*messagesPtr),
-		"pending_tools":  len(tools),
+		"pending_tools":  len(roundTools),
 		"max_iterations": e.config.MaxIterations,
 	})
 
 	// 1. Think: Call LLM with function calling (includes retry + graceful degradation)
 	e.lastSentMsgCount = len(*messagesPtr)
-	resp, err := e.callLLMWithRetry(ctx, *messagesPtr, tools, state, query, state.CurrentRound, sessionID)
+	resp, err := e.callLLMWithRetry(ctx, *messagesPtr, roundTools, state, query, state.CurrentRound, sessionID)
 	if err != nil {
 		retErr = err
 		return iterOutcomeNext, err

@@ -169,9 +169,16 @@ func (e *AgentEngine) streamThinkingToEventBus(
 		iteration+1, e.config.Temperature, len(tools), e.config.Thinking)
 
 	parallelToolCalls := true
+	toolChoice := finalRoundTool(
+		ctx, iteration+1, maxIterationsForRun(ctx, e.config.MaxIterations),
+	)
+	if toolChoice != "" {
+		parallelToolCalls = false
+	}
 	opts := &chat.ChatOptions{
 		Temperature:       e.config.Temperature,
 		Tools:             tools,
+		ToolChoice:        toolChoice,
 		Thinking:          e.config.Thinking,
 		ParallelToolCalls: &parallelToolCalls,
 	}

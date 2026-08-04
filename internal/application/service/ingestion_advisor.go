@@ -134,6 +134,7 @@ func executeIngestionAgent(
 			SystemPrompt:      ingestionAgentSystemPrompt,
 			MaxIterations:     ingestionAdvisorMaxRounds,
 			TerminationTool:   submitIngestionDecisionTool,
+			FinalRoundTool:    submitIngestionDecisionTool,
 			SkipFinalAnswer:   true,
 			StructuredEventFn: ingestionProgressReceiver(request.ProgressFn),
 		},
