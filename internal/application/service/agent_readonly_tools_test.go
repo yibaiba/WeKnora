@@ -1,13 +1,27 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 )
+
+type inertWebSearchService struct {
+	interfaces.WebSearchService
+}
+
+type inertWebSearchStateService struct {
+	interfaces.WebSearchStateService
+}
+
+type inertKnowledgeService struct {
+	interfaces.KnowledgeService
+}
 
 func TestIngestionReadOnlyToolPolicyAllowsReadsAndRejectsSideEffects(t *testing.T) {
 	allowed := []string{
@@ -77,6 +91,32 @@ func TestIngestionAgentConfigPinsTenantAndKnowledgeBaseScope(t *testing.T) {
 	require.Equal(t, "kb-scoped", config.SearchTargets[0].KnowledgeBaseID)
 	require.True(t, config.WebSearchEnabled)
 	require.True(t, config.ParallelToolCalls)
+}
+
+func TestWebSearchToolFactorySeparatesReadOnlyAndCompressionDependencies(t *testing.T) {
+	factory := NewReadOnlyAgentToolFactory(readOnlyAgentToolFactoryParams{
+		WebSearchService: &inertWebSearchService{},
+	})
+	config := &types.AgentConfig{WebSearchMaxResults: 3}
+
+	readOnlyTool, err := factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
+		Config: config, ReadOnlyWeb: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, readOnlyTool)
+
+	_, err = factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
+		Config: config, WebSearchState: &inertWebSearchStateService{},
+	})
+	require.EqualError(t, err, "Web 搜索 RAG 压缩服务未配置")
+
+	regularTool, err := factory.Build(context.Background(), agenttools.ToolWebSearch, readOnlyAgentToolOptions{
+		Config:           config,
+		KnowledgeService: &inertKnowledgeService{},
+		WebSearchState:   &inertWebSearchStateService{},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, regularTool)
 }
 
 func TestIngestionMCPWarningsRetainPartialServiceDiagnostics(t *testing.T) {

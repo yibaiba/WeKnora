@@ -594,15 +594,16 @@ func (s *agentService) registerTools(
 	for _, toolName := range allowedTools {
 		if isSharedReadOnlyAgentTool(toolName) {
 			tool, err := s.readOnlyTools.Build(ctx, toolName, readOnlyAgentToolOptions{
-				Config:          config,
-				KnowledgeReader: s.knowledgeService,
-				RerankModel:     rerankModel,
-				ChatModel:       chatModel,
-				SessionID:       sessionID,
-				WebSearchState:  s.webSearchStateService,
-				WikiScopes:      wikiScopes,
-				WikiKBIDs:       wikiKBIDs,
-				WikiRoutes:      wikiRoutes,
+				Config:           config,
+				KnowledgeReader:  s.knowledgeService,
+				KnowledgeService: s.knowledgeService,
+				RerankModel:      rerankModel,
+				ChatModel:        chatModel,
+				SessionID:        sessionID,
+				WebSearchState:   s.webSearchStateService,
+				WikiScopes:       wikiScopes,
+				WikiKBIDs:        wikiKBIDs,
+				WikiRoutes:       wikiRoutes,
 			})
 			if err != nil {
 				return fmt.Errorf("构造只读工具 %s 失败: %w", toolName, err)

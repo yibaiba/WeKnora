@@ -65,16 +65,17 @@ type readOnlyAgentToolFactory struct {
 }
 
 type readOnlyAgentToolOptions struct {
-	Config          *types.AgentConfig
-	KnowledgeReader interfaces.KnowledgeReadService
-	RerankModel     rerank.Reranker
-	ChatModel       chat.Chat
-	SessionID       string
-	WebSearchState  interfaces.WebSearchStateService
-	ReadOnlyWeb     bool
-	WikiScopes      []agenttools.WikiScope
-	WikiKBIDs       []string
-	WikiRoutes      *agenttools.WikiRouteResolver
+	Config           *types.AgentConfig
+	KnowledgeReader  interfaces.KnowledgeReadService
+	KnowledgeService interfaces.KnowledgeService
+	RerankModel      rerank.Reranker
+	ChatModel        chat.Chat
+	SessionID        string
+	WebSearchState   interfaces.WebSearchStateService
+	ReadOnlyWeb      bool
+	WikiScopes       []agenttools.WikiScope
+	WikiKBIDs        []string
+	WikiRoutes       *agenttools.WikiRouteResolver
 }
 
 func NewReadOnlyAgentToolFactory(params readOnlyAgentToolFactoryParams) *readOnlyAgentToolFactory {
@@ -160,7 +161,7 @@ func (f *readOnlyAgentToolFactory) Build(
 		return agenttools.NewDataSchemaTool(reader, f.params.ChunkService.GetRepository(), f.params.SourceACLGuard).
 			WithSearchTargets(targets), nil
 	case agenttools.ToolWebSearch:
-		if f.params.WebSearchService == nil || (!options.ReadOnlyWeb && options.WebSearchState == nil) {
+		if f.params.WebSearchService == nil {
 			return nil, fmt.Errorf("Web 搜索服务未配置")
 		}
 		if options.ReadOnlyWeb {
@@ -169,8 +170,11 @@ func (f *readOnlyAgentToolFactory) Build(
 				options.SessionID, options.Config.WebSearchMaxResults, options.Config.WebSearchProviderID,
 			), nil
 		}
+		if options.KnowledgeService == nil || options.WebSearchState == nil {
+			return nil, fmt.Errorf("Web 搜索 RAG 压缩服务未配置")
+		}
 		return agenttools.NewWebSearchTool(
-			f.params.WebSearchService, f.params.KnowledgeBaseService, reader,
+			f.params.WebSearchService, f.params.KnowledgeBaseService, options.KnowledgeService,
 			options.WebSearchState, options.SessionID,
 			options.Config.WebSearchMaxResults, options.Config.WebSearchProviderID,
 		), nil

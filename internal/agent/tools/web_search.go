@@ -79,7 +79,7 @@ type WebSearchTool struct {
 	BaseTool
 	webSearchService      interfaces.WebSearchService
 	knowledgeBaseService  interfaces.KnowledgeBaseService
-	knowledgeService      interfaces.KnowledgeReadService
+	knowledgeService      interfaces.KnowledgeService
 	webSearchStateService interfaces.WebSearchStateService
 	sessionID             string
 	maxResults            int
@@ -93,15 +93,18 @@ type WebSearchTool struct {
 func NewReadOnlyWebSearchTool(
 	webSearchService interfaces.WebSearchService,
 	knowledgeBaseService interfaces.KnowledgeBaseService,
-	knowledgeService interfaces.KnowledgeReadService,
+	_ interfaces.KnowledgeReadService,
 	sessionID string,
 	maxResults int,
 	providerID string,
 ) *WebSearchTool {
-	tool := NewWebSearchTool(
-		webSearchService, knowledgeBaseService, knowledgeService, nil,
-		sessionID, maxResults, providerID,
-	)
+	tool := newWebSearchTool(webSearchToolOptions{
+		webSearchService:     webSearchService,
+		knowledgeBaseService: knowledgeBaseService,
+		sessionID:            sessionID,
+		maxResults:           maxResults,
+		providerID:           providerID,
+	})
 	tool.readOnlyMode = true
 	return tool
 }
@@ -110,17 +113,13 @@ func NewReadOnlyWebSearchTool(
 func NewWebSearchTool(
 	webSearchService interfaces.WebSearchService,
 	knowledgeBaseService interfaces.KnowledgeBaseService,
-	knowledgeService interfaces.KnowledgeReadService,
+	knowledgeService interfaces.KnowledgeService,
 	webSearchStateService interfaces.WebSearchStateService,
 	sessionID string,
 	maxResults int,
 	providerID string,
 ) *WebSearchTool {
-	tool := webSearchTool
-	tool.description = fmt.Sprintf(tool.description, maxResults, maxResults)
-
-	return &WebSearchTool{
-		BaseTool:              tool,
+	return newWebSearchTool(webSearchToolOptions{
 		webSearchService:      webSearchService,
 		knowledgeBaseService:  knowledgeBaseService,
 		knowledgeService:      knowledgeService,
@@ -128,6 +127,32 @@ func NewWebSearchTool(
 		sessionID:             sessionID,
 		maxResults:            maxResults,
 		providerID:            providerID,
+	})
+}
+
+type webSearchToolOptions struct {
+	webSearchService      interfaces.WebSearchService
+	knowledgeBaseService  interfaces.KnowledgeBaseService
+	knowledgeService      interfaces.KnowledgeService
+	webSearchStateService interfaces.WebSearchStateService
+	sessionID             string
+	maxResults            int
+	providerID            string
+}
+
+func newWebSearchTool(options webSearchToolOptions) *WebSearchTool {
+	tool := webSearchTool
+	tool.description = fmt.Sprintf(tool.description, options.maxResults, options.maxResults)
+
+	return &WebSearchTool{
+		BaseTool:              tool,
+		webSearchService:      options.webSearchService,
+		knowledgeBaseService:  options.knowledgeBaseService,
+		knowledgeService:      options.knowledgeService,
+		webSearchStateService: options.webSearchStateService,
+		sessionID:             options.sessionID,
+		maxResults:            options.maxResults,
+		providerID:            options.providerID,
 	}
 }
 
