@@ -18,6 +18,35 @@ type AgentStreamEvent struct {
 	Iteration int                    `json:"iteration"` // Current iteration number
 }
 
+// AgentTaskEvent is a redacted lifecycle event for non-chat Agent runs. It
+// intentionally excludes model reasoning, tool arguments, and tool output.
+type AgentTaskEvent struct {
+	Kind       string
+	Round      int
+	ToolName   string
+	Status     string
+	DurationMS int64
+}
+
+// AgentTaskOptions configures a bounded, non-chat Agent run. Zero values keep
+// the normal Agent defaults unless explicitly documented otherwise.
+type AgentTaskOptions struct {
+	SystemPrompt      string
+	MaxIterations     int
+	TerminationTool   string
+	SkipFinalAnswer   bool
+	StructuredEventFn func(AgentTaskEvent)
+}
+
+// AgentTaskRequest groups task-only execution input without changing Execute.
+type AgentTaskRequest struct {
+	SessionID  string
+	MessageID  string
+	Query      string
+	LLMContext []chat.Message
+	Options    AgentTaskOptions
+}
+
 // AgentEngine defines the interface for agent execution engine
 type AgentEngine interface {
 	// Execute executes the agent with conversation history and returns a stream of events
@@ -28,6 +57,9 @@ type AgentEngine interface {
 		llmContext []chat.Message,
 		imageURLs ...[]string,
 	) (*types.AgentState, error)
+
+	// ExecuteTask runs the same ReAct loop with explicit task-only controls.
+	ExecuteTask(ctx context.Context, request AgentTaskRequest) (*types.AgentState, error)
 }
 
 // AgentService defines the interface for agent-related operations

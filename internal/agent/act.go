@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -229,6 +230,9 @@ func (e *AgentEngine) executeToolCalls(
 
 	for i, tc := range response.ToolCalls {
 		e.executeSingleToolCall(ctx, tc, i, step, iteration, round, sessionID, assistantMessageID)
+		if _, terminated := terminationToolHit(ctx); terminated {
+			return
+		}
 	}
 }
 
@@ -351,11 +355,34 @@ func (e *AgentEngine) executeSingleToolCall(
 func (e *AgentEngine) runToolCall(
 	ctx context.Context, tc types.LLMToolCall, i int,
 	iteration, round int, sessionID, assistantMessageID string,
-) types.ToolCall {
+) (completed types.ToolCall) {
 	tc.ID = agenttools.NormalizeToolCallID(tc.ID, tc.Function.Name, i)
 	total := "?" // unknown in isolation; callers log the batch size
 	toolTag := fmt.Sprintf("[Agent][Round-%d][Tool %s (%d/%s)]",
 		round, tc.Function.Name, i+1, total)
+	taskStart := time.Now()
+	emitTaskEvent(ctx, interfaces.AgentTaskEvent{
+		Kind: taskEventToolStarted, Round: round, ToolName: tc.Function.Name, Status: "running",
+	})
+	defer func() {
+		success := completed.Result != nil && completed.Result.Success
+		markTerminationTool(ctx, tc.Function.Name, success)
+		status := "failed"
+		if success {
+			status = "succeeded"
+		}
+		duration := completed.Duration
+		if duration == 0 {
+			duration = time.Since(taskStart).Milliseconds()
+		}
+		emitTaskEvent(ctx, interfaces.AgentTaskEvent{
+			Kind:       taskEventToolFinished,
+			Round:      round,
+			ToolName:   tc.Function.Name,
+			Status:     status,
+			DurationMS: duration,
+		})
+	}()
 
 	var args map[string]any
 	argsStr := tc.Function.Arguments
@@ -510,9 +537,9 @@ func (e *AgentEngine) runToolCall(
 	}
 
 	finishToolSpan(toolSpan, toolCall, err, duration)
+	toolSuccess := toolCall.Result != nil && toolCall.Result.Success
 
 	// Pipeline event for monitoring
-	toolSuccess := toolCall.Result != nil && toolCall.Result.Success
 	pipelineFields := map[string]interface{}{
 		"iteration":    iteration,
 		"round":        round,

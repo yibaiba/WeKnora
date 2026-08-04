@@ -445,7 +445,7 @@ func (e *AgentEngine) callLLMWithRetry(
 
 		// Graceful degradation: if we have tool results from previous rounds,
 		// try to synthesize a final answer from them instead of losing everything.
-		if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 {
+		if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 && !shouldSkipFinalAnswer(ctx) {
 			logger.Warnf(ctx, "[Agent] LLM failed but have %d steps with %d tool calls — "+
 				"attempting final answer synthesis from existing results",
 				len(state.RoundSteps), totalTC)

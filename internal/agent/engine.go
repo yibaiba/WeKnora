@@ -19,6 +19,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 // langfuseQueryPreview caps the query length we ship as the agent.execute
@@ -195,6 +196,41 @@ func (e *AgentEngine) Execute(
 	llmContext []chat.Message,
 	imageURLs ...[]string,
 ) (*types.AgentState, error) {
+	var images []string
+	if len(imageURLs) > 0 {
+		images = imageURLs[0]
+	}
+	return e.execute(ctx, sessionID, messageID, query, llmContext, images, nil)
+}
+
+// ExecuteTask runs the ReAct loop with task-scoped controls while preserving
+// Execute's chat behavior and defaults.
+func (e *AgentEngine) ExecuteTask(
+	ctx context.Context,
+	request interfaces.AgentTaskRequest,
+) (*types.AgentState, error) {
+	if request.Options.MaxIterations < 0 {
+		return nil, fmt.Errorf("agent task max iterations cannot be negative")
+	}
+	ctx = withTaskRuntime(ctx, request.Options)
+	return e.execute(
+		ctx,
+		request.SessionID,
+		request.MessageID,
+		request.Query,
+		request.LLMContext,
+		nil,
+		&request.Options,
+	)
+}
+
+func (e *AgentEngine) execute(
+	ctx context.Context,
+	sessionID, messageID, query string,
+	llmContext []chat.Message,
+	images []string,
+	options *interfaces.AgentTaskOptions,
+) (*types.AgentState, error) {
 	logger.Infof(ctx, "[Agent] Starting execution: session=%s, message=%s, query_len=%d, context_msgs=%d",
 		sessionID, messageID, len(query), len(llmContext))
 	// Ensure tools are cleaned up after execution
@@ -211,10 +247,8 @@ func (e *AgentEngine) Execute(
 	// round's LLM call and every tool execution — groups under a single
 	// node in the Langfuse UI instead of being flat children of the HTTP
 	// trace. No-op when Langfuse is disabled.
-	imgCount := 0
-	if len(imageURLs) > 0 {
-		imgCount = len(imageURLs[0])
-	}
+	imgCount := len(images)
+	maxIterations := maxIterationsForRun(ctx, e.config.MaxIterations)
 	kbIDs := make([]string, 0, len(e.knowledgeBasesInfo))
 	for _, kb := range e.knowledgeBasesInfo {
 		if kb != nil {
@@ -232,7 +266,7 @@ func (e *AgentEngine) Execute(
 		Metadata: map[string]interface{}{
 			"session_id":          sessionID,
 			"message_id":          messageID,
-			"max_iterations":      e.config.MaxIterations,
+			"max_iterations":      maxIterations,
 			"parallel_tool_calls": e.config.ParallelToolCalls,
 			"web_search":          e.config.WebSearchEnabled,
 			"multi_turn":          e.config.MultiTurnEnabled,
@@ -253,20 +287,19 @@ func (e *AgentEngine) Execute(
 	// Build system prompt using progressive RAG prompt
 	// If skills are enabled, include skills metadata (Level 1 - Progressive Disclosure)
 	systemPrompt := e.buildSystemPrompt(ctx)
+	if options != nil && strings.TrimSpace(options.SystemPrompt) != "" {
+		systemPrompt = strings.TrimRight(options.SystemPrompt, " \t\r\n") + e.modelContext.ProtocolPrompt()
+	}
 	logger.Debugf(ctx, "[Agent] SystemPrompt: %d chars", len(systemPrompt))
 
 	// Initialize messages with history
-	var imgs []string
-	if len(imageURLs) > 0 {
-		imgs = imageURLs[0]
-	}
-	messages := e.buildMessagesWithLLMContext(systemPrompt, query, sessionID, llmContext, imgs)
+	messages := e.buildMessagesWithLLMContext(systemPrompt, query, sessionID, llmContext, images)
 
 	// Get tool definitions for function calling
 	tools := e.buildToolsForLLM()
 	toolListStr := strings.Join(listToolNames(tools), ", ")
 	logger.Infof(ctx, "[Agent] Ready: %d messages, %d tools [%s], %d images",
-		len(messages), len(tools), toolListStr, len(imgs))
+		len(messages), len(tools), toolListStr, len(images))
 	common.PipelineInfo(ctx, "Agent", "tools_ready", map[string]interface{}{
 		"session_id": sessionID,
 		"tool_count": len(tools),
@@ -287,6 +320,7 @@ func (e *AgentEngine) Execute(
 			},
 		})
 		finishAgentSpan(agentSpan, state, err)
+		emitTaskEvent(ctx, interfaces.AgentTaskEvent{Kind: taskEventRunFinished, Status: "failed"})
 		return nil, err
 	}
 
@@ -299,6 +333,7 @@ func (e *AgentEngine) Execute(
 		"complete":   state.IsComplete,
 	})
 	finishAgentSpan(agentSpan, state, nil)
+	emitTaskEvent(ctx, interfaces.AgentTaskEvent{Kind: taskEventRunFinished, Status: state.StopReason})
 	return state, nil
 }
 
@@ -356,7 +391,7 @@ func (e *AgentEngine) executeLoop(
 ) (*types.AgentState, error) {
 	startTime := time.Now()
 	common.PipelineInfo(ctx, "Agent", "loop_start", map[string]interface{}{
-		"max_iterations": e.config.MaxIterations,
+		"max_iterations": maxIterationsForRun(ctx, e.config.MaxIterations),
 	})
 
 	// Guarantee exactly-one EventAgentComplete emission on every exit path
@@ -380,14 +415,15 @@ func (e *AgentEngine) executeLoop(
 	consecutiveSameContent := 0
 	lastResponseContent := ""
 loop:
-	for state.CurrentRound < e.config.MaxIterations {
+	for state.CurrentRound < maxIterationsForRun(ctx, e.config.MaxIterations) {
 		// Check for context cancellation (request timeout, user cancel, etc.)
 		select {
 		case <-ctx.Done():
+			state.StopReason = "cancelled"
 			logger.Warnf(ctx, "[Agent] Context cancelled at round %d: %v",
 				state.CurrentRound+1, ctx.Err())
 			// Try to salvage existing results
-			if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 {
+			if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 && !shouldSkipFinalAnswer(ctx) {
 				logger.Infof(ctx, "[Agent] Synthesizing final answer from %d existing tool results",
 					totalTC)
 				_ = e.streamFinalAnswerToEventBus(ctx, query, state, sessionID)
@@ -422,8 +458,10 @@ loop:
 	// state.FinalAnswer to the generic "Sorry, I was unable to generate a
 	// complete answer." message, which then leaks to the UI as the final
 	// answer for a conversation the user deliberately stopped.
-	if !state.IsComplete && ctx.Err() == nil {
+	if !state.IsComplete && ctx.Err() == nil && !shouldSkipFinalAnswer(ctx) {
 		e.handleMaxIterations(ctx, query, state, sessionID)
+	} else if !state.IsComplete && ctx.Err() == nil {
+		state.StopReason = "max_iterations"
 	}
 
 	return state, nil
@@ -462,6 +500,10 @@ func (e *AgentEngine) runReActIteration(
 ) (outcome iterOutcome, retErr error) {
 	roundStart := time.Now()
 	round := state.CurrentRound + 1
+	maxIterations := maxIterationsForRun(parentCtx, e.config.MaxIterations)
+	emitTaskEvent(parentCtx, interfaces.AgentTaskEvent{
+		Kind: taskEventRoundStarted, Round: round, Status: "running",
+	})
 
 	// Open the round-level Langfuse span. Any chat/tool calls made inside
 	// this iteration will attach under it via ctx, giving the UI a clean
@@ -471,7 +513,7 @@ func (e *AgentEngine) runReActIteration(
 		Input: map[string]interface{}{
 			"round":          round,
 			"message_count":  len(*messagesPtr),
-			"max_iterations": e.config.MaxIterations,
+			"max_iterations": maxIterations,
 		},
 		Metadata: map[string]interface{}{
 			"iteration":  state.CurrentRound,
@@ -523,7 +565,7 @@ func (e *AgentEngine) runReActIteration(
 	}
 
 	logger.Infof(ctx, "[Agent][Round-%d/%d] Starting: %d messages, %d tools, est_tokens=%d",
-		round, e.config.MaxIterations, len(*messagesPtr), len(tools), currentTokens)
+		round, maxIterations, len(*messagesPtr), len(tools), currentTokens)
 	common.PipelineInfo(ctx, "Agent", "round_start", map[string]interface{}{
 		"iteration":      state.CurrentRound,
 		"round":          round,
@@ -564,6 +606,7 @@ func (e *AgentEngine) runReActIteration(
 				round, *consecutiveSameContent+1, response.FinishReason)
 			state.FinalAnswer = response.Content
 			state.IsComplete = true
+			state.StopReason = "repeated_response"
 			return iterOutcomeBreak, nil
 		}
 	} else {
@@ -621,11 +664,13 @@ func (e *AgentEngine) runReActIteration(
 				round, maxEmptyResponseRetries)
 			state.FinalAnswer = "I'm sorry, I was unable to generate a response. Please try again."
 			state.IsComplete = true
+			state.StopReason = "empty_response"
 			state.RoundSteps = append(state.RoundSteps, verdict.step)
 			return iterOutcomeBreak, nil
 		}
 		state.FinalAnswer = verdict.finalAnswer
 		state.IsComplete = true
+		state.StopReason = "natural_stop"
 		state.RoundSteps = append(state.RoundSteps, verdict.step)
 		return iterOutcomeBreak, nil
 	}
@@ -648,6 +693,12 @@ func (e *AgentEngine) runReActIteration(
 	// 4. Observe: Add tool results to messages and write to context
 	state.RoundSteps = append(state.RoundSteps, step)
 	*messagesPtr = e.appendToolResults(*messagesPtr, step)
+	if toolName, terminated := terminationToolHit(ctx); terminated {
+		state.IsComplete = true
+		state.StopReason = "termination_tool"
+		state.TerminatedByTool = toolName
+		return iterOutcomeBreak, nil
+	}
 	common.PipelineInfo(ctx, "Agent", "round_end", map[string]interface{}{
 		"iteration":   state.CurrentRound,
 		"round":       round,

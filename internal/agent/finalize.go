@@ -175,6 +175,7 @@ func (e *AgentEngine) handleMaxIterations(
 		state.FinalAnswer = "Sorry, I was unable to generate a complete answer."
 	}
 	state.IsComplete = true
+	state.StopReason = "max_iterations"
 }
 
 // emitCompletionEvent emits the EventAgentComplete event with execution summary.

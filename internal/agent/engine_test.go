@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -553,6 +554,83 @@ func TestExecuteLoop_EndTurnTerminates(t *testing.T) {
 	assert.True(t, state.IsComplete)
 	assert.Equal(t, "The answer.", state.FinalAnswer)
 	assert.Equal(t, 1, mock.callCount, "end_turn must end the loop after the first model call")
+}
+
+func TestExecuteTaskStopsAfterSuccessfulTerminationTool(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		ToolCalls: []types.LLMToolCall{{
+			ID: "submit-1",
+			Function: types.FunctionCall{
+				Name:      "submit_task_result",
+				Arguments: `{}`,
+			},
+		}},
+		Done:         true,
+		FinishReason: "tool_calls",
+	}}}}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("submit_task_result")
+	engine.toolRegistry.RegisterTool(tool)
+
+	var events []interfaces.AgentTaskEvent
+	state, err := engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
+		SessionID: "task-session",
+		MessageID: "task-message",
+		Query:     "perform task",
+		Options: interfaces.AgentTaskOptions{
+			SystemPrompt:      "task-only system prompt",
+			MaxIterations:     4,
+			TerminationTool:   tool.Name(),
+			SkipFinalAnswer:   true,
+			StructuredEventFn: func(event interfaces.AgentTaskEvent) { events = append(events, event) },
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Equal(t, "termination_tool", state.StopReason)
+	require.Equal(t, tool.Name(), state.TerminatedByTool)
+	require.Empty(t, state.FinalAnswer)
+	require.Equal(t, 1, tool.calls)
+	require.Equal(t, 1, model.callCount, "termination must not synthesize a chat answer")
+	require.Contains(t, model.calls[0][0].Content, "task-only system prompt")
+	require.Contains(t, events, interfaces.AgentTaskEvent{
+		Kind: taskEventToolFinished, Round: 1, ToolName: tool.Name(), Status: "succeeded",
+	})
+}
+
+func TestExecuteTaskReportsMaxIterationsWithoutFinalAnswer(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		ToolCalls: []types.LLMToolCall{{
+			ID:       "inspect-1",
+			Function: types.FunctionCall{Name: "inspect_task", Arguments: `{}`},
+		}},
+		Done:         true,
+		FinishReason: "tool_calls",
+	}}}}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(newCountingTool("inspect_task"))
+
+	state, err := engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
+		SessionID: "task-session",
+		MessageID: "task-message",
+		Query:     "perform task",
+		Options: interfaces.AgentTaskOptions{
+			MaxIterations:   1,
+			TerminationTool: "submit_task_result",
+			SkipFinalAnswer: true,
+		},
+	})
+
+	require.NoError(t, err)
+	require.False(t, state.IsComplete)
+	require.Equal(t, "max_iterations", state.StopReason)
+	require.Empty(t, state.FinalAnswer)
+	require.Equal(t, 1, model.callCount)
 }
 
 func TestStreamFinalAnswerToEventBus_EmitsDoneWhenProviderEndsWithEmptyChunk(t *testing.T) {
