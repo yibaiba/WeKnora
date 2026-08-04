@@ -94,8 +94,10 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 	logger.SetOutput(&logs)
 	t.Cleanup(func() { logger.SetOutput(os.Stdout) })
 
-	result, err := mapIngestionDocument(context.Background(), model, units, func(event types.IngestionDocumentAnalysisProgress) {
-		progress = append(progress, event)
+	result, err := mapIngestionDocument(context.Background(), ingestionDocumentMapRequest{
+		Model: model, Units: units, Progress: func(event types.IngestionDocumentAnalysisProgress) {
+			progress = append(progress, event)
+		},
 	})
 
 	require.NoError(t, err)
@@ -130,7 +132,9 @@ func TestMapIngestionDocumentFailsWholeBatchWithoutEchoingSensitiveErrors(t *tes
 		return mapEvidenceResponse("ok"), nil
 	}}
 
-	result, err := mapIngestionDocument(context.Background(), model, units, nil)
+	result, err := mapIngestionDocument(context.Background(), ingestionDocumentMapRequest{
+		Model: model, Units: units,
+	})
 
 	require.Nil(t, result)
 	require.Error(t, err)

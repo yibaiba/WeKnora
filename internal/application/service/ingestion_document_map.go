@@ -36,6 +36,18 @@ type ingestionDocumentEvidence struct {
 	ChunkingSignals        []string `json:"chunking_signals"`
 }
 
+type ingestionDocumentMapRequest struct {
+	Model    chat.Chat
+	Units    []ingestionDocumentAnalysisUnit
+	Progress func(types.IngestionDocumentAnalysisProgress)
+}
+
+type ingestionDocumentMapUnitRequest struct {
+	Model      chat.Chat
+	Unit       ingestionDocumentAnalysisUnit
+	TotalUnits int
+}
+
 var ingestionDocumentEvidenceSchema = json.RawMessage(`{
   "type":"object",
   "properties":{
@@ -51,32 +63,32 @@ var ingestionDocumentEvidenceSchema = json.RawMessage(`{
 
 func mapIngestionDocument(
 	ctx context.Context,
-	model chat.Chat,
-	units []ingestionDocumentAnalysisUnit,
-	progress func(types.IngestionDocumentAnalysisProgress),
+	request ingestionDocumentMapRequest,
 ) ([]ingestionDocumentEvidence, error) {
 	started := time.Now()
-	results := make([]ingestionDocumentEvidence, len(units))
+	results := make([]ingestionDocumentEvidence, len(request.Units))
 	var completed atomic.Int64
 	var covered atomic.Int64
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(ingestionDocumentMapConcurrency)
-	for index := range units {
+	for index := range request.Units {
 		index := index
 		group.Go(func() error {
-			evidence, err := analyzeIngestionDocumentUnit(groupCtx, model, units[index], len(units))
+			evidence, err := analyzeIngestionDocumentUnit(groupCtx, ingestionDocumentMapUnitRequest{
+				Model: request.Model, Unit: request.Units[index], TotalUnits: len(request.Units),
+			})
 			if err != nil {
 				return err
 			}
 			results[index] = evidence
 			completed.Add(1)
-			covered.Add(int64(units[index].End - units[index].Start))
+			covered.Add(int64(request.Units[index].End - request.Units[index].Start))
 			return nil
 		})
 	}
 	err := group.Wait()
-	emitIngestionAnalysisProgress(progress, types.IngestionDocumentAnalysisProgress{
-		Phase: "map_document", UnitCount: len(units), Completed: int(completed.Load()),
+	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
+		Phase: "map_document", UnitCount: len(request.Units), Completed: int(completed.Load()),
 		DurationMS: time.Since(started).Milliseconds(), CoveredCharacters: int(covered.Load()), Failed: err != nil,
 	})
 	if err != nil {
@@ -87,25 +99,23 @@ func mapIngestionDocument(
 
 func analyzeIngestionDocumentUnit(
 	ctx context.Context,
-	model chat.Chat,
-	unit ingestionDocumentAnalysisUnit,
-	totalUnits int,
+	request ingestionDocumentMapUnitRequest,
 ) (ingestionDocumentEvidence, error) {
-	if model == nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", unit.Index, errors.New("模型未配置"))
+	if request.Model == nil {
+		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", request.Unit.Index, errors.New("模型未配置"))
 	}
 	messages := []chat.Message{
 		{Role: "system", Content: ingestionDocumentMapSystemPrompt},
-		{Role: "user", Content: buildIngestionDocumentMapPrompt(unit, totalUnits)},
+		{Role: "user", Content: buildIngestionDocumentMapPrompt(request.Unit, request.TotalUnits)},
 	}
 	callCtx := sensitiveIngestionLLMContext(ctx, "ingestion_document_map")
-	response, err := model.Chat(callCtx, messages, ingestionDocumentAnalysisOptions())
+	response, err := request.Model.Chat(callCtx, messages, ingestionDocumentAnalysisOptions())
 	if err != nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", unit.Index, err)
+		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", request.Unit.Index, err)
 	}
 	evidence, err := decodeIngestionDocumentEvidence(response)
 	if err != nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", unit.Index, err)
+		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", request.Unit.Index, err)
 	}
 	return evidence, nil
 }
