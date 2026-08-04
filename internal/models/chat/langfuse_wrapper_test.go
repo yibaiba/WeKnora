@@ -1,7 +1,10 @@
 package chat
 
 import (
+	"context"
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -54,6 +57,69 @@ func TestBuildLangfuseMessagesReasoningContent(t *testing.T) {
 	}
 	if msgs[0]["reasoning_content"] != "chain of thought" {
 		t.Fatalf("reasoning_content = %v; want chain of thought", msgs[0]["reasoning_content"])
+	}
+}
+
+func TestBuildLangfuseGenerationInputRedactsSensitiveTaskMessages(t *testing.T) {
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+	messages := []Message{
+		{Role: "system", Content: "sensitive system prompt"},
+		{
+			Role:             "assistant",
+			Content:          "private answer",
+			ReasoningContent: "private chain of thought",
+			ToolCalls: []ToolCall{{
+				Function: FunctionCall{
+					Name:      "inspect_ingestion_document",
+					Arguments: `{"offset":0,"document":"private"}`,
+				},
+			}},
+		},
+		{Role: "tool", Name: "inspect_ingestion_document", Content: "private source excerpt"},
+	}
+
+	encoded, err := json.Marshal(buildLangfuseGenerationInput(ctx, messages))
+	if err != nil {
+		t.Fatalf("marshal redacted input: %v", err)
+	}
+	tracePayload := string(encoded)
+	for _, sensitive := range []string{
+		"sensitive system prompt", "private answer", "private chain of thought",
+		`\"offset\"`, "private source excerpt",
+	} {
+		if strings.Contains(tracePayload, sensitive) {
+			t.Fatalf("redacted input contains %q: %s", sensitive, tracePayload)
+		}
+	}
+	if !strings.Contains(tracePayload, "inspect_ingestion_document") {
+		t.Fatalf("redacted input omitted tool name: %s", tracePayload)
+	}
+}
+
+func TestBuildLangfuseGenerationOutputRedactsSensitiveTaskResponse(t *testing.T) {
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+	output := buildLangfuseGenerationOutputForContext(
+		ctx,
+		"private answer",
+		"private chain of thought",
+		"tool_calls",
+		[]types.LLMToolCall{{Function: types.FunctionCall{
+			Name:      "preview_ingestion_chunking",
+			Arguments: `{"separators":["private source"]}`,
+		}}},
+	)
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal redacted output: %v", err)
+	}
+	tracePayload := string(encoded)
+	for _, sensitive := range []string{"private answer", "private chain of thought", "private source"} {
+		if strings.Contains(tracePayload, sensitive) {
+			t.Fatalf("redacted output contains %q: %s", sensitive, tracePayload)
+		}
+	}
+	if !strings.Contains(tracePayload, "preview_ingestion_chunking") {
+		t.Fatalf("redacted output omitted tool name: %s", tracePayload)
 	}
 }
 

@@ -153,6 +153,19 @@ func TestLLMCallMetadataContext(t *testing.T) {
 	}
 }
 
+func TestLLMTracePayloadRedactionContext(t *testing.T) {
+	if LLMTracePayloadsRedacted(nil) {
+		t.Fatal("nil context should not redact LLM trace payloads")
+	}
+	if LLMTracePayloadsRedacted(context.Background()) {
+		t.Fatal("background context should not redact LLM trace payloads")
+	}
+	ctx := WithRedactedLLMTracePayloads(context.Background())
+	if !LLMTracePayloadsRedacted(ctx) {
+		t.Fatal("marked context should redact LLM trace payloads")
+	}
+}
+
 // BenchmarkLanguageLocaleName benchmarks the language name lookup
 func BenchmarkLanguageLocaleName(b *testing.B) {
 	testCases := []string{"zh", "en", "zh-CN", "ko", "unknown"}

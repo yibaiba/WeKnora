@@ -212,6 +212,7 @@ func (e *AgentEngine) ExecuteTask(
 	if request.Options.MaxIterations < 0 {
 		return nil, fmt.Errorf("agent task max iterations cannot be negative")
 	}
+	ctx = types.WithRedactedLLMTracePayloads(ctx)
 	ctx = agenttools.WithRedactedToolPayloads(ctx)
 	ctx = withTaskRuntime(ctx, request.Options)
 	return e.execute(
@@ -237,12 +238,16 @@ func (e *AgentEngine) execute(
 	// Ensure tools are cleaned up after execution
 	defer e.toolRegistry.Cleanup(ctx)
 
-	common.PipelineInfo(ctx, "Agent", "execute_start", map[string]interface{}{
+	executeFields := map[string]interface{}{
 		"session_id":   sessionID,
 		"message_id":   messageID,
-		"query":        query,
 		"context_msgs": len(llmContext),
-	})
+		"query_len":    len(query),
+	}
+	if !types.LLMTracePayloadsRedacted(ctx) {
+		executeFields["query"] = query
+	}
+	common.PipelineInfo(ctx, "Agent", "execute_start", executeFields)
 
 	// Open a top-level Langfuse span so the agent run — including every
 	// round's LLM call and every tool execution — groups under a single
@@ -257,13 +262,8 @@ func (e *AgentEngine) execute(
 		}
 	}
 	spanCtx, agentSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
-		Name: "agent.execute",
-		Input: map[string]interface{}{
-			"query":        truncateRunes(query, langfuseQueryPreview),
-			"query_len":    len(query),
-			"context_msgs": len(llmContext),
-			"image_count":  imgCount,
-		},
+		Name:  "agent.execute",
+		Input: buildAgentSpanInput(ctx, query, len(llmContext), imgCount),
 		Metadata: map[string]interface{}{
 			"session_id":          sessionID,
 			"message_id":          messageID,
@@ -320,7 +320,7 @@ func (e *AgentEngine) execute(
 				SessionID: sessionID,
 			},
 		})
-		finishAgentSpan(agentSpan, state, err)
+		finishAgentSpan(ctx, agentSpan, state, err)
 		emitTaskEvent(ctx, interfaces.AgentTaskEvent{Kind: taskEventRunFinished, Status: "failed"})
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (e *AgentEngine) execute(
 		"steps":      len(state.RoundSteps),
 		"complete":   state.IsComplete,
 	})
-	finishAgentSpan(agentSpan, state, nil)
+	finishAgentSpan(ctx, agentSpan, state, nil)
 	emitTaskEvent(ctx, interfaces.AgentTaskEvent{Kind: taskEventRunFinished, Status: state.StopReason})
 	return state, nil
 }
@@ -341,7 +341,19 @@ func (e *AgentEngine) execute(
 // finishAgentSpan records the final outcome of an agent execution onto the
 // top-level Langfuse span. Extracted so the same payload is used for both
 // success and error return paths in Execute().
-func finishAgentSpan(span *langfuse.Span, state *types.AgentState, err error) {
+func buildAgentSpanInput(ctx context.Context, query string, contextMessages, imageCount int) map[string]interface{} {
+	input := map[string]interface{}{
+		"query_len":    len(query),
+		"context_msgs": contextMessages,
+		"image_count":  imageCount,
+	}
+	if !types.LLMTracePayloadsRedacted(ctx) {
+		input["query"] = truncateRunes(query, langfuseQueryPreview)
+	}
+	return input
+}
+
+func finishAgentSpan(ctx context.Context, span *langfuse.Span, state *types.AgentState, err error) {
 	if span == nil {
 		return
 	}
@@ -355,7 +367,9 @@ func finishAgentSpan(span *langfuse.Span, state *types.AgentState, err error) {
 		"tool_calls":       totalToolCalls,
 		"complete":         state.IsComplete,
 		"final_answer_len": len(state.FinalAnswer),
-		"final_answer":     truncateRunes(state.FinalAnswer, langfuseQueryPreview),
+	}
+	if !types.LLMTracePayloadsRedacted(ctx) {
+		output["final_answer"] = truncateRunes(state.FinalAnswer, langfuseQueryPreview)
 	}
 	span.Finish(output, map[string]interface{}{
 		"rounds":     state.CurrentRound,

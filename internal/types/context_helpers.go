@@ -6,6 +6,23 @@ import (
 	"strings"
 )
 
+type redactLLMTracePayloadsKey struct{}
+
+// WithRedactedLLMTracePayloads marks a sensitive task whose prompt, response,
+// reasoning, and tool payloads must not be copied into tracing backends.
+func WithRedactedLLMTracePayloads(ctx context.Context) context.Context {
+	return context.WithValue(ctx, redactLLMTracePayloadsKey{}, true)
+}
+
+// LLMTracePayloadsRedacted reports whether tracing must retain summaries only.
+func LLMTracePayloadsRedacted(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	redacted, _ := ctx.Value(redactLLMTracePayloadsKey{}).(bool)
+	return redacted
+}
+
 // EnvLanguage returns the WEKNORA_LANGUAGE environment variable value, or empty string if unset.
 func EnvLanguage() string {
 	return strings.TrimSpace(os.Getenv("WEKNORA_LANGUAGE"))

@@ -31,6 +31,17 @@ func (t *countingTool) Execute(context.Context, json.RawMessage) (*types.ToolRes
 	return &types.ToolResult{Success: true, Output: "executed"}, nil
 }
 
+func TestBuildAgentSpanInputRedactsSensitiveTaskQuery(t *testing.T) {
+	query := "private ingestion document"
+	redactedCtx := types.WithRedactedLLMTracePayloads(context.Background())
+	redacted := buildAgentSpanInput(redactedCtx, query, 2, 0)
+	require.NotContains(t, redacted, "query")
+	require.Equal(t, len(query), redacted["query_len"])
+
+	ordinary := buildAgentSpanInput(context.Background(), query, 2, 0)
+	require.Equal(t, query, ordinary["query"])
+}
+
 // ---------------------------------------------------------------------------
 // Mock: chat.Chat
 // ---------------------------------------------------------------------------

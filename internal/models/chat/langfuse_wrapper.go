@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -26,10 +27,11 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 	}
 
 	purpose, prefixFingerprint := types.LLMCallMetadataFromContext(ctx)
+	redacted := types.LLMTracePayloadsRedacted(ctx)
 	genCtx, gen := mgr.StartGeneration(ctx, langfuse.GenerationOptions{
 		Name:            "chat.completion",
 		Model:           l.inner.GetModelName(),
-		Input:           buildLangfuseMessages(messages),
+		Input:           buildLangfuseGenerationInput(ctx, messages),
 		ModelParameters: buildLangfuseModelParams(opts),
 		Metadata: map[string]interface{}{
 			"model_id":                  l.inner.GetModelID(),
@@ -37,6 +39,7 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 			"has_tools":                 opts != nil && len(opts.Tools) > 0,
 			"call_purpose":              purpose,
 			"prompt_prefix_fingerprint": prefixFingerprint,
+			"payloads_redacted":         redacted,
 		},
 	})
 
@@ -46,7 +49,8 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 	var output interface{}
 	if resp != nil {
 		usage = convertUsage(&resp.Usage)
-		output = buildLangfuseGenerationOutput(
+		output = buildLangfuseGenerationOutputForContext(
+			ctx,
 			resp.Content, resp.ReasoningContent, resp.FinishReason, resp.ToolCalls,
 		)
 	}
@@ -61,10 +65,11 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 	}
 
 	purpose, prefixFingerprint := types.LLMCallMetadataFromContext(ctx)
+	redacted := types.LLMTracePayloadsRedacted(ctx)
 	genCtx, gen := mgr.StartGeneration(ctx, langfuse.GenerationOptions{
 		Name:            "chat.completion.stream",
 		Model:           l.inner.GetModelName(),
-		Input:           buildLangfuseMessages(messages),
+		Input:           buildLangfuseGenerationInput(ctx, messages),
 		ModelParameters: buildLangfuseModelParams(opts),
 		Metadata: map[string]interface{}{
 			"model_id":                  l.inner.GetModelID(),
@@ -72,6 +77,7 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 			"has_tools":                 opts != nil && len(opts.Tools) > 0,
 			"call_purpose":              purpose,
 			"prompt_prefix_fingerprint": prefixFingerprint,
+			"payloads_redacted":         redacted,
 		},
 	})
 
@@ -126,7 +132,8 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 			wrapped <- resp
 		}
 
-		output := buildLangfuseGenerationOutput(
+		output := buildLangfuseGenerationOutputForContext(
+			ctx,
 			string(contentBuf), string(reasoningBuf), finishReason, toolCalls,
 		)
 		gen.Finish(output, convertUsage(usage), nil)
@@ -167,6 +174,53 @@ func buildLangfuseMessages(messages []Message) []map[string]interface{} {
 	return out
 }
 
+func buildLangfuseGenerationInput(ctx context.Context, messages []Message) interface{} {
+	if !types.LLMTracePayloadsRedacted(ctx) {
+		return buildLangfuseMessages(messages)
+	}
+	return buildRedactedLangfuseMessages(messages)
+}
+
+func buildRedactedLangfuseMessages(messages []Message) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(messages))
+	for _, message := range messages {
+		contentChars, imageCount := summarizeMessageContent(message)
+		entry := map[string]interface{}{
+			"role":                message.Role,
+			"content_chars":       contentChars,
+			"reasoning_chars":     utf8.RuneCountInString(message.ReasoningContent),
+			"multi_content_parts": len(message.MultiContent),
+			"image_count":         imageCount + len(message.Images),
+			"tool_call_count":     len(message.ToolCalls),
+			"tool_names":          chatToolNames(message.ToolCalls),
+		}
+		if message.Role == "tool" && message.Name != "" {
+			entry["tool_name"] = message.Name
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func summarizeMessageContent(message Message) (contentChars, imageCount int) {
+	contentChars = utf8.RuneCountInString(message.Content)
+	for _, part := range message.MultiContent {
+		contentChars += utf8.RuneCountInString(part.Text)
+		if part.ImageURL != nil {
+			imageCount++
+		}
+	}
+	return contentChars, imageCount
+}
+
+func chatToolNames(toolCalls []ToolCall) []string {
+	names := make([]string, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		names = append(names, toolCall.Function.Name)
+	}
+	return names
+}
+
 func buildLangfuseGenerationOutput(
 	content, reasoningContent, finishReason string,
 	toolCalls []types.LLMToolCall,
@@ -180,6 +234,31 @@ func buildLangfuseGenerationOutput(
 		output["reasoning_content"] = reasoningContent
 	}
 	return output
+}
+
+func buildLangfuseGenerationOutputForContext(
+	ctx context.Context,
+	content, reasoningContent, finishReason string,
+	toolCalls []types.LLMToolCall,
+) map[string]interface{} {
+	if !types.LLMTracePayloadsRedacted(ctx) {
+		return buildLangfuseGenerationOutput(content, reasoningContent, finishReason, toolCalls)
+	}
+	return map[string]interface{}{
+		"content_chars":   utf8.RuneCountInString(content),
+		"reasoning_chars": utf8.RuneCountInString(reasoningContent),
+		"finish_reason":   finishReason,
+		"tool_call_count": len(toolCalls),
+		"tool_names":      llmToolNames(toolCalls),
+	}
+}
+
+func llmToolNames(toolCalls []types.LLMToolCall) []string {
+	names := make([]string, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		names = append(names, toolCall.Function.Name)
+	}
+	return names
 }
 
 func buildLangfuseModelParams(opts *ChatOptions) map[string]interface{} {
