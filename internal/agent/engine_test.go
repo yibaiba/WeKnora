@@ -633,7 +633,8 @@ func TestExecuteTaskStopsAfterSuccessfulTerminationTool(t *testing.T) {
 	require.Equal(t, 1, model.callCount, "termination must not synthesize a chat answer")
 	require.Contains(t, model.calls[0][0].Content, "task-only system prompt")
 	require.Contains(t, events, interfaces.AgentTaskEvent{
-		Kind: taskEventToolFinished, Round: 1, ToolName: tool.Name(), Status: "succeeded",
+		Kind: taskEventToolFinished, ToolCallID: "submit-1",
+		Round: 1, ToolName: tool.Name(), Status: "succeeded",
 	})
 }
 
@@ -742,7 +743,8 @@ func TestExecuteTaskEmitsSafeToolFailureMetadata(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Contains(t, events, interfaces.AgentTaskEvent{
-		Kind: taskEventToolFinished, Round: 1, ToolName: "preview_task", Status: "failed",
+		Kind: taskEventToolFinished, ToolCallID: "preview-1",
+		Round: 1, ToolName: "preview_task", Status: "failed",
 		Failure: &types.ToolFailure{
 			Code: "SAFE_FAILURE", Field: "chunk_overlap", Constraint: "at_most_half",
 		},

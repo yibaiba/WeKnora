@@ -55,6 +55,7 @@ type IngestionAdvisorRequest struct {
 
 type IngestionDocumentAnalysisProgress struct {
 	Phase             string
+	Status            string
 	UnitCount         int
 	Completed         int
 	Level             int
@@ -77,6 +78,7 @@ type IngestionAgentWarning struct {
 }
 
 type IngestionAgentStep struct {
+	ToolCallID        string  `json:"-"`
 	Round             int     `json:"round"`
 	ToolName          string  `json:"tool_name"`
 	Status            string  `json:"status"`

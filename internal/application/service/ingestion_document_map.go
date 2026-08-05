@@ -26,6 +26,9 @@ const (
 	ingestionDocumentSignalMaxRunes           = 400
 	ingestionDocumentCandidateLimit           = 3
 	ingestionDocumentSignalLimit              = 8
+	ingestionAnalysisProgressRunning          = "running"
+	ingestionAnalysisProgressSucceeded        = "succeeded"
+	ingestionAnalysisProgressFailed           = "failed"
 )
 
 type ingestionDocumentEvidence struct {
@@ -52,8 +55,8 @@ var ingestionDocumentEvidenceSchema = json.RawMessage(`{
   "type":"object",
   "properties":{
     "summary":{"type":"string","minLength":1,"maxLength":1200},
-    "document_kind_candidates":{"type":"array","minItems":1,"maxItems":3,"uniqueItems":true,"items":{"type":"string","enum":["policy_manual","faq","tabular_data","report","meeting_notes","presentation","short_article","mixed_document"]}},
-    "content_mode_candidates":{"type":"array","minItems":1,"maxItems":3,"uniqueItems":true,"items":{"type":"string","enum":["document","faq_candidate","wiki_candidate"]}},
+    "document_kind_candidates":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["policy_manual","faq","tabular_data","report","meeting_notes","presentation","short_article","mixed_document"]}},
+    "content_mode_candidates":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["document","faq_candidate","wiki_candidate"]}},
     "structure_signals":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":400}},
     "chunking_signals":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":400}}
   },
@@ -66,6 +69,10 @@ func mapIngestionDocument(
 	request ingestionDocumentMapRequest,
 ) ([]ingestionDocumentEvidence, error) {
 	started := time.Now()
+	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
+		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
+		UnitCount: len(request.Units), CoveredCharacters: ingestionAnalysisUnitCoverage(request.Units),
+	})
 	results := make([]ingestionDocumentEvidence, len(request.Units))
 	var completed atomic.Int64
 	var covered atomic.Int64
@@ -87,14 +94,27 @@ func mapIngestionDocument(
 		})
 	}
 	err := group.Wait()
+	status := ingestionAnalysisProgressSucceeded
+	if err != nil {
+		status = ingestionAnalysisProgressFailed
+	}
 	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
-		Phase: "map_document", UnitCount: len(request.Units), Completed: int(completed.Load()),
+		Phase: "map_document", Status: status,
+		UnitCount: len(request.Units), Completed: int(completed.Load()),
 		DurationMS: time.Since(started).Milliseconds(), CoveredCharacters: int(covered.Load()), Failed: err != nil,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return results, nil
+}
+
+func ingestionAnalysisUnitCoverage(units []ingestionDocumentAnalysisUnit) int {
+	total := 0
+	for _, unit := range units {
+		total += unit.End - unit.Start
+	}
+	return total
 }
 
 func analyzeIngestionDocumentUnit(

@@ -32,7 +32,7 @@ func ingestionProgressReceiver(progress func(types.IngestionAgentStep)) func(int
 		mu.Lock()
 		defer mu.Unlock()
 		progress(types.IngestionAgentStep{
-			Round: event.Round, ToolName: event.ToolName,
+			ToolCallID: event.ToolCallID, Round: event.Round, ToolName: event.ToolName,
 			Status: event.Status, DurationMS: event.DurationMS,
 			FailureCode:       failureCode(event.Failure),
 			FailureField:      failureField(event.Failure),
@@ -81,27 +81,27 @@ func appendIngestionAgentStep(base types.IngestionAgentRun, step types.AgentStep
 }
 
 func failureCode(failure *types.ToolFailure) string {
-	if failure == nil {
+	safe := sanitizeIngestionToolFailure(failure)
+	if safe == nil {
 		return ""
 	}
-	if failure.Code == "TOOL_ARGUMENTS_INVALID" {
-		return ingestionFailureArgumentsInvalid
-	}
-	return failure.Code
+	return safe.Code
 }
 
 func failureField(failure *types.ToolFailure) string {
-	if failure == nil {
+	safe := sanitizeIngestionToolFailure(failure)
+	if safe == nil {
 		return ""
 	}
-	return failure.Field
+	return safe.Field
 }
 
 func failureConstraint(failure *types.ToolFailure) string {
-	if failure == nil {
+	safe := sanitizeIngestionToolFailure(failure)
+	if safe == nil {
 		return ""
 	}
-	return failure.Constraint
+	return safe.Constraint
 }
 
 func appendAgentWarning(
@@ -201,7 +201,8 @@ func safeCoreToolFailureMessage(call types.ToolCall) string {
 	failure := call.Result.Failure
 	return fmt.Sprintf(
 		"入库核心工具 %s 执行失败（错误码 %s，字段 %s，约束 %s）",
-		call.Name, failureCode(failure), safeFailureValue(failure.Field), safeFailureValue(failure.Constraint),
+		call.Name, failureCode(failure),
+		safeFailureValue(failureField(failure)), safeFailureValue(failureConstraint(failure)),
 	)
 }
 

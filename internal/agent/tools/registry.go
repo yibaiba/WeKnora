@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/common"
@@ -133,9 +134,7 @@ func (r *ToolRegistry) ExecuteTool(
 	if validationErrs := ValidateParams(args, tool.Parameters()); len(validationErrs) > 0 {
 		errMsg := FormatValidationErrors(validationErrs) + toolErrorHint
 		failure := &types.ToolFailure{Code: "TOOL_ARGUMENTS_INVALID", Constraint: "json_schema"}
-		if validationErrs[0].Param != "" {
-			failure.Field = validationErrs[0].Param
-		}
+		failure.Field = declaredValidationField(validationErrs[0].Param, tool.Parameters())
 		common.PipelineWarn(ctx, "AgentTool", "validation_failed", map[string]interface{}{
 			"tool":   name,
 			"errors": ToolErrorForObservability(ctx, errMsg),
@@ -189,6 +188,26 @@ func (r *ToolRegistry) ExecuteTool(
 	}
 
 	return result, execErr
+}
+
+func declaredValidationField(param string, rawSchema json.RawMessage) string {
+	if param == "" {
+		return ""
+	}
+	root := param
+	if separator := strings.IndexAny(root, ".["); separator >= 0 {
+		root = root[:separator]
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal(rawSchema, &schema) != nil {
+		return ""
+	}
+	if _, declared := schema.Properties[root]; !declared {
+		return ""
+	}
+	return param
 }
 
 // Cleanup cleans up all registered tools that implement the types.Cleanable interface.

@@ -52,11 +52,20 @@ func (s *ingestionAdvisorStub) Analyze(
 
 func emitIngestionAnalysisProgressForTest(progress func(types.IngestionDocumentAnalysisProgress)) {
 	progress(types.IngestionDocumentAnalysisProgress{
-		Phase: "map_document", UnitCount: 2, Completed: 2,
+		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
+		UnitCount: 2, CoveredCharacters: 22,
+	})
+	progress(types.IngestionDocumentAnalysisProgress{
+		Phase: "map_document", Status: ingestionAnalysisProgressSucceeded, UnitCount: 2, Completed: 2,
 		DurationMS: 7, CoveredCharacters: 22,
 	})
 	progress(types.IngestionDocumentAnalysisProgress{
-		Phase: "reduce_document", UnitCount: 1, Completed: 1, Level: 1,
+		Phase: "reduce_document", Status: ingestionAnalysisProgressRunning,
+		UnitCount: 1, Level: 1, CoveredCharacters: 22,
+	})
+	progress(types.IngestionDocumentAnalysisProgress{
+		Phase: "reduce_document", Status: ingestionAnalysisProgressSucceeded,
+		UnitCount: 1, Completed: 1, Level: 1,
 		DurationMS: 3, CoveredCharacters: 22,
 	})
 }
@@ -93,6 +102,69 @@ func TestIngestionAgentSpanPersistsSafeToolFailure(t *testing.T) {
 	require.Contains(t, tracker.failMessages[0], "at_most_half_chunk_size")
 	require.NotContains(t, tracker.failMessages[0], "private document")
 	require.Equal(t, []string{""}, tracker.failErrors)
+}
+
+func TestIngestionProgressMatchesParallelSameNameCallsByID(t *testing.T) {
+	tracker := newIngestionSpanTrackerStub()
+	parent := &Span{KnowledgeID: "knowledge-1", Attempt: 1, SpanID: "analysis-1", Kind: types.SpanKindStage}
+	progress := newIngestionAgentSpanProgress(context.Background(), tracker, parent)
+
+	progress.Handle(types.IngestionAgentStep{
+		ToolCallID: "preview-first", Round: 1, ToolName: previewIngestionChunkingTool, Status: "running",
+	})
+	progress.Handle(types.IngestionAgentStep{
+		ToolCallID: "preview-second", Round: 1, ToolName: previewIngestionChunkingTool, Status: "running",
+	})
+	progress.Handle(types.IngestionAgentStep{
+		ToolCallID: "preview-second", Round: 1, ToolName: previewIngestionChunkingTool, Status: "failed",
+		FailureCode: ingestionFailureCandidatePreview,
+	})
+	progress.Handle(types.IngestionAgentStep{
+		ToolCallID: "preview-first", Round: 1, ToolName: previewIngestionChunkingTool, Status: "succeeded",
+	})
+
+	require.Equal(t, []string{tracker.subspans[1]}, tracker.failed)
+	require.Equal(t, []string{tracker.subspans[0]}, tracker.subEnded)
+}
+
+func TestIngestionProgressRedactsUntrustedFailureMetadata(t *testing.T) {
+	tracker := newIngestionSpanTrackerStub()
+	parent := &Span{KnowledgeID: "knowledge-1", Attempt: 1, SpanID: "analysis-1", Kind: types.SpanKindStage}
+	progress := newIngestionAgentSpanProgress(context.Background(), tracker, parent)
+	progress.Handle(types.IngestionAgentStep{
+		ToolCallID: "preview-1", Round: 1, ToolName: previewIngestionChunkingTool, Status: "running",
+	})
+	progress.Handle(types.IngestionAgentStep{
+		ToolCallID: "preview-1", Round: 1, ToolName: previewIngestionChunkingTool, Status: "failed",
+		FailureCode: "raw-model-code", FailureField: "private-document-fragment",
+		FailureConstraint: "raw-model-constraint",
+	})
+
+	require.Equal(t, []string{ingestionFailureTool}, tracker.failCodes)
+	require.NotContains(t, tracker.failMessages[0], "raw-model")
+	require.NotContains(t, tracker.failMessages[0], "private-document")
+}
+
+func TestIngestionAnalysisSpanClosesOriginalRunningSpan(t *testing.T) {
+	tracker := newIngestionSpanTrackerStub()
+	parent := &Span{KnowledgeID: "knowledge-1", Attempt: 1, SpanID: "analysis-1", Kind: types.SpanKindStage}
+	progress := newIngestionAgentSpanProgress(context.Background(), tracker, parent)
+	progress.HandleAnalysis(types.IngestionDocumentAnalysisProgress{
+		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
+		UnitCount: 2, CoveredCharacters: 15032,
+	})
+
+	require.Len(t, tracker.subspans, 1)
+	require.Empty(t, tracker.subEnded)
+	progress.HandleAnalysis(types.IngestionDocumentAnalysisProgress{
+		Phase: "map_document", Status: ingestionAnalysisProgressSucceeded,
+		UnitCount: 2, Completed: 2, DurationMS: 42, CoveredCharacters: 15032,
+	})
+
+	require.Equal(t, tracker.subspans, tracker.subEnded)
+	require.Equal(t, types.JSONMap{
+		"completed": 2, "duration_ms": int64(42), "covered_characters": 15032,
+	}, tracker.subOutputs[0])
 }
 
 type ingestionKnowledgeRepoStub struct {
@@ -322,13 +394,17 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Contains(t, tracker.subspans[5], "submit_decision")
 	require.Contains(t, tracker.subspans[6], "evaluate_and_refine")
 	require.Equal(t, types.JSONMap{
-		"unit_count": 2, "completed": 2, "level": 0,
-		"duration_ms": int64(7), "covered_characters": 22,
+		"unit_count": 2, "level": 0, "covered_characters": 22,
 	}, tracker.subInputs[1])
 	require.Equal(t, types.JSONMap{
-		"unit_count": 1, "completed": 1, "level": 1,
-		"duration_ms": int64(3), "covered_characters": 22,
+		"unit_count": 1, "level": 1, "covered_characters": 22,
 	}, tracker.subInputs[2])
+	require.Equal(t, types.JSONMap{
+		"completed": 2, "duration_ms": int64(7), "covered_characters": 22,
+	}, tracker.subOutputs[1])
+	require.Equal(t, types.JSONMap{
+		"completed": 1, "duration_ms": int64(3), "covered_characters": 22,
+	}, tracker.subOutputs[2])
 	progressJSON, marshalProgressErr := json.Marshal([]types.JSONMap{
 		tracker.subInputs[1], tracker.subInputs[2], tracker.subOutputs[1], tracker.subOutputs[2],
 	})
@@ -420,7 +496,11 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 		ingestionAdvisor: &ingestionAdvisorStub{
 			errors: []error{advisorErr},
 			analysisProgress: []types.IngestionDocumentAnalysisProgress{{
-				Phase: "map_document", UnitCount: 2, Completed: 1,
+				Phase: "map_document", Status: ingestionAnalysisProgressRunning,
+				UnitCount: 2, CoveredCharacters: 15032,
+			}, {
+				Phase: "map_document", Status: ingestionAnalysisProgressFailed,
+				UnitCount: 2, Completed: 1,
 				DurationMS: 9, CoveredCharacters: 8000, Failed: true,
 			}},
 		},

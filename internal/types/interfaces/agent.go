@@ -22,6 +22,7 @@ type AgentStreamEvent struct {
 // intentionally excludes model reasoning, tool arguments, and tool output.
 type AgentTaskEvent struct {
 	Kind       string
+	ToolCallID string
 	Round      int
 	ToolName   string
 	Status     string

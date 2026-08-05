@@ -141,15 +141,34 @@ func TestExecuteToolReportsSafeSchemaFailureMetadata(t *testing.T) {
 	})
 
 	result, err := registry.ExecuteTool(
-		context.Background(), "strict_tool", json.RawMessage(`{"values":["bad"],"extra":true}`),
+		context.Background(), "strict_tool", json.RawMessage(`{"values":["bad"]}`),
 	)
 
 	require.NoError(t, err)
 	require.False(t, result.Success)
 	require.Equal(t, "TOOL_ARGUMENTS_INVALID", result.Failure.Code)
-	require.NotEmpty(t, result.Failure.Field)
-	require.Contains(t, result.Error, "is not allowed")
+	require.Equal(t, "values[0]", result.Failure.Field)
 	require.Contains(t, result.Error, "values[0]")
+}
+
+func TestExecuteToolDoesNotExposeUnknownArgumentName(t *testing.T) {
+	registry := NewToolRegistry()
+	registry.RegisterTool(&mockTool{
+		name: "strict_tool",
+		parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{"values":{"type":"array","items":{"type":"string"}}},
+			"additionalProperties":false
+		}`),
+	})
+
+	result, err := registry.ExecuteTool(
+		context.Background(), "strict_tool", json.RawMessage(`{"private-document-fragment":true}`),
+	)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Empty(t, result.Failure.Field)
 }
 
 // TestListTools_Sorted mirrors the determinism guarantee for ListTools.

@@ -53,6 +53,7 @@ func (p *ingestionAgentSpanProgress) Handle(step types.IngestionAgentStep) {
 		p.startToolSpan(key, step)
 		return
 	}
+	step = sanitizeIngestionProgressStep(step)
 	p.finishToolSpan(key, step)
 }
 
@@ -62,18 +63,59 @@ func (p *ingestionAgentSpanProgress) HandleAnalysis(event types.IngestionDocumen
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	key := ingestionAnalysisProgressKey(event)
+	if event.Status == ingestionAnalysisProgressRunning {
+		p.startAnalysisSpan(key, event)
+		return
+	}
+	if len(p.active[key]) == 0 {
+		p.startAnalysisSpan(key, event)
+	}
+	p.finishAnalysisSpan(key, event)
+}
+
+func (p *ingestionAgentSpanProgress) startAnalysisSpan(
+	key string,
+	event types.IngestionDocumentAnalysisProgress,
+) {
 	span := p.tracker.BeginSubSpan(
 		p.ctx, p.parent, p.nextSpanName(event.Phase), types.SpanKindSubSpan,
-		ingestionAnalysisProgressPayload(event),
+		ingestionAnalysisStartPayload(event),
 	)
-	if event.Failed {
+	if span != nil {
+		p.active[key] = append(p.active[key], span)
+	}
+}
+
+func (p *ingestionAgentSpanProgress) finishAnalysisSpan(
+	key string,
+	event types.IngestionDocumentAnalysisProgress,
+) {
+	span := p.popActiveSpan(key)
+	if span == nil {
+		return
+	}
+	if event.Failed || event.Status == ingestionAnalysisProgressFailed {
 		p.tracker.FailSpan(
 			p.ctx, span, ingestionAdvisorErrorDocumentAnalysis,
-			fmt.Sprintf("文档全文 %s 阶段失败", event.Phase), nil,
+			ingestionAnalysisFailureMessage(event), nil,
 		)
 		return
 	}
-	p.tracker.EndSpan(p.ctx, span, types.JSONMap{})
+	p.tracker.EndSpan(p.ctx, span, ingestionAnalysisResultPayload(event))
+}
+
+func sanitizeIngestionProgressStep(step types.IngestionAgentStep) types.IngestionAgentStep {
+	if step.FailureCode == "" && step.FailureField == "" && step.FailureConstraint == "" {
+		return step
+	}
+	failure := sanitizeIngestionToolFailure(&types.ToolFailure{
+		Code: step.FailureCode, Field: step.FailureField, Constraint: step.FailureConstraint,
+	})
+	step.FailureCode = failure.Code
+	step.FailureField = failure.Field
+	step.FailureConstraint = failure.Constraint
+	return step
 }
 
 func (p *ingestionAgentSpanProgress) RecordEvaluation(result *types.IngestionAdvisorResult) {
@@ -103,15 +145,9 @@ func (p *ingestionAgentSpanProgress) startToolSpan(key string, step types.Ingest
 }
 
 func (p *ingestionAgentSpanProgress) finishToolSpan(key string, step types.IngestionAgentStep) {
-	queue := p.active[key]
-	if len(queue) == 0 {
+	span := p.popActiveSpan(key)
+	if span == nil {
 		return
-	}
-	span := queue[0]
-	if len(queue) == 1 {
-		delete(p.active, key)
-	} else {
-		p.active[key] = queue[1:]
 	}
 	if step.Status == "failed" {
 		code := step.FailureCode
@@ -126,6 +162,20 @@ func (p *ingestionAgentSpanProgress) finishToolSpan(key string, step types.Inges
 	p.tracker.EndSpan(p.ctx, span, types.JSONMap{
 		"status": step.Status, "duration_ms": step.DurationMS,
 	})
+}
+
+func (p *ingestionAgentSpanProgress) popActiveSpan(key string) *Span {
+	queue := p.active[key]
+	if len(queue) == 0 {
+		return nil
+	}
+	span := queue[0]
+	if len(queue) == 1 {
+		delete(p.active, key)
+	} else {
+		p.active[key] = queue[1:]
+	}
+	return span
 }
 
 func ingestionToolSpanFailureMessage(step types.IngestionAgentStep) string {
@@ -145,7 +195,14 @@ func (p *ingestionAgentSpanProgress) nextSpanName(phase string) string {
 }
 
 func ingestionProgressKey(step types.IngestionAgentStep) string {
+	if step.ToolCallID != "" {
+		return "tool_call:" + step.ToolCallID
+	}
 	return fmt.Sprintf("%d:%s", step.Round, step.ToolName)
+}
+
+func ingestionAnalysisProgressKey(event types.IngestionDocumentAnalysisProgress) string {
+	return fmt.Sprintf("analysis:%s:%d", event.Phase, event.Level)
 }
 
 func ingestionPhaseForTool(toolName string) string {
@@ -165,12 +222,25 @@ func isIngestionAnalysisPhase(phase string) bool {
 	return phase == "map_document" || phase == "reduce_document"
 }
 
-func ingestionAnalysisProgressPayload(event types.IngestionDocumentAnalysisProgress) types.JSONMap {
+func ingestionAnalysisStartPayload(event types.IngestionDocumentAnalysisProgress) types.JSONMap {
 	return types.JSONMap{
 		"unit_count":         event.UnitCount,
-		"completed":          event.Completed,
 		"level":              event.Level,
+		"covered_characters": event.CoveredCharacters,
+	}
+}
+
+func ingestionAnalysisResultPayload(event types.IngestionDocumentAnalysisProgress) types.JSONMap {
+	return types.JSONMap{
+		"completed":          event.Completed,
 		"duration_ms":        event.DurationMS,
 		"covered_characters": event.CoveredCharacters,
 	}
+}
+
+func ingestionAnalysisFailureMessage(event types.IngestionDocumentAnalysisProgress) string {
+	return fmt.Sprintf(
+		"文档全文 %s 阶段失败（完成 %d/%d，耗时 %dms，覆盖字符 %d）",
+		event.Phase, event.Completed, event.UnitCount, event.DurationMS, event.CoveredCharacters,
+	)
 }

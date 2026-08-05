@@ -48,15 +48,17 @@ func TestReduceIngestionDocumentRecursesWithinBudgetAndPreservesOrder(t *testing
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Summary)
 	require.Greater(t, len(progress), 1)
-	for index, event := range progressWithoutDuration(progress) {
+	terminalProgress := terminalAnalysisProgress(progress)
+	for index, event := range progressWithoutDuration(terminalProgress) {
 		require.Equal(t, index+1, event.Level)
+		require.Equal(t, ingestionAnalysisProgressSucceeded, event.Status)
 		require.Equal(t, event.UnitCount, event.Completed)
 		require.Equal(t, 54321, event.CoveredCharacters)
 		require.False(t, event.Failed)
 	}
 	calls := model.callSnapshot()
 	require.Len(t, calls, int(responseIndex.Load()))
-	firstLevelCount := progress[0].UnitCount
+	firstLevelCount := terminalProgress[0].UnitCount
 	var firstLevelSummaries []string
 	for index, call := range calls {
 		require.True(t, call.redacted)
@@ -120,9 +122,11 @@ func TestReduceIngestionDocumentFailsOnInvalidResponseWithoutPartialResult(t *te
 	require.Equal(t, ingestionDocumentEvidence{}, result)
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
-	require.Len(t, progress, 1)
-	require.True(t, progress[0].Failed)
-	require.Zero(t, progress[0].Completed)
+	require.Len(t, progress, 2)
+	require.Equal(t, ingestionAnalysisProgressRunning, progress[0].Status)
+	require.Equal(t, ingestionAnalysisProgressFailed, progress[1].Status)
+	require.True(t, progress[1].Failed)
+	require.Zero(t, progress[1].Completed)
 }
 
 func TestGroupIngestionDocumentEvidenceRejectsOversizedSingleItem(t *testing.T) {
@@ -167,6 +171,18 @@ func evidenceSummaries(evidence []ingestionDocumentEvidence) []string {
 	result := make([]string, len(evidence))
 	for index := range evidence {
 		result[index] = evidence[index].Summary
+	}
+	return result
+}
+
+func terminalAnalysisProgress(
+	events []types.IngestionDocumentAnalysisProgress,
+) []types.IngestionDocumentAnalysisProgress {
+	result := make([]types.IngestionDocumentAnalysisProgress, 0, len(events))
+	for _, event := range events {
+		if event.Status != ingestionAnalysisProgressRunning {
+			result = append(result, event)
+		}
 	}
 	return result
 }

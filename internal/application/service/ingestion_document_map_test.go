@@ -135,7 +135,11 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 	}
 	require.NotContains(t, logs.String(), "sensitive-map-log")
 	require.Equal(t, []types.IngestionDocumentAnalysisProgress{{
-		Phase: "map_document", UnitCount: len(units), Completed: len(units),
+		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
+		UnitCount: len(units), CoveredCharacters: len(units) * len([]rune(units[0].Content)),
+	}, {
+		Phase: "map_document", Status: ingestionAnalysisProgressSucceeded,
+		UnitCount: len(units), Completed: len(units),
 		CoveredCharacters: len(units) * len([]rune(units[0].Content)),
 	}}, progressWithoutDuration(progress))
 }
@@ -143,6 +147,7 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 func TestMapIngestionDocumentFailsWholeBatchWithoutEchoingSensitiveErrors(t *testing.T) {
 	secret := "raw-unit-and-provider-secret"
 	units := ingestionMapTestUnits(6)
+	var progress []types.IngestionDocumentAnalysisProgress
 	model := &ingestionMapModelStub{response: func(_ context.Context, messages []chat.Message) (*types.ChatResponse, error) {
 		if strings.Contains(messages[1].Content, "unit-03") {
 			return nil, fmt.Errorf("provider failed and echoed %s", secret)
@@ -151,13 +156,19 @@ func TestMapIngestionDocumentFailsWholeBatchWithoutEchoingSensitiveErrors(t *tes
 	}}
 
 	result, err := mapIngestionDocument(context.Background(), ingestionDocumentMapRequest{
-		Model: model, Units: units,
+		Model: model, Units: units, Progress: func(event types.IngestionDocumentAnalysisProgress) {
+			progress = append(progress, event)
+		},
 	})
 
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
 	require.NotContains(t, err.Error(), secret)
+	require.Len(t, progress, 2)
+	require.Equal(t, ingestionAnalysisProgressRunning, progress[0].Status)
+	require.Equal(t, ingestionAnalysisProgressFailed, progress[1].Status)
+	require.True(t, progress[1].Failed)
 }
 
 func TestDecodeIngestionDocumentEvidenceRejectsInvalidStructures(t *testing.T) {
@@ -167,6 +178,7 @@ func TestDecodeIngestionDocumentEvidenceRejectsInvalidStructures(t *testing.T) {
 		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":[],"chunking_signals":["headings"]}`,
 		"```json\n" + validMapEvidenceJSON("ok") + "\n```",
 		validMapEvidenceJSON(strings.Repeat("a", ingestionDocumentSummaryMaxRunes+1)),
+		`{"summary":"ok","document_kind_candidates":["report","report"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
 	}
 	for _, raw := range tests {
 		_, err := decodeIngestionDocumentEvidence(&types.ChatResponse{Content: raw})
@@ -174,6 +186,10 @@ func TestDecodeIngestionDocumentEvidenceRejectsInvalidStructures(t *testing.T) {
 	}
 	_, err := decodeIngestionDocumentEvidence(nil)
 	require.Error(t, err)
+}
+
+func TestIngestionDocumentEvidenceSchemaUsesSupportedStrictKeywords(t *testing.T) {
+	require.NotContains(t, string(ingestionDocumentEvidenceSchema), "uniqueItems")
 }
 
 func ingestionMapTestUnits(count int) []ingestionDocumentAnalysisUnit {

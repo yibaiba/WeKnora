@@ -82,6 +82,11 @@ func reduceIngestionDocumentLevel(
 	request ingestionDocumentReduceLevelRequest,
 ) ([]ingestionDocumentEvidence, error) {
 	started := time.Now()
+	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
+		Phase: "reduce_document", Status: ingestionAnalysisProgressRunning,
+		UnitCount: len(request.Groups), Level: request.Level,
+		CoveredCharacters: request.CoveredCharacters,
+	})
 	results := make([]ingestionDocumentEvidence, 0, len(request.Groups))
 	for index, group := range request.Groups {
 		result, err := reduceIngestionDocumentGroup(ctx, ingestionDocumentReduceGroupRequest{
@@ -89,7 +94,8 @@ func reduceIngestionDocumentLevel(
 		})
 		if err != nil {
 			emitReduceProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
-				Phase: "reduce_document", UnitCount: len(request.Groups), Completed: len(results),
+				Phase: "reduce_document", Status: ingestionAnalysisProgressFailed,
+				UnitCount: len(request.Groups), Completed: len(results),
 				Level: request.Level, CoveredCharacters: request.CoveredCharacters, Failed: true,
 			}, started)
 			return nil, err
@@ -97,7 +103,8 @@ func reduceIngestionDocumentLevel(
 		results = append(results, result)
 	}
 	emitReduceProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
-		Phase: "reduce_document", UnitCount: len(request.Groups), Completed: len(results),
+		Phase: "reduce_document", Status: ingestionAnalysisProgressSucceeded,
+		UnitCount: len(request.Groups), Completed: len(results),
 		Level: request.Level, CoveredCharacters: request.CoveredCharacters,
 	}, started)
 	return results, nil

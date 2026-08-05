@@ -438,7 +438,8 @@ func (e *AgentEngine) runToolCall(
 		round, tc.Function.Name, i+1, total)
 	taskStart := time.Now()
 	emitTaskEvent(ctx, interfaces.AgentTaskEvent{
-		Kind: taskEventToolStarted, Round: round, ToolName: tc.Function.Name, Status: "running",
+		Kind: taskEventToolStarted, ToolCallID: tc.ID,
+		Round: round, ToolName: tc.Function.Name, Status: "running",
 	})
 	defer func() {
 		success := completed.Result != nil && completed.Result.Success
@@ -457,6 +458,7 @@ func (e *AgentEngine) runToolCall(
 		}
 		emitTaskEvent(ctx, interfaces.AgentTaskEvent{
 			Kind:       taskEventToolFinished,
+			ToolCallID: tc.ID,
 			Round:      round,
 			ToolName:   tc.Function.Name,
 			Status:     status,

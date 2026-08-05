@@ -456,6 +456,50 @@ func TestBuildIngestionAgentRunPersistsSafeFailureMetadata(t *testing.T) {
 	require.NotContains(t, string(persisted), "private failure details")
 }
 
+func TestBuildIngestionAgentRunRedactsUntrustedFailureMetadata(t *testing.T) {
+	state := &types.AgentState{RoundSteps: []types.AgentStep{{
+		Iteration: 0,
+		ToolCalls: []types.ToolCall{{
+			Name: previewIngestionChunkingTool,
+			Result: &types.ToolResult{Success: false, Failure: &types.ToolFailure{
+				Code: "raw-model-code", Field: "private-document-fragment",
+				Constraint: "raw-model-constraint",
+			}},
+		}},
+	}}}
+
+	run := buildIngestionAgentRun(newIngestionAgentRun(nil, nil), state)
+	persisted, err := json.Marshal(run)
+
+	require.NoError(t, err)
+	require.Equal(t, ingestionFailureTool, run.Steps[0].FailureCode)
+	require.Empty(t, run.Steps[0].FailureField)
+	require.Empty(t, run.Steps[0].FailureConstraint)
+	require.NotContains(t, string(persisted), "raw-model")
+	require.NotContains(t, string(persisted), "private-document")
+}
+
+func TestIngestionProgressReceiverCarriesCallIDAndSanitizesFailure(t *testing.T) {
+	var received types.IngestionAgentStep
+	receiver := ingestionProgressReceiver(func(step types.IngestionAgentStep) {
+		received = step
+	})
+
+	receiver(interfaces.AgentTaskEvent{
+		Kind: "tool_finished", ToolCallID: "preview-1", Round: 2,
+		ToolName: previewIngestionChunkingTool, Status: "failed",
+		Failure: &types.ToolFailure{
+			Code: "raw-model-code", Field: "private-document-fragment",
+			Constraint: "raw-model-constraint",
+		},
+	})
+
+	require.Equal(t, "preview-1", received.ToolCallID)
+	require.Equal(t, ingestionFailureTool, received.FailureCode)
+	require.Empty(t, received.FailureField)
+	require.Empty(t, received.FailureConstraint)
+}
+
 func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t *testing.T) {
 	request := validIngestionAdvisorRequest()
 	request.Content = ingestionTestContent()
