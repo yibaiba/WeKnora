@@ -147,6 +147,55 @@ func TestRemoteMapRetriesInterruptedResponseBody(t *testing.T) {
 	require.Equal(t, 2, requests)
 }
 
+func TestRemoteReasoningMapUsesRetryAfterWithoutChangingRequest(t *testing.T) {
+	secutils.ResetSSRFWhitelistForTest()
+	t.Cleanup(secutils.ResetSSRFWhitelistForTest)
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	var captured []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var requestBody map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&requestBody))
+		captured = append(captured, requestBody)
+		w.Header().Set("Content-Type", "application/json")
+		if len(captured) == 1 {
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"message": map[string]any{
+					"role": "assistant", "content": validMapEvidenceJSON("mapped"),
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]any{},
+		})
+	}))
+	defer server.Close()
+	model, err := chat.NewRemoteAPIChat(&chat.ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
+		ModelName: "gpt-5", ModelID: "gpt-5", APIKey: "test-key", Provider: "openai",
+	})
+	require.NoError(t, err)
+	var waits []time.Duration
+	unit := newTestAnalysisUnit(0, 0, 4, "正文内容")
+
+	_, attempts, err := analyzeIngestionDocumentUnit(context.Background(), ingestionDocumentMapUnitRequest{
+		Model: model, Unit: unit, TotalUnits: 1, RetryPolicy: recordingRetryPolicy(&waits),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+	require.Equal(t, []time.Duration{7 * time.Second}, waits)
+	require.Len(t, captured, 2)
+	require.Equal(t, captured[0], captured[1])
+	require.Equal(t, float64(ingestionDocumentAnalysisCompletionTokens), captured[0]["max_completion_tokens"])
+	require.NotContains(t, captured[0], "max_tokens")
+	require.NotContains(t, captured[0], "temperature")
+}
+
 func TestModelIngestionAdvisorReduceFinalFailureDoesNotStartAgent(t *testing.T) {
 	retryAfter := time.Duration(0)
 	reduceErr := chat.NewProviderErrorWithDetails(chat.ProviderFailureDetails{

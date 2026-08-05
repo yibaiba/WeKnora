@@ -142,7 +142,7 @@ func analyzeIngestionDocumentUnit(
 		{Role: "system", Content: ingestionDocumentMapSystemPrompt},
 		{Role: "user", Content: buildIngestionDocumentMapPrompt(request.Unit, request.TotalUnits)},
 	}
-	callCtx := sensitiveIngestionLLMContext(ctx, "ingestion_document_map")
+	callCtx := sensitiveIngestionLLMContext(ctx, types.LLMCallPurposeIngestionDocumentMap)
 	call, err := callIngestionDocumentAnalysis(callCtx, ingestionDocumentAnalysisCall{
 		Model: request.Model, Messages: messages, Options: ingestionDocumentAnalysisOptions(),
 	}, request.RetryPolicy)

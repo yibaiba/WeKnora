@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,6 +110,80 @@ func TestRemoteAPIChatCarriesSafeRetryAfterForRateLimit(t *testing.T) {
 	require.Equal(t, 30*time.Second, *details.RetryAfter)
 	require.NotContains(t, err.Error(), "private response")
 	require.NotContains(t, err.Error(), "private request")
+}
+
+func TestRemoteReasoningAnalysisCarriesRetryAfterOnRawPath(t *testing.T) {
+	secutils.ResetSSRFWhitelistForTest()
+	t.Cleanup(secutils.ResetSSRFWhitelistForTest)
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	tests := []struct {
+		name           string
+		provider       string
+		basePath       string
+		extraConfig    map[string]string
+		expectedPath   string
+		expectedHeader string
+	}{
+		{name: "openai", provider: "openai", basePath: "/v1", expectedPath: "/v1/chat/completions", expectedHeader: "Bearer test-key"},
+		{name: "azure", provider: "azure_openai", expectedPath: "/openai/deployments/gpt-5/chat/completions", expectedHeader: "test-key", extraConfig: map[string]string{"api_version": "2025-04-01-preview"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var captured map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, test.expectedPath, r.URL.Path)
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+				if test.provider == "azure_openai" {
+					require.Equal(t, test.expectedHeader, r.Header.Get("api-key"))
+					require.Equal(t, "2025-04-01-preview", r.URL.Query().Get("api-version"))
+				} else {
+					require.Equal(t, test.expectedHeader, r.Header.Get("Authorization"))
+				}
+				w.Header().Set("Retry-After", "3")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"private"}}`))
+			}))
+			defer server.Close()
+			model, err := NewRemoteAPIChat(&ChatConfig{
+				Source: types.ModelSourceRemote, BaseURL: server.URL + test.basePath,
+				ModelName: "gpt-5", ModelID: "gpt-5", APIKey: "test-key",
+				Provider: test.provider, ExtraConfig: test.extraConfig,
+			})
+			require.NoError(t, err)
+			ctx := types.WithLLMCallMetadata(
+				types.WithRedactedLLMTracePayloads(context.Background()),
+				types.LLMCallPurposeIngestionDocumentMap, "",
+			)
+
+			_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private"}}, &ChatOptions{
+				Temperature: 0, TemperatureSet: true, MaxTokens: 1024,
+				Format: json.RawMessage(`{"type":"object"}`),
+			})
+
+			details, ok := ProviderErrorDetails(err)
+			require.True(t, ok)
+			require.NotNil(t, details.RetryAfter)
+			require.Equal(t, 3*time.Second, *details.RetryAfter)
+			require.Equal(t, float64(1024), captured["max_completion_tokens"])
+			require.NotContains(t, captured, "max_tokens")
+			require.NotContains(t, captured, "temperature")
+		})
+	}
+}
+
+func TestRequiresRawIngestionAnalysisHTTPHasNarrowBoundary(t *testing.T) {
+	background := context.Background()
+	redacted := types.WithRedactedLLMTracePayloads(background)
+	mapContext := types.WithLLMCallMetadata(redacted, types.LLMCallPurposeIngestionDocumentMap, "")
+	reduceContext := types.WithLLMCallMetadata(redacted, types.LLMCallPurposeIngestionDocumentReduce, "")
+
+	require.False(t, requiresRawIngestionAnalysisHTTP(background))
+	require.False(t, requiresRawIngestionAnalysisHTTP(redacted))
+	require.False(t, requiresRawIngestionAnalysisHTTP(types.WithLLMCallMetadata(
+		background, types.LLMCallPurposeIngestionDocumentMap, "",
+	)))
+	require.True(t, requiresRawIngestionAnalysisHTTP(mapContext))
+	require.True(t, requiresRawIngestionAnalysisHTTP(reduceContext))
 }
 
 func TestRemoteAPIChatKeepsAzureEndpointForExplicitTemperature(t *testing.T) {

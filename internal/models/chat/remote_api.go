@@ -198,7 +198,10 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	if err != nil {
 		return nil, err
 	}
-	if useRawHTTP {
+	if useRawHTTP || requiresRawIngestionAnalysisHTTP(timeoutCtx) {
+		if endpoint == "" {
+			endpoint = c.rawChatCompletionsEndpoint()
+		}
 		return c.chatWithRawHTTP(timeoutCtx, endpoint, body)
 	}
 
@@ -223,6 +226,15 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	}
 	logUsage(timeoutCtx, c.modelName, &result.Usage)
 	return result, nil
+}
+
+func requiresRawIngestionAnalysisHTTP(ctx context.Context) bool {
+	if !types.LLMTracePayloadsRedacted(ctx) {
+		return false
+	}
+	purpose, _ := types.LLMCallMetadataFromContext(ctx)
+	return purpose == types.LLMCallPurposeIngestionDocumentMap ||
+		purpose == types.LLMCallPurposeIngestionDocumentReduce
 }
 
 // chatWithRawHTTP 使用原始 HTTP 请求进行聊天（供自定义请求使用）

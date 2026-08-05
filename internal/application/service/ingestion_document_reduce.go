@@ -137,7 +137,7 @@ func reduceIngestionDocumentGroup(
 				Unit:  request.Index, Cause: fmt.Errorf("模型未配置"),
 			})
 	}
-	callCtx := sensitiveIngestionLLMContext(ctx, "ingestion_document_reduce")
+	callCtx := sensitiveIngestionLLMContext(ctx, types.LLMCallPurposeIngestionDocumentReduce)
 	call, err := callIngestionDocumentAnalysis(callCtx, ingestionDocumentAnalysisCall{
 		Model: request.Model, Messages: []chat.Message{
 			{Role: "system", Content: ingestionDocumentReduceSystemPrompt},

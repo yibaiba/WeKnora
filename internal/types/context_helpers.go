@@ -8,6 +8,11 @@ import (
 
 type redactLLMTracePayloadsKey struct{}
 
+const (
+	LLMCallPurposeIngestionDocumentMap    = "ingestion_document_map"
+	LLMCallPurposeIngestionDocumentReduce = "ingestion_document_reduce"
+)
+
 // WithRedactedLLMTracePayloads marks a sensitive task whose prompt, response,
 // reasoning, and tool payloads must not be copied into tracing backends.
 func WithRedactedLLMTracePayloads(ctx context.Context) context.Context {
