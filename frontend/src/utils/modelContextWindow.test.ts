@@ -6,6 +6,7 @@ import {
   MAX_CONTEXT_WINDOW_TOKENS,
   MIN_CONTEXT_WINDOW_TOKENS,
   contextWindowParameters,
+  contextWindowTokensFromParameters,
   isValidContextWindowTokens,
 } from './modelContextWindow.ts'
 
@@ -24,4 +25,15 @@ test('serializes context window only for chat-style model types and configured v
   assert.deepEqual(contextWindowParameters('vllm', 65536), { context_window_tokens: 65536 })
   assert.deepEqual(contextWindowParameters('embedding', 32768), {})
   assert.deepEqual(contextWindowParameters('chat', 0), {})
+  assert.throws(() => contextWindowParameters('chat', 4095), /Invalid context_window_tokens/)
+})
+
+test('round-trips configured context windows through API parameters', () => {
+  const parameters = contextWindowParameters('chat', 32768)
+  assert.equal(contextWindowTokensFromParameters(parameters), 32768)
+  assert.equal(contextWindowTokensFromParameters(undefined), 0)
+  assert.throws(
+    () => contextWindowTokensFromParameters({ context_window_tokens: 2_000_001 }),
+    /Invalid context_window_tokens/,
+  )
 })

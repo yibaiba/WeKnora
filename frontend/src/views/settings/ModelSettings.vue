@@ -149,7 +149,10 @@ import ModelEditorDialog from '@/components/ModelEditorDialog.vue'
 import ModelDebugDrawer from '@/components/ModelDebugDrawer.vue'
 import { listModels, createModel, updateModel as updateModelAPI, deleteModel as deleteModelAPI, type ModelConfig } from '@/api/model'
 import { useAuthStore } from '@/stores/auth'
-import { contextWindowParameters } from '@/utils/modelContextWindow'
+import {
+  contextWindowParameters,
+  contextWindowTokensFromParameters,
+} from '@/utils/modelContextWindow'
 
 const { t, te } = useI18n()
 const authStore = useAuthStore()
@@ -194,7 +197,7 @@ function convertToLegacyFormat(model: ModelConfig) {
     supportsDimensionOverride: model.parameters.embedding_parameters?.supports_dimension_override || false,
     isBuiltin: model.is_builtin || false,
     supportsVision: model.parameters.supports_vision || false,
-    contextWindowTokens: model.parameters.context_window_tokens ?? 0,
+    contextWindowTokens: contextWindowTokensFromParameters(model.parameters),
     maxConcurrency: model.parameters.max_concurrency,
     customHeaders: model.parameters.custom_headers
       ? Object.entries(model.parameters.custom_headers).map(([key, value]) => ({ key, value: String(value) }))

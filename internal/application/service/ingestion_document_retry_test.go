@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -206,16 +205,16 @@ func TestAnalyzeIngestionDocumentUnitDoesNotRetryInvalidResponse(t *testing.T) {
 
 func TestMapRetriesStayWithinFourWorkers(t *testing.T) {
 	units := ingestionMapTestUnits(10)
-	var initialFailures atomic.Int32
+	var initiallyFailed sync.Map
 	model := &ingestionMapModelStub{
 		release: make(chan struct{}),
 		response: func(_ context.Context, messages []chat.Message) (*types.ChatResponse, error) {
-			if initialFailures.Add(1) <= ingestionDocumentMapConcurrency {
+			content := textBetween(messages[1].Content, "<document_unit>\n", "\n</document_unit>")
+			if _, loaded := initiallyFailed.LoadOrStore(content, struct{}{}); !loaded {
 				return nil, chat.NewProviderError(
 					chat.ProviderFailureUnavailable, http.StatusServiceUnavailable, "",
 				)
 			}
-			content := textBetween(messages[1].Content, "<document_unit>\n", "\n</document_unit>")
 			return mapEvidenceResponse(content), nil
 		},
 	}
@@ -227,7 +226,7 @@ func TestMapRetriesStayWithinFourWorkers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result, len(units))
 	require.Equal(t, int32(ingestionDocumentMapConcurrency), model.maximum.Load())
-	require.Len(t, model.callSnapshot(), len(units)+ingestionDocumentMapConcurrency)
+	require.Len(t, model.callSnapshot(), len(units)*2)
 }
 
 func TestMapProgressReportsBudgetAndRetryStatistics(t *testing.T) {

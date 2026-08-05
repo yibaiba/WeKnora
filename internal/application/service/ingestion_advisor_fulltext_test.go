@@ -22,6 +22,7 @@ type ingestionAdvisorFullTextModel struct {
 	agent               *ingestionAdvisorScriptedModel
 	contextWindowTokens int
 	mapErr              error
+	reduceErr           error
 	mapWaitForContext   bool
 	agentWaitForContext bool
 	mapResponse         func([]chat.Message) *types.ChatResponse
@@ -49,6 +50,9 @@ func (m *ingestionAdvisorFullTextModel) Chat(
 	if m.mapWaitForContext {
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if m.reduceErr != nil && messagesContainText(messages, "Reduce 阶段") {
+		return nil, m.reduceErr
 	}
 	if m.mapErr != nil {
 		return nil, m.mapErr

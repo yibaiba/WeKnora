@@ -17,7 +17,21 @@ export function contextWindowParameters(
   value: unknown,
 ): { context_window_tokens?: number } {
   if (modelType !== 'chat' && modelType !== 'vllm') return {}
+  if (!isValidContextWindowTokens(value)) {
+    throw new Error('Invalid context_window_tokens')
+  }
+  if (value == null || value === '') return {}
   const numericValue = Number(value)
-  if (!Number.isInteger(numericValue) || numericValue <= 0) return {}
+  if (numericValue <= 0) return {}
   return { context_window_tokens: numericValue }
+}
+
+export function contextWindowTokensFromParameters(
+  parameters: { context_window_tokens?: number } | undefined,
+): number {
+  const value = parameters?.context_window_tokens ?? 0
+  if (!isValidContextWindowTokens(value)) {
+    throw new Error('Invalid context_window_tokens in model response')
+  }
+  return Number(value)
 }
