@@ -2250,6 +2250,9 @@ export default {
       dimensionOverrideDesc: 'Включайте только если документация провайдера подтверждает поддержку параметра dimensions.',
       supportsVisionLabel: 'Поддержка визуального / мультимодального ввода',
       supportsVisionDesc: 'Поддерживает ли модель изображения и другой мультимодальный ввод',
+      contextWindowTokensLabel: 'Контекстное окно (токены)',
+      contextWindowTokensPlaceholder: '0 — использовать значение 8192',
+      contextWindowTokensDesc: 'Общее контекстное окно модели для интеллектуального анализа полного текста. 0 или пустое значение — 8192; диапазон: 4096–2000000.',
       maxConcurrencyLabel: 'Лимит фоновой параллельности',
       maxConcurrencyPlaceholder: '0 — использовать глобальное значение',
       maxConcurrencyDesc: 'Ограничивает число одновременных фоновых вызовов (индексация/обогащение) к этой модели, общее для модели по всем репликам. 0 или пусто — используется глобальное значение по умолчанию; интерактивный чат не затрагивается.',
@@ -2381,7 +2384,8 @@ export default {
         modelNameMax: 'Название модели не может превышать 100 символов',
         baseUrlRequired: 'Введите Base URL',
         baseUrlEmpty: 'Base URL не может быть пустым',
-        baseUrlInvalid: 'Недопустимый Base URL, введите корректный адрес'
+        baseUrlInvalid: 'Недопустимый Base URL, введите корректный адрес',
+        contextWindowTokensInvalid: 'Контекстное окно должно быть равно 0 или целым числом от 4096 до 2000000'
       },
       thinkingControl: {
         thinkingType: {

@@ -2250,6 +2250,9 @@ export default {
       dimensionOverrideDesc: '仅在确认该模型支持 dimensions 参数时开启；默认只使用检测到的实际维度。',
       supportsVisionLabel: '支持视觉/多模态',
       supportsVisionDesc: '模型是否支持图片等多模态输入',
+      contextWindowTokensLabel: '上下文窗口（Token）',
+      contextWindowTokensPlaceholder: '0 表示使用默认值 8192',
+      contextWindowTokensDesc: '用于智能全文分析的模型总上下文窗口。0 或留空使用默认值 8192；可配置范围为 4096～2000000。',
       maxConcurrencyLabel: '后台并发上限',
       maxConcurrencyPlaceholder: '0 表示使用全局默认',
       maxConcurrencyDesc: '限制文档入库/富化等后台任务对该模型的并发调用数（按模型全副本共享）。0 或留空表示沿用全局默认；不影响交互式对话。',
@@ -2381,7 +2384,8 @@ export default {
         modelNameMax: '模型名称不能超过100个字符',
         baseUrlRequired: '请输入 Base URL',
         baseUrlEmpty: 'Base URL 不能为空',
-        baseUrlInvalid: 'Base URL 格式不正确，请输入有效的 URL'
+        baseUrlInvalid: 'Base URL 格式不正确，请输入有效的 URL',
+        contextWindowTokensInvalid: '上下文窗口必须为 0，或 4096～2000000 之间的整数'
       },
       thinkingControl: {
         thinkingType: {

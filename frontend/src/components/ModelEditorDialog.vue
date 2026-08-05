@@ -352,6 +352,31 @@
           </div>
         </div>
 
+        <div v-if="showsContextWindow" class="form-item">
+          <label class="form-label" for="model-context-window-tokens">
+            {{ $t('model.editor.contextWindowTokensLabel') }}
+          </label>
+          <input
+            id="model-context-window-tokens"
+            v-model.number="formData.contextWindowTokens"
+            class="context-window-input"
+            type="number"
+            :min="0"
+            :max="MAX_CONTEXT_WINDOW_TOKENS"
+            :placeholder="$t('model.editor.contextWindowTokensPlaceholder')"
+            :aria-invalid="Boolean(contextWindowError)"
+            :aria-describedby="contextWindowError ? 'model-context-window-error' : 'model-context-window-help'"
+            inputmode="numeric"
+            @blur="contextWindowTouched = true"
+          >
+          <p v-if="contextWindowError" id="model-context-window-error" class="form-error" role="alert">
+            {{ contextWindowError }}
+          </p>
+          <p v-else id="model-context-window-help" class="form-desc">
+            {{ $t('model.editor.contextWindowTokensDesc') }}
+          </p>
+        </div>
+
         <!-- Chat + 远程 API：思考模式参数格式 -->
         <div v-if="showThinkingControlField" class="form-item">
           <label class="form-label">{{ $t('model.editor.thinkingControlLabel') }}</label>
@@ -417,6 +442,10 @@ import CredentialResource, {
   type CredentialResourceApi,
 } from '@/components/credentials/CredentialResource.vue'
 import { shouldShowOllamaUnavailableTip } from '@/components/modelEditorSourceState'
+import {
+  MAX_CONTEXT_WINDOW_TOKENS,
+  isValidContextWindowTokens,
+} from '@/utils/modelContextWindow'
 
 interface CustomHeaderItem {
   key: string
@@ -437,6 +466,8 @@ interface ModelFormData {
   interfaceType?: 'ollama' | 'openai'
   isDefault: boolean
   supportsVision?: boolean
+  /** Total chat context window; 0/undefined uses the server default (8192). */
+  contextWindowTokens?: number
   /** 后台任务对该模型的并发上限；0/undefined 表示沿用全局默认。仅 chat/embedding/vllm 生效。 */
   maxConcurrency?: number
   /** extra_config.thinking_control — how agent thinking on/off maps to API fields. */
@@ -476,6 +507,9 @@ const isEdit = computed(() => !!props.modelData)
 
 const activeModelType = computed(() => (
   isEdit.value ? props.modelType : draftModelType.value
+))
+const showsContextWindow = computed(() => (
+  activeModelType.value === 'chat' || activeModelType.value === 'vllm'
 ))
 
 const modelTypeChoices = computed(() => ([
@@ -874,6 +908,7 @@ const formData = ref<ModelFormData>({
   interfaceType: 'ollama',
   isDefault: false,
   supportsVision: false,
+  contextWindowTokens: 0,
   maxConcurrency: undefined,
   thinkingControl: defaultThinkingControl('generic', ''),
   customHeaders: [],
@@ -920,6 +955,15 @@ const rules = computed(() => ({
     }
   ]
 }))
+
+const contextWindowTouched = ref(false)
+const contextWindowError = computed(() => {
+  if (!showsContextWindow.value || !contextWindowTouched.value
+    || isValidContextWindowTokens(formData.value.contextWindowTokens)) {
+    return ''
+  }
+  return t('model.editor.validation.contextWindowTokensInvalid')
+})
 
 // 获取弹窗描述文字
 const getModalDescription = () => {
@@ -1008,6 +1052,7 @@ const selectModelType = async (type: EditorModelType) => {
     dimensionChecked.value = false
     dimensionSuccess.value = false
     dimensionMessage.value = ''
+    contextWindowTouched.value = false
   }
   if (type !== 'chat') {
     formData.value.supportsVision = false
@@ -1062,6 +1107,7 @@ watch(() => props.visible, (val) => {
         // not by this form's apiKey field.
         formData.value = {
           ...props.modelData,
+          contextWindowTokens: props.modelData.contextWindowTokens ?? 0,
           apiKey: '',
           customHeaders: Array.isArray(props.modelData.customHeaders)
             ? props.modelData.customHeaders.map(h => ({ key: h.key, value: h.value }))
@@ -1115,6 +1161,7 @@ const resetForm = () => {
     interfaceType: undefined,
     isDefault: false,
     supportsVision: false,
+    contextWindowTokens: 0,
     maxConcurrency: undefined,
     thinkingControl: defaultThinkingControl('generic', ''),
     customHeaders: [],
@@ -1129,6 +1176,7 @@ const resetForm = () => {
   dimensionChecked.value = false
   dimensionSuccess.value = false
   dimensionMessage.value = ''
+  contextWindowTouched.value = false
   showApiKey.value = false
 }
 
@@ -1504,6 +1552,12 @@ const handleConfirm = async () => {
 
     if (formData.value.modelName.trim().length > 100) {
       MessagePlugin.warning(t('model.editor.validation.modelNameMax'))
+      return
+    }
+
+    contextWindowTouched.value = true
+    if (showsContextWindow.value && !isValidContextWindowTokens(formData.value.contextWindowTokens)) {
+      MessagePlugin.warning(t('model.editor.validation.contextWindowTokensInvalid'))
       return
     }
 
@@ -2216,6 +2270,42 @@ const handleCancel = () => {
 
   &--warn {
     color: var(--td-warning-color);
+  }
+}
+
+.form-error {
+  margin: 4px 0 0;
+  color: var(--td-error-color);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.context-window-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--td-border-level-2-color);
+  border-radius: var(--td-radius-default);
+  outline: none;
+  background: var(--td-bg-color-specialcomponent);
+  color: var(--td-text-color-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  transition: border-color 0.2s linear, box-shadow 0.2s linear;
+
+  &:hover {
+    border-color: var(--td-text-color-disabled);
+  }
+
+  &:focus {
+    border-color: var(--td-brand-color);
+    box-shadow: 0 0 0 2px var(--td-brand-color-focus);
+  }
+
+  &[aria-invalid='true'] {
+    border-color: var(--td-error-color);
   }
 }
 

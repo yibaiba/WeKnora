@@ -2250,6 +2250,9 @@ export default {
       dimensionOverrideDesc: '제공자 문서에서 이 모델이 dimensions 매개변수를 지원한다고 확인한 경우에만 켜세요.',
       supportsVisionLabel: '비전/멀티모달 지원',
       supportsVisionDesc: '모델의 이미지 등 멀티모달 입력 지원 여부',
+      contextWindowTokensLabel: '컨텍스트 창(Token)',
+      contextWindowTokensPlaceholder: '0이면 기본값 8192 사용',
+      contextWindowTokensDesc: '스마트 전체 텍스트 분석에 사용하는 모델의 전체 컨텍스트 창입니다. 0 또는 빈 값은 기본값 8192를 사용하며 범위는 4096~2000000입니다.',
       maxConcurrencyLabel: '백그라운드 동시 실행 상한',
       maxConcurrencyPlaceholder: '0이면 전역 기본값 사용',
       maxConcurrencyDesc: '문서 인덱싱/보강 등 백그라운드 작업이 이 모델을 호출하는 동시 실행 수를 제한합니다(모델별로 모든 복제본이 공유). 0 또는 비워 두면 전역 기본값을 사용하며, 대화형 채팅에는 영향을 주지 않습니다.',
@@ -2381,7 +2384,8 @@ export default {
         modelNameMax: '모델 이름은 100자를 초과할 수 없습니다',
         baseUrlRequired: 'Base URL을 입력해주세요',
         baseUrlEmpty: 'Base URL은 비워둘 수 없습니다',
-        baseUrlInvalid: 'Base URL 형식이 올바르지 않습니다. 유효한 URL을 입력해주세요'
+        baseUrlInvalid: 'Base URL 형식이 올바르지 않습니다. 유효한 URL을 입력해주세요',
+        contextWindowTokensInvalid: '컨텍스트 창은 0 또는 4096~2000000 사이의 정수여야 합니다'
       },
       thinkingControl: {
         thinkingType: {
