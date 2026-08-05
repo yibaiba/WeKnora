@@ -451,12 +451,17 @@ func (e *AgentEngine) runToolCall(
 		if duration == 0 {
 			duration = time.Since(taskStart).Milliseconds()
 		}
+		var failure *types.ToolFailure
+		if completed.Result != nil {
+			failure = cloneToolFailure(completed.Result.Failure)
+		}
 		emitTaskEvent(ctx, interfaces.AgentTaskEvent{
 			Kind:       taskEventToolFinished,
 			Round:      round,
 			ToolName:   tc.Function.Name,
 			Status:     status,
 			DurationMS: duration,
+			Failure:    failure,
 		})
 	}()
 
@@ -473,6 +478,9 @@ func (e *AgentEngine) runToolCall(
 				ProviderMetadata: tc.ProviderMetadata,
 				Result: &types.ToolResult{
 					Success: false,
+					Failure: &types.ToolFailure{
+						Code: "TOOL_ARGUMENTS_INVALID", Constraint: "valid_json",
+					},
 					Error: fmt.Sprintf(
 						"Failed to parse tool arguments: %v", err,
 					) + "\n\n[Analyze the error above and try a different approach.]",
@@ -499,7 +507,10 @@ func (e *AgentEngine) runToolCall(
 				ProviderMetadata: tc.ProviderMetadata,
 				Result: &types.ToolResult{
 					Success: false,
-					Error:   fmt.Sprintf("Failed to parse repaired tool arguments: %v", err),
+					Failure: &types.ToolFailure{
+						Code: "TOOL_ARGUMENTS_INVALID", Constraint: "valid_json",
+					},
+					Error: fmt.Sprintf("Failed to parse repaired tool arguments: %v", err),
 				},
 			}
 		}
@@ -667,5 +678,14 @@ func taskSafeToolResult(ctx context.Context, result *types.ToolResult) *types.To
 	return &types.ToolResult{
 		Success: result.Success,
 		Error:   agenttools.ToolErrorForObservability(ctx, result.Error),
+		Failure: cloneToolFailure(result.Failure),
 	}
+}
+
+func cloneToolFailure(failure *types.ToolFailure) *types.ToolFailure {
+	if failure == nil {
+		return nil
+	}
+	copy := *failure
+	return &copy
 }

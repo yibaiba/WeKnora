@@ -24,22 +24,52 @@ type previewIngestionChunkingOutput struct {
 
 func newPreviewIngestionChunking(session *ingestionAgentSession) *previewIngestionChunking {
 	return &previewIngestionChunking{
-		BaseTool: agenttools.NewBaseTool(previewIngestionChunkingTool, "Run the production chunker with a normalized candidate configuration. Success returns candidate_id, deterministic metrics, and next_action; submit immediately when next_action is submit_ingestion_decision.", json.RawMessage(`{
-  "type":"object",
-  "properties":{
-    "strategy":{"type":"string","enum":["auto","heading","heuristic","legacy","recursive"]},
-    "chunk_size":{"type":"integer","minimum":100,"maximum":4000},
-    "chunk_overlap":{"type":"integer","minimum":0,"maximum":500},
-    "enable_parent_child":{"type":"boolean"},
-    "parent_chunk_size":{"type":"integer","minimum":512,"maximum":8192},
-    "child_chunk_size":{"type":"integer","minimum":64,"maximum":2048},
-    "separators":{"type":"array","minItems":1,"items":{"type":"string","enum":["\n\n","\n","。","！","？","；",";"," "]}}
-  },
-  "required":["strategy","chunk_size","chunk_overlap","enable_parent_child","parent_chunk_size","child_chunk_size","separators"],
-  "additionalProperties":false
-}`)),
+		BaseTool: agenttools.NewBaseTool(
+			previewIngestionChunkingTool,
+			"Run the production chunker with a validated candidate configuration. chunk_overlap must not exceed half of chunk_size, and child_chunk_size must not exceed parent_chunk_size. Success returns candidate_id, deterministic metrics, and next_action; submit immediately when next_action is submit_ingestion_decision.",
+			previewIngestionChunkingSchema(),
+		),
 		session: session,
 	}
+}
+
+func previewIngestionChunkingSchema() json.RawMessage {
+	properties := map[string]any{
+		"strategy": map[string]any{
+			"type": "string", "enum": allowedChunkingStrategyValues[:],
+		},
+		"chunk_size": map[string]any{
+			"type": "integer", "minimum": minimumAdvisorChunkSize, "maximum": maximumAdvisorChunkSize,
+		},
+		"chunk_overlap": map[string]any{
+			"type": "integer", "minimum": 0, "maximum": maximumAdvisorOverlap,
+			"description": "Must be at most half of chunk_size.",
+		},
+		"enable_parent_child": map[string]any{"type": "boolean"},
+		"parent_chunk_size": map[string]any{
+			"type": "integer", "minimum": minimumAdvisorParentSize, "maximum": maximumAdvisorParentSize,
+		},
+		"child_chunk_size": map[string]any{
+			"type": "integer", "minimum": minimumAdvisorChildSize, "maximum": maximumAdvisorChildSize,
+			"description": "Must not exceed parent_chunk_size.",
+		},
+		"separators": map[string]any{
+			"type": "array", "minItems": 1,
+			"items": map[string]any{"type": "string", "enum": allowedIngestionSeparatorValues[:]},
+		},
+	}
+	schema, err := json.Marshal(map[string]any{
+		"type": "object", "properties": properties,
+		"required": []string{
+			"strategy", "chunk_size", "chunk_overlap", "enable_parent_child",
+			"parent_chunk_size", "child_chunk_size", "separators",
+		},
+		"additionalProperties": false,
+	})
+	if err != nil {
+		panic(fmt.Sprintf("marshal ingestion preview schema: %v", err))
+	}
+	return schema
 }
 
 func (t *previewIngestionChunking) Execute(
@@ -48,7 +78,9 @@ func (t *previewIngestionChunking) Execute(
 ) (*types.ToolResult, error) {
 	var input types.IngestionChunkingRecommendation
 	if err := decodeIngestionToolInput(raw, &input); err != nil {
-		return ingestionToolFailure(fmt.Errorf("候选参数无效: %w", err))
+		return ingestionToolFailure(wrapIngestionToolError(
+			err, ingestionFailureArgumentsInvalid, "", "json_schema", "候选参数无效",
+		))
 	}
 	candidate, err := t.session.preview(input)
 	if err != nil {
@@ -113,15 +145,23 @@ func (t *submitIngestionDecision) Execute(
 ) (*types.ToolResult, error) {
 	var input submitIngestionDecisionInput
 	if err := decodeIngestionToolInput(raw, &input); err != nil {
-		return ingestionToolFailure(fmt.Errorf("提交决策参数无效: %w", err))
+		return ingestionToolFailure(wrapIngestionToolError(
+			err, ingestionFailureArgumentsInvalid, "", "json_schema", "提交决策参数无效",
+		))
 	}
 	analysis, err := t.session.submit(input)
 	if err != nil {
-		return ingestionToolFailure(err)
+		return ingestionToolFailure(wrapIngestionToolError(
+			err, ingestionFailureDecisionInvalid, "candidate_id", "previewed_hard_valid_candidate",
+			"提交的候选决策无效",
+		))
 	}
 	candidate, ok := t.session.candidate(input.CandidateID)
 	if !ok {
-		return ingestionToolFailure(fmt.Errorf("已提交候选 %q 丢失", input.CandidateID))
+		return ingestionToolFailure(newIngestionToolError(
+			ingestionFailureDecisionInvalid, "candidate_id", "persisted_candidate",
+			fmt.Sprintf("已提交候选 %q 丢失", input.CandidateID),
+		))
 	}
 	return ingestionToolJSON(map[string]interface{}{
 		"candidate_id":  input.CandidateID,

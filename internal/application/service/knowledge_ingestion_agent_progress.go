@@ -114,15 +114,29 @@ func (p *ingestionAgentSpanProgress) finishToolSpan(key string, step types.Inges
 		p.active[key] = queue[1:]
 	}
 	if step.Status == "failed" {
+		code := step.FailureCode
+		if code == "" {
+			code = ingestionToolSpanErrorCode
+		}
 		p.tracker.FailSpan(
-			p.ctx, span, ingestionToolSpanErrorCode,
-			fmt.Sprintf("只读工具 %s 执行失败", step.ToolName), nil,
+			p.ctx, span, code, ingestionToolSpanFailureMessage(step), nil,
 		)
 		return
 	}
 	p.tracker.EndSpan(p.ctx, span, types.JSONMap{
 		"status": step.Status, "duration_ms": step.DurationMS,
 	})
+}
+
+func ingestionToolSpanFailureMessage(step types.IngestionAgentStep) string {
+	if step.FailureCode == "" {
+		return fmt.Sprintf("入库工具 %s 执行失败，详情已脱敏", step.ToolName)
+	}
+	return fmt.Sprintf(
+		"入库工具 %s 执行失败（错误码 %s，字段 %s，约束 %s）",
+		step.ToolName, step.FailureCode,
+		safeFailureValue(step.FailureField), safeFailureValue(step.FailureConstraint),
+	)
 }
 
 func (p *ingestionAgentSpanProgress) nextSpanName(phase string) string {
@@ -136,8 +150,6 @@ func ingestionProgressKey(step types.IngestionAgentStep) string {
 
 func ingestionPhaseForTool(toolName string) string {
 	switch toolName {
-	case inspectIngestionDocumentTool:
-		return "analyze_document"
 	case previewIngestionChunkingTool:
 		return "preview_candidates"
 	case submitIngestionDecisionTool:

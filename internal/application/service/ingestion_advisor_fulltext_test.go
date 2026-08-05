@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type ingestionAdvisorV2Model struct {
+type ingestionAdvisorFullTextModel struct {
 	agent               *ingestionAdvisorScriptedModel
 	mapErr              error
 	mapWaitForContext   bool
@@ -33,7 +33,7 @@ type ingestionAdvisorV2Model struct {
 	agentRedacted bool
 }
 
-func (m *ingestionAdvisorV2Model) Chat(
+func (m *ingestionAdvisorFullTextModel) Chat(
 	ctx context.Context,
 	messages []chat.Message,
 	options *chat.ChatOptions,
@@ -58,7 +58,7 @@ func (m *ingestionAdvisorV2Model) Chat(
 	return mapEvidenceResponse("完整正文的聚合证据"), nil
 }
 
-func (m *ingestionAdvisorV2Model) ChatStream(
+func (m *ingestionAdvisorFullTextModel) ChatStream(
 	ctx context.Context,
 	messages []chat.Message,
 	options *chat.ChatOptions,
@@ -79,12 +79,11 @@ func (m *ingestionAdvisorV2Model) ChatStream(
 	return m.agent.ChatStream(ctx, messages, options)
 }
 
-func (m *ingestionAdvisorV2Model) GetModelName() string { return "advisor-v2" }
-func (m *ingestionAdvisorV2Model) GetModelID() string   { return "model-1" }
+func (m *ingestionAdvisorFullTextModel) GetModelName() string { return "advisor-full-text" }
+func (m *ingestionAdvisorFullTextModel) GetModelID() string   { return "model-1" }
 
-func TestModelIngestionAdvisorV2MapsFullTextBeforePreviewAndSubmission(t *testing.T) {
+func TestModelIngestionAdvisorMapsFullTextBeforePreviewAndSubmission(t *testing.T) {
 	request := validIngestionAdvisorRequest()
-	request.PromptVersion = ""
 	config := validIngestionRecommendation()
 	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
 	require.NoError(t, err)
@@ -99,10 +98,10 @@ func TestModelIngestionAdvisorV2MapsFullTextBeforePreviewAndSubmission(t *testin
 		candidateID,
 	)
 	agentModel := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolResponse("preview-v2", previewIngestionChunkingTool, previewArgs),
-		toolResponse("submit-v2", submitIngestionDecisionTool, submitArgs),
+		toolResponse("preview-full-text", previewIngestionChunkingTool, previewArgs),
+		toolResponse("submit-full-text", submitIngestionDecisionTool, submitArgs),
 	}}
-	model := &ingestionAdvisorV2Model{agent: agentModel, logSensitivePayload: true}
+	model := &ingestionAdvisorFullTextModel{agent: agentModel, logSensitivePayload: true}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 	logs := &lockedBuffer{}
 	logger.SetOutput(logs)
@@ -113,7 +112,6 @@ func TestModelIngestionAdvisorV2MapsFullTextBeforePreviewAndSubmission(t *testin
 	require.NoError(t, err)
 	require.Equal(t, candidateID, result.SelectedCandidateID)
 	require.Equal(t, 2, result.AgentRun.ActualRounds)
-	require.NotContains(t, result.AgentRun.AvailableTools, inspectIngestionDocumentTool)
 	require.Contains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionDecisionTool)
 	require.Len(t, model.mapCalls, 1)
@@ -133,10 +131,9 @@ func TestModelIngestionAdvisorV2MapsFullTextBeforePreviewAndSubmission(t *testin
 	require.NotContains(t, logs.String(), "完整正文的聚合证据")
 }
 
-func TestModelIngestionAdvisorV2UsesEvidenceOutsideFormerSampleWindows(t *testing.T) {
+func TestModelIngestionAdvisorUsesEvidenceOutsideFormerSampleWindows(t *testing.T) {
 	const evidenceMarker = "faq_marker_outside_sample"
 	request := validIngestionAdvisorRequest()
-	request.PromptVersion = types.IngestionPromptVersionV2
 	request.Content = strings.Repeat("常", 5000) + evidenceMarker + strings.Repeat("规", 19000)
 	config := validIngestionRecommendation()
 	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
@@ -155,7 +152,7 @@ func TestModelIngestionAdvisorV2UsesEvidenceOutsideFormerSampleWindows(t *testin
 		toolResponse("preview-faq", previewIngestionChunkingTool, previewArgs),
 		toolResponse("submit-faq", submitIngestionDecisionTool, submitArgs),
 	}}
-	model := &ingestionAdvisorV2Model{
+	model := &ingestionAdvisorFullTextModel{
 		agent: agentModel, agentRequiredText: evidenceMarker,
 		mapResponse: evidenceAwareMapResponse(evidenceMarker),
 	}
@@ -170,11 +167,10 @@ func TestModelIngestionAdvisorV2UsesEvidenceOutsideFormerSampleWindows(t *testin
 	require.Equal(t, 1, countAnalysisCalls(model.mapCalls, "Reduce 阶段"))
 }
 
-func TestModelIngestionAdvisorV2AnalysisFailureDoesNotStartAgent(t *testing.T) {
+func TestModelIngestionAdvisorAnalysisFailureDoesNotStartAgent(t *testing.T) {
 	request := validIngestionAdvisorRequest()
-	request.PromptVersion = types.IngestionPromptVersionV2
 	agentModel := &ingestionAdvisorScriptedModel{}
-	model := &ingestionAdvisorV2Model{
+	model := &ingestionAdvisorFullTextModel{
 		agent: agentModel, mapErr: errors.New("provider error echoed private body"),
 	}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
@@ -188,12 +184,11 @@ func TestModelIngestionAdvisorV2AnalysisFailureDoesNotStartAgent(t *testing.T) {
 	require.Empty(t, agentModel.calls)
 }
 
-func TestModelIngestionAdvisorV2RedactsAgentProviderError(t *testing.T) {
+func TestModelIngestionAdvisorRedactsAgentProviderError(t *testing.T) {
 	const sensitiveEvidence = "provider echoed aggregated private evidence"
 	request := validIngestionAdvisorRequest()
-	request.PromptVersion = types.IngestionPromptVersionV2
 	providerErr := errors.New(sensitiveEvidence)
-	model := &ingestionAdvisorV2Model{
+	model := &ingestionAdvisorFullTextModel{
 		agent: &ingestionAdvisorScriptedModel{streamErr: providerErr},
 	}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
@@ -207,12 +202,11 @@ func TestModelIngestionAdvisorV2RedactsAgentProviderError(t *testing.T) {
 	require.NotErrorIs(t, err, providerErr)
 }
 
-func TestModelIngestionAdvisorV2TotalTimeoutStopsDuringMap(t *testing.T) {
+func TestModelIngestionAdvisorTotalTimeoutStopsDuringMap(t *testing.T) {
 	request := validIngestionAdvisorRequest()
-	request.PromptVersion = types.IngestionPromptVersionV2
 	request.Timeout = 20 * time.Millisecond
 	agentModel := &ingestionAdvisorScriptedModel{}
-	model := &ingestionAdvisorV2Model{agent: agentModel, mapWaitForContext: true}
+	model := &ingestionAdvisorFullTextModel{agent: agentModel, mapWaitForContext: true}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 	started := time.Now()
 
@@ -226,11 +220,10 @@ func TestModelIngestionAdvisorV2TotalTimeoutStopsDuringMap(t *testing.T) {
 	require.Empty(t, agentModel.calls)
 }
 
-func TestModelIngestionAdvisorV2TotalTimeoutCoversAgent(t *testing.T) {
+func TestModelIngestionAdvisorTotalTimeoutCoversAgent(t *testing.T) {
 	request := validIngestionAdvisorRequest()
-	request.PromptVersion = types.IngestionPromptVersionV2
 	request.Timeout = 20 * time.Millisecond
-	model := &ingestionAdvisorV2Model{
+	model := &ingestionAdvisorFullTextModel{
 		agent: &ingestionAdvisorScriptedModel{}, agentWaitForContext: true,
 	}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
@@ -245,15 +238,12 @@ func TestModelIngestionAdvisorV2TotalTimeoutCoversAgent(t *testing.T) {
 	require.Len(t, model.mapCalls, 1)
 }
 
-func TestNewIngestionAgentSessionV2DoesNotRetainSampleBody(t *testing.T) {
+func TestNewIngestionAgentSessionRetainsOnlyStatistics(t *testing.T) {
 	content := "sensitive full body"
 
-	session := newIngestionAgentSessionForPromptVersion(
-		content, types.IngestionChunkingConstraints{}, types.IngestionPromptVersionV2,
-	)
+	session := newIngestionAgentSession(content, types.IngestionChunkingConstraints{})
 
-	require.Equal(t, len([]rune(content)), session.profile.Statistics.CharacterCount)
-	require.Equal(t, types.DocumentContentSample{}, session.profile.Sample)
+	require.Equal(t, len([]rune(content)), session.statistics.CharacterCount)
 }
 
 func messagesContainText(messages []chat.Message, text string) bool {

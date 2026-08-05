@@ -92,7 +92,10 @@ function isAgentStep(value: unknown): value is IngestionAgentStep {
     typeof step.status === 'string' &&
     (step.duration_ms === undefined || isFiniteNumber(step.duration_ms)) &&
     (step.candidate_id === undefined || typeof step.candidate_id === 'string') &&
-    (step.score === undefined || isFiniteNumber(step.score))
+    (step.score === undefined || isFiniteNumber(step.score)) &&
+    (step.failure_code === undefined || typeof step.failure_code === 'string') &&
+    (step.failure_field === undefined || typeof step.failure_field === 'string') &&
+    (step.failure_constraint === undefined || typeof step.failure_constraint === 'string')
 }
 
 function normalizeAgentRun(value: unknown): IngestionAgentRun {
@@ -116,8 +119,7 @@ function hasAnalysisProfile(analysis: Record<string, unknown>): boolean {
     typeof analysis.recommended_content_mode === 'string' &&
     isStringArray(analysis.reason_codes) &&
     typeof analysis.summary === 'string' &&
-    typeof analysis.model_id === 'string' &&
-    typeof analysis.prompt_version === 'string'
+    typeof analysis.model_id === 'string'
 }
 
 export function asIngestionAnalysis(value: unknown): IngestionAnalysis | null {

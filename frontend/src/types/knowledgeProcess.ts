@@ -63,7 +63,6 @@ export type IngestionAdvisorMode = 'smart' | 'off'
 
 export interface IngestionAdvisorConfig {
   mode: IngestionAdvisorMode
-  prompt_version?: 'v1' | 'v2'
   allow_web_access?: boolean
   allow_read_only_mcp?: boolean
 }
@@ -122,6 +121,9 @@ export interface IngestionAgentStep {
   duration_ms?: number
   candidate_id?: string
   score?: number
+  failure_code?: string
+  failure_field?: string
+  failure_constraint?: string
 }
 
 export interface IngestionAgentRun {
@@ -142,7 +144,6 @@ export interface IngestionAnalysis {
   recommended_chunking: IngestionChunkingRecommendation
   applied_chunking: IngestionChunkingRecommendation
   model_id: string
-  prompt_version: string
   candidates: IngestionChunkingCandidate[]
   selected_candidate_id: string
   selection_reason_codes: string[]

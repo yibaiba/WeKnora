@@ -132,6 +132,10 @@ func (r *ToolRegistry) ExecuteTool(
 	// This catches invalid arguments early, avoiding a wasted tool execution + LLM round.
 	if validationErrs := ValidateParams(args, tool.Parameters()); len(validationErrs) > 0 {
 		errMsg := FormatValidationErrors(validationErrs) + toolErrorHint
+		failure := &types.ToolFailure{Code: "TOOL_ARGUMENTS_INVALID", Constraint: "json_schema"}
+		if validationErrs[0].Param != "" {
+			failure.Field = validationErrs[0].Param
+		}
 		common.PipelineWarn(ctx, "AgentTool", "validation_failed", map[string]interface{}{
 			"tool":   name,
 			"errors": ToolErrorForObservability(ctx, errMsg),
@@ -139,6 +143,7 @@ func (r *ToolRegistry) ExecuteTool(
 		return &types.ToolResult{
 			Success: false,
 			Error:   errMsg,
+			Failure: failure,
 		}, nil
 	}
 

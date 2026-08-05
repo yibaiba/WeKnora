@@ -186,11 +186,20 @@ type Cleanable interface {
 
 // ToolResult represents the result of a tool execution
 type ToolResult struct {
-	Success bool                   `json:"success"`          // Whether the tool executed successfully
-	Output  string                 `json:"output"`           // Human-readable output
-	Data    map[string]interface{} `json:"data,omitempty"`   // Structured data for programmatic use
-	Error   string                 `json:"error,omitempty"`  // Error message if execution failed
-	Images  []string               `json:"images,omitempty"` // Base64 data URIs from tool (e.g. MCP image content)
+	Success bool                   `json:"success"`           // Whether the tool executed successfully
+	Output  string                 `json:"output"`            // Human-readable output
+	Data    map[string]interface{} `json:"data,omitempty"`    // Structured data for programmatic use
+	Error   string                 `json:"error,omitempty"`   // Error message if execution failed
+	Failure *ToolFailure           `json:"failure,omitempty"` // Explicitly safe failure metadata
+	Images  []string               `json:"images,omitempty"`  // Base64 data URIs from tool (e.g. MCP image content)
+}
+
+// ToolFailure contains non-sensitive failure metadata that may be retained
+// when tool arguments, output, and the original error are redacted.
+type ToolFailure struct {
+	Code       string `json:"code"`
+	Field      string `json:"field,omitempty"`
+	Constraint string `json:"constraint,omitempty"`
 }
 
 // ToolCall represents a single tool invocation within an agent step

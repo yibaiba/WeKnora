@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -17,10 +18,12 @@ type ValidationError struct {
 //
 // Supported checks:
 //   - required: ensures all required fields are present and non-null
+//   - additionalProperties: rejects undeclared fields when false
 //   - type: verifies the JSON type matches (string, number, integer, boolean, array, object)
 //   - enum: checks the value is in the allowed set
 //   - minimum / maximum: numeric bounds
 //   - minLength / maxLength: string length bounds
+//   - minItems / maxItems and array item schemas
 func ValidateParams(args json.RawMessage, schema json.RawMessage) []ValidationError {
 	if len(schema) == 0 || len(args) == 0 {
 		return nil
@@ -42,6 +45,9 @@ func ValidateParams(args json.RawMessage, schema json.RawMessage) []ValidationEr
 	}
 
 	var errs []ValidationError
+	if allowExtra, ok := schemaDef["additionalProperties"].(bool); ok && !allowExtra {
+		errs = append(errs, validateAdditionalProperties(argsMap, properties)...)
+	}
 
 	// Check required fields
 	if reqRaw, ok := schemaDef["required"]; ok {
@@ -63,10 +69,16 @@ func ValidateParams(args json.RawMessage, schema json.RawMessage) []ValidationEr
 	}
 
 	// Validate each provided argument against its property schema
-	for key, val := range argsMap {
+	keys := make([]string, 0, len(argsMap))
+	for key := range argsMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		val := argsMap[key]
 		propDef, exists := properties[key]
 		if !exists {
-			continue // extra params are allowed (LLMs sometimes add them)
+			continue
 		}
 		prop, ok := propDef.(map[string]any)
 		if !ok {
@@ -149,6 +161,52 @@ func validateProperty(name string, val any, prop map[string]any) []ValidationErr
 		}
 	}
 
+	if targetType == "array" {
+		errs = append(errs, validateArrayProperty(name, val, prop)...)
+	}
+
+	return errs
+}
+
+func validateAdditionalProperties(args, properties map[string]any) []ValidationError {
+	var errs []ValidationError
+	names := make([]string, 0, len(args))
+	for name := range args {
+		if _, exists := properties[name]; exists {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		errs = append(errs, ValidationError{
+			Param: name, Message: fmt.Sprintf("parameter '%s' is not allowed", name),
+		})
+	}
+	return errs
+}
+
+func validateArrayProperty(name string, value any, schema map[string]any) []ValidationError {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	var errs []ValidationError
+	if minimum, exists := getFloat(schema, "minItems"); exists && len(items) < int(minimum) {
+		errs = append(errs, ValidationError{
+			Param: name, Message: fmt.Sprintf("parameter '%s' must have at least %d items", name, int(minimum)),
+		})
+	}
+	if maximum, exists := getFloat(schema, "maxItems"); exists && len(items) > int(maximum) {
+		errs = append(errs, ValidationError{
+			Param: name, Message: fmt.Sprintf("parameter '%s' must have at most %d items", name, int(maximum)),
+		})
+	}
+	itemSchema, _ := schema["items"].(map[string]any)
+	for index, item := range items {
+		itemName := fmt.Sprintf("%s[%d]", name, index)
+		errs = append(errs, validateProperty(itemName, item, itemSchema)...)
+	}
 	return errs
 }
 

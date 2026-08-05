@@ -5,8 +5,6 @@ import "time"
 const (
 	IngestionAdvisorModeSmart = "smart"
 	IngestionAdvisorModeOff   = "off"
-	IngestionPromptVersionV1  = "v1"
-	IngestionPromptVersionV2  = "v2"
 )
 
 const (
@@ -30,7 +28,6 @@ const (
 // A nil config preserves the historical processing path.
 type IngestionAdvisorConfig struct {
 	Mode             string `json:"mode"`
-	PromptVersion    string `json:"prompt_version,omitempty"`
 	AllowWebAccess   bool   `json:"allow_web_access,omitempty"`
 	AllowReadOnlyMCP bool   `json:"allow_read_only_mcp,omitempty"`
 }
@@ -48,7 +45,6 @@ type IngestionAdvisorRequest struct {
 	GraphEnabled        bool
 	WikiEnabled         bool
 	ModelID             string
-	PromptVersion       string
 	AllowWebAccess      bool
 	AllowReadOnlyMCP    bool
 	ChunkingConstraints IngestionChunkingConstraints
@@ -81,12 +77,15 @@ type IngestionAgentWarning struct {
 }
 
 type IngestionAgentStep struct {
-	Round       int     `json:"round"`
-	ToolName    string  `json:"tool_name"`
-	Status      string  `json:"status"`
-	DurationMS  int64   `json:"duration_ms,omitempty"`
-	CandidateID string  `json:"candidate_id,omitempty"`
-	Score       float64 `json:"score,omitempty"`
+	Round             int     `json:"round"`
+	ToolName          string  `json:"tool_name"`
+	Status            string  `json:"status"`
+	DurationMS        int64   `json:"duration_ms,omitempty"`
+	CandidateID       string  `json:"candidate_id,omitempty"`
+	Score             float64 `json:"score,omitempty"`
+	FailureCode       string  `json:"failure_code,omitempty"`
+	FailureField      string  `json:"failure_field,omitempty"`
+	FailureConstraint string  `json:"failure_constraint,omitempty"`
 }
 
 type IngestionAgentRun struct {
@@ -175,7 +174,6 @@ type IngestionAnalysis struct {
 	RecommendedChunking    IngestionChunkingRecommendation `json:"recommended_chunking"`
 	AppliedChunking        IngestionChunkingRecommendation `json:"applied_chunking"`
 	ModelID                string                          `json:"model_id"`
-	PromptVersion          string                          `json:"prompt_version"`
 	Candidates             []IngestionChunkingCandidate    `json:"candidates"`
 	SelectedCandidateID    string                          `json:"selected_candidate_id"`
 	SelectionReasonCodes   []string                        `json:"selection_reason_codes"`
@@ -215,16 +213,4 @@ type LanguageStats struct {
 	DigitCharacters int     `json:"digit_characters"`
 	CJKRatio        float64 `json:"cjk_ratio"`
 	LatinRatio      float64 `json:"latin_ratio"`
-}
-
-type DocumentContentSample struct {
-	Head      string `json:"head"`
-	Middle    string `json:"middle,omitempty"`
-	Tail      string `json:"tail,omitempty"`
-	Truncated bool   `json:"truncated"`
-}
-
-type IngestionDocumentProfile struct {
-	Statistics DocumentStructureStats `json:"statistics"`
-	Sample     DocumentContentSample  `json:"sample"`
 }

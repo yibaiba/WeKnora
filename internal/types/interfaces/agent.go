@@ -26,6 +26,7 @@ type AgentTaskEvent struct {
 	ToolName   string
 	Status     string
 	DurationMS int64
+	Failure    *types.ToolFailure
 }
 
 // AgentTaskOptions configures a bounded, non-chat Agent run. Zero values keep

@@ -717,6 +717,38 @@ func TestExecuteTaskContinuesParallelSiblingsAfterFailedTermination(t *testing.T
 	require.Len(t, state.RoundSteps[0].ToolCalls, 2)
 }
 
+func TestExecuteTaskEmitsSafeToolFailureMetadata(t *testing.T) {
+	model := taskToolCallModel(types.LLMToolCall{
+		ID: "preview-1", Function: types.FunctionCall{Name: "preview_task", Arguments: `{}`},
+	})
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(newFixedResultTool("preview_task", types.ToolResult{
+		Success: false,
+		Error:   "private tool failure details",
+		Failure: &types.ToolFailure{
+			Code: "SAFE_FAILURE", Field: "chunk_overlap", Constraint: "at_most_half",
+		},
+	}))
+	var events []interfaces.AgentTaskEvent
+
+	_, err := engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
+		SessionID: "task-session", MessageID: "task-message", Query: "perform task",
+		Options: interfaces.AgentTaskOptions{
+			MaxIterations: 1, SkipFinalAnswer: true,
+			StructuredEventFn: func(event interfaces.AgentTaskEvent) { events = append(events, event) },
+		},
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, events, interfaces.AgentTaskEvent{
+		Kind: taskEventToolFinished, Round: 1, ToolName: "preview_task", Status: "failed",
+		Failure: &types.ToolFailure{
+			Code: "SAFE_FAILURE", Field: "chunk_overlap", Constraint: "at_most_half",
+		},
+	})
+}
+
 func taskToolCallModel(toolCalls ...types.LLMToolCall) *mockChat {
 	return &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
 		ResponseType: types.ResponseTypeAnswer,

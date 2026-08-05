@@ -8,20 +8,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-const (
-	ingestionSampleBudget     = 24000
-	ingestionSampleWindowSize = 8000
-)
-
-// BuildIngestionDocumentProfile derives full-document statistics and a
-// deterministic, rune-safe prompt sample without mutating caller data.
-func BuildIngestionDocumentProfile(content string) types.IngestionDocumentProfile {
-	return types.IngestionDocumentProfile{
-		Statistics: BuildIngestionDocumentStatistics(content),
-		Sample:     sampleDocumentContent([]rune(content)),
-	}
-}
-
 // BuildIngestionDocumentStatistics profiles the complete extracted text
 // without retaining any body sample.
 func BuildIngestionDocumentStatistics(content string) types.DocumentStructureStats {
@@ -92,19 +78,6 @@ func profileLanguage(content string, stats *types.DocumentStructureStats) {
 	}
 	stats.Language.CJKRatio = ratio(stats.Language.CJKCharacters, stats.CharacterCount)
 	stats.Language.LatinRatio = ratio(stats.Language.LatinCharacters, stats.CharacterCount)
-}
-
-func sampleDocumentContent(runes []rune) types.DocumentContentSample {
-	if len(runes) <= ingestionSampleBudget {
-		return types.DocumentContentSample{Head: string(runes)}
-	}
-	middleStart := len(runes)/2 - ingestionSampleWindowSize/2
-	return types.DocumentContentSample{
-		Head:      string(runes[:ingestionSampleWindowSize]),
-		Middle:    string(runes[middleStart : middleStart+ingestionSampleWindowSize]),
-		Tail:      string(runes[len(runes)-ingestionSampleWindowSize:]),
-		Truncated: true,
-	}
 }
 
 func incrementHeadingCount(line string, counts *types.HeadingLevelCounts) {

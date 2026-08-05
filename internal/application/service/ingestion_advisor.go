@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -51,8 +50,7 @@ func (a *modelIngestionAdvisor) Analyze(
 	analysisCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result, err := a.analyze(analysisCtx, request, runtime)
-	if effectiveIngestionPromptVersion(request.PromptVersion) == types.IngestionPromptVersionV2 &&
-		analysisCtx.Err() == context.DeadlineExceeded {
+	if analysisCtx.Err() == context.DeadlineExceeded {
 		return result, newIngestionAdvisorRunError(
 			ingestionAdvisorErrorDocumentAnalysis, "文档全文分析与入库决策超过总超时 %s", timeout,
 		)
@@ -72,12 +70,9 @@ func (a *modelIngestionAdvisor) analyze(
 		)
 	}
 
-	promptVersion := effectiveIngestionPromptVersion(request.PromptVersion)
-	session := newIngestionAgentSessionForPromptVersion(
-		request.Content, request.ChunkingConstraints, promptVersion,
-	)
+	session := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
 	preparation, err := prepareIngestionAgent(ctx, ingestionAgentPreparationRequest{
-		Model: chatModel, Request: request, Session: session, PromptVersion: promptVersion,
+		Model: chatModel, Request: request, Session: session,
 	})
 	if err != nil {
 		return nil, err
@@ -107,8 +102,7 @@ func (a *modelIngestionAdvisor) analyze(
 	result := buildIngestionAdvisorResult(session, run)
 	cleanupErr := cleanupIngestionWebSearch(ctx, webState, ingestionAgentSessionID(request))
 	if executeErr != nil {
-		redactDetails := promptVersion == types.IngestionPromptVersionV2
-		return result, classifyIngestionAgentExecutionError(errors.Join(executeErr, cleanupErr), redactDetails)
+		return result, classifyIngestionAgentExecutionError(errors.Join(executeErr, cleanupErr), true)
 	}
 	if cleanupErr != nil {
 		return result, wrapIngestionAdvisorRunError(
@@ -156,9 +150,7 @@ type executeIngestionAgentRequest struct {
 
 func executeIngestionAgent(ctx context.Context, request executeIngestionAgentRequest) (*types.AgentState, error) {
 	callCtx := types.WithLLMCallMetadata(ctx, "document_analysis", "")
-	if effectiveIngestionPromptVersion(request.Request.PromptVersion) == types.IngestionPromptVersionV2 {
-		callCtx = logger.WithSuppressedOutput(callCtx)
-	}
+	callCtx = logger.WithSuppressedOutput(callCtx)
 	return request.Engine.ExecuteTask(callCtx, interfaces.AgentTaskRequest{
 		SessionID: ingestionAgentSessionID(request.Request),
 		MessageID: request.Request.KnowledgeID,
@@ -179,11 +171,6 @@ func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.Ing
 			ingestionAdvisorErrorModelUnavailable, "知识库未配置摘要模型，无法执行文档智能分析",
 		)
 	}
-	if request.PromptVersion != "" &&
-		request.PromptVersion != types.IngestionPromptVersionV1 &&
-		request.PromptVersion != types.IngestionPromptVersionV2 {
-		return fmt.Errorf("不支持的文档分析 Prompt 版本 %q", request.PromptVersion)
-	}
 	if a == nil || a.modelService == nil {
 		return fmt.Errorf("文档智能分析服务未配置")
 	}
@@ -191,12 +178,6 @@ func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.Ing
 		return fmt.Errorf("文档智能分析缺少知识库或租户作用域")
 	}
 	return nil
-}
-
-func registerIngestionCoreTools(registry *agenttools.ToolRegistry, session *ingestionAgentSession) {
-	registry.RegisterTool(newInspectIngestionDocument(session))
-	registry.RegisterTool(newPreviewIngestionChunking(session))
-	registry.RegisterTool(newSubmitIngestionDecision(session))
 }
 
 func registerIngestionDecisionTools(registry *agenttools.ToolRegistry, session *ingestionAgentSession) {
@@ -220,14 +201,6 @@ func buildIngestionAgentConfig(request types.IngestionAdvisorRequest) *types.Age
 	}
 }
 
-func buildIngestionAgentQuery(profile types.IngestionDocumentProfile) (string, error) {
-	payload, err := json.Marshal(profile.Statistics)
-	if err != nil {
-		return "", err
-	}
-	return "请分析当前待入库文档。以下仅为全文结构统计；需要查看内容时调用 inspect_ingestion_document：\n" + string(payload), nil
-}
-
 func ingestionKnowledgeBaseInfo(request types.IngestionAdvisorRequest) []*agent.KnowledgeBaseInfo {
 	capabilities := make([]string, 0, 2)
 	if request.WikiEnabled {
@@ -248,14 +221,3 @@ func ingestionAgentSessionID(request types.IngestionAdvisorRequest) string {
 	}
 	return "ingestion-" + request.KnowledgeID
 }
-
-const ingestionAgentV1SystemPrompt = `你是智能文档入库 Agent。你的唯一目标是为当前文档选择经过真实预览验证的切分候选。
-
-必须遵循：
-1. 需要原文时用 inspect_ingestion_document 按 rune 偏移查看，每次最多 8000 字符。
-2. 必须调用 preview_ingestion_chunking 生成并比较候选；最多可保存 3 个不同候选，重复配置会复用结果。工具成功输出中的 candidate_id 是提交决策所需的唯一标识。
-3. 可并行预览候选。观察真实 diagnostics、块长度、结构保持与五维评分后再修正。saved_candidate_count 达到 candidate_limit 后严禁继续预览，下一轮必须提交。
-4. 最终必须调用 submit_ingestion_decision，并且 candidate_id 必须来自成功预览且通过硬校验的候选。已有有效候选时不必凑满 3 个；完成必要比较后立即提交。
-5. 可以选择非最高分候选，但 reason_codes 和 summary 必须明确解释与文档画像相关的取舍。
-6. 不要输出聊天式最终答案；成功提交工具会立即结束运行。
-7. Web 或 MCP 工具均为外部系统。只有在工具列表中出现时才表示用户已允许向其传输你提供的查询或原文内容。`

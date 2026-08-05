@@ -34,6 +34,9 @@ func ingestionProgressReceiver(progress func(types.IngestionAgentStep)) func(int
 		progress(types.IngestionAgentStep{
 			Round: event.Round, ToolName: event.ToolName,
 			Status: event.Status, DurationMS: event.DurationMS,
+			FailureCode:       failureCode(event.Failure),
+			FailureField:      failureField(event.Failure),
+			FailureConstraint: failureConstraint(event.Failure),
 		})
 	}
 }
@@ -57,6 +60,11 @@ func appendIngestionAgentStep(base types.IngestionAgentRun, step types.AgentStep
 			Round: step.Iteration + 1, ToolName: call.Name,
 			Status: "failed", DurationMS: call.Duration,
 		}
+		if call.Result != nil {
+			entry.FailureCode = failureCode(call.Result.Failure)
+			entry.FailureField = failureField(call.Result.Failure)
+			entry.FailureConstraint = failureConstraint(call.Result.Failure)
+		}
 		if call.Result != nil && call.Result.Success {
 			entry.Status = "succeeded"
 		}
@@ -70,6 +78,30 @@ func appendIngestionAgentStep(base types.IngestionAgentRun, step types.AgentStep
 		}
 	}
 	return base
+}
+
+func failureCode(failure *types.ToolFailure) string {
+	if failure == nil {
+		return ""
+	}
+	if failure.Code == "TOOL_ARGUMENTS_INVALID" {
+		return ingestionFailureArgumentsInvalid
+	}
+	return failure.Code
+}
+
+func failureField(failure *types.ToolFailure) string {
+	if failure == nil {
+		return ""
+	}
+	return failure.Field
+}
+
+func failureConstraint(failure *types.ToolFailure) string {
+	if failure == nil {
+		return ""
+	}
+	return failure.Constraint
 }
 
 func appendAgentWarning(
@@ -156,17 +188,32 @@ func firstFailedIngestionCoreTool(state *types.AgentState) error {
 			if call.Name == previewIngestionChunkingTool || call.Name == submitIngestionDecisionTool {
 				code = ingestionAdvisorErrorCandidate
 			}
-			return newIngestionAdvisorRunError(
-				code, "入库核心工具 %s 执行失败，详情已脱敏", call.Name,
-			)
+			return newIngestionAdvisorRunError(code, "%s", safeCoreToolFailureMessage(call))
 		}
 	}
 	return nil
 }
 
+func safeCoreToolFailureMessage(call types.ToolCall) string {
+	if call.Result == nil || call.Result.Failure == nil {
+		return fmt.Sprintf("入库核心工具 %s 执行失败，详情已脱敏", call.Name)
+	}
+	failure := call.Result.Failure
+	return fmt.Sprintf(
+		"入库核心工具 %s 执行失败（错误码 %s，字段 %s，约束 %s）",
+		call.Name, failureCode(failure), safeFailureValue(failure.Field), safeFailureValue(failure.Constraint),
+	)
+}
+
+func safeFailureValue(value string) string {
+	if value == "" {
+		return "未指定"
+	}
+	return value
+}
+
 func isIngestionCoreTool(name string) bool {
-	return name == inspectIngestionDocumentTool || name == previewIngestionChunkingTool ||
-		name == submitIngestionDecisionTool
+	return name == previewIngestionChunkingTool || name == submitIngestionDecisionTool
 }
 
 func countAgentToolCalls(state *types.AgentState) int {

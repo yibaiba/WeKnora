@@ -1204,7 +1204,6 @@ function buildProcessOverrides(): KnowledgeProcessOverrides {
   if (advisorModeAvailable.value) {
     overrides.ingestion_advisor = {
       mode: state.ingestionAdvisorMode,
-      prompt_version: 'v2',
       ...(state.ingestionAdvisorMode === 'smart' && state.allowSmartWebAccess
         ? { allow_web_access: true }
         : {}),

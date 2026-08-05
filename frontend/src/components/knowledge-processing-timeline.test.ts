@@ -60,7 +60,6 @@ test('renders every persisted ingestion analysis field and compares chunking val
     'recommended_chunking',
     'applied_chunking',
     'model_id',
-    'prompt_version',
     'candidates',
     'selected_candidate_id',
     'selection_reason_codes',
@@ -125,6 +124,11 @@ test('localizes every structured ingestion failure category in all supported loc
     'INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED',
     'INGESTION_CORE_TOOL_FAILED',
     'INGESTION_CANDIDATE_INVALID',
+    'INGESTION_TOOL_FAILED',
+    'INGESTION_TOOL_ARGUMENTS_INVALID',
+    'INGESTION_CANDIDATE_PREVIEW_FAILED',
+    'INGESTION_CANDIDATE_LIMIT_REACHED',
+    'INGESTION_DECISION_INVALID',
     'INGESTION_AGENT_MAX_ROUNDS',
     'INGESTION_DECISION_NOT_SUBMITTED',
     'INGESTION_AGENT_EXECUTION_FAILED',
@@ -149,7 +153,8 @@ test('builds explicit smart and knowledge-base retry payloads without mutating s
   assert.match(retryBuilder, /const previousAdvisor = source\?\.ingestion_advisor/)
   assert.match(retryBuilder, /previousAdvisor\?\.allow_web_access/)
   assert.match(retryBuilder, /previousAdvisor\?\.allow_read_only_mcp/)
-  assert.match(retryBuilder, /mode,\s*prompt_version: 'v2'/s)
+  assert.match(retryBuilder, /overrides\.ingestion_advisor = \{\s*mode,/s)
+  assert.doesNotMatch(retryBuilder, /prompt_version/)
   assert.match(source, /submitRetry\('smart', buildAdvisorRetryOverrides\('smart'\)\)/)
   assert.match(source, /submitRetry\('off', buildAdvisorRetryOverrides\('off'\)\)/)
 })

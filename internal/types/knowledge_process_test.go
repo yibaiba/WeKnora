@@ -17,7 +17,7 @@ func TestKnowledgeProcessOverridesRoundtrip(t *testing.T) {
 		ChunkingConfig:        &ChunkingConfig{ChunkSize: 1024},
 		ParserEngineOverrides: map[string]string{"pdf_force_scanned": "true"},
 		IngestionAdvisor: &IngestionAdvisorConfig{
-			Mode: IngestionAdvisorModeSmart, PromptVersion: IngestionPromptVersionV1,
+			Mode: IngestionAdvisorModeSmart,
 		},
 	}
 	require.NoError(t, k.SetProcessOverrides(overrides))
@@ -28,7 +28,6 @@ func TestKnowledgeProcessOverridesRoundtrip(t *testing.T) {
 	require.Equal(t, 1024, got.ChunkingConfig.ChunkSize)
 	require.Equal(t, "true", got.ParserEngineOverrides["pdf_force_scanned"])
 	require.Equal(t, IngestionAdvisorModeSmart, got.IngestionAdvisor.Mode)
-	require.Equal(t, IngestionPromptVersionV1, got.IngestionAdvisor.PromptVersion)
 }
 
 func TestIngestionAnalysisRoundtripPreservesProcessOverrides(t *testing.T) {
@@ -44,7 +43,7 @@ func TestIngestionAnalysisRoundtripPreservesProcessOverrides(t *testing.T) {
 			Separators: []string{"\n\n", "\n"},
 		},
 		AppliedChunking: IngestionChunkingRecommendation{Separators: []string{"\n\n", "\n"}},
-		ModelID:         "model-1", PromptVersion: IngestionPromptVersionV1,
+		ModelID:         "model-1",
 	}
 
 	require.NoError(t, knowledge.SetIngestionAnalysis(analysis))

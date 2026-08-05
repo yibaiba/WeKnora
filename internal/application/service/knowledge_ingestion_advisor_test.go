@@ -72,6 +72,29 @@ func emitIngestionProgressForTest(progress func(types.IngestionAgentStep)) {
 	}
 }
 
+func TestIngestionAgentSpanPersistsSafeToolFailure(t *testing.T) {
+	tracker := newIngestionSpanTrackerStub()
+	parent := &Span{
+		KnowledgeID: "knowledge-1", Attempt: 1, SpanID: "analysis-1",
+		Name: types.StageDocumentAnalysis, Kind: types.SpanKindStage,
+	}
+	progress := newIngestionAgentSpanProgress(context.Background(), tracker, parent)
+	progress.Handle(types.IngestionAgentStep{
+		Round: 1, ToolName: previewIngestionChunkingTool, Status: "running",
+	})
+	progress.Handle(types.IngestionAgentStep{
+		Round: 1, ToolName: previewIngestionChunkingTool, Status: "failed",
+		FailureCode: ingestionFailureOverlapInvalid, FailureField: "chunk_overlap",
+		FailureConstraint: "at_most_half_chunk_size",
+	})
+
+	require.Equal(t, []string{ingestionFailureOverlapInvalid}, tracker.failCodes)
+	require.Contains(t, tracker.failMessages[0], "chunk_overlap")
+	require.Contains(t, tracker.failMessages[0], "at_most_half_chunk_size")
+	require.NotContains(t, tracker.failMessages[0], "private document")
+	require.Equal(t, []string{""}, tracker.failErrors)
+}
+
 type ingestionKnowledgeRepoStub struct {
 	interfaces.KnowledgeRepository
 	updateCalls       int
@@ -179,8 +202,7 @@ func validIngestionAnalysis() *types.IngestionAnalysis {
 			EnableParentChild: true, ParentChunkSize: 4096, ChildChunkSize: 384,
 			Separators: []string{"\n\n", "\n", "。", "！", "？"},
 		},
-		ModelID:       "untrusted-model",
-		PromptVersion: "untrusted-version",
+		ModelID: "untrusted-model",
 	}
 }
 
@@ -199,7 +221,7 @@ func ingestionAdvisorResultForTest(analysis *types.IngestionAnalysis) *types.Ing
 		AgentRun: types.IngestionAgentRun{
 			MaxRounds: 4, ActualRounds: 2,
 			AvailableTools: []string{
-				inspectIngestionDocumentTool, previewIngestionChunkingTool, submitIngestionDecisionTool,
+				previewIngestionChunkingTool, submitIngestionDecisionTool,
 			},
 			Warnings: []types.IngestionAgentWarning{{
 				Code: "optional_tool_failed", Tool: agenttools.ToolWebSearch,
@@ -273,7 +295,6 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	persisted, err := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, err)
 	require.Equal(t, "summary-1", persisted.ModelID)
-	require.Equal(t, types.IngestionPromptVersionV2, persisted.PromptVersion)
 	require.Equal(t, persisted.RecommendedChunking, persisted.AppliedChunking)
 	require.Equal(t, "cand_test", persisted.SelectedCandidateID)
 	require.Equal(t, []string{"heading_rich", "long_sections"}, persisted.SelectionReasonCodes)
@@ -424,14 +445,14 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 	require.Nil(t, analysis)
 }
 
-func TestApplyIngestionAdvisorV2DoesNotPersistAgentProviderErrorDetails(t *testing.T) {
+func TestApplyIngestionAdvisorDoesNotPersistAgentProviderErrorDetails(t *testing.T) {
 	const sensitiveEvidence = "provider echoed aggregated private evidence"
 	providerErr := errors.New(sensitiveEvidence)
-	model := &ingestionAdvisorV2Model{
+	model := &ingestionAdvisorFullTextModel{
 		agent: &ingestionAdvisorScriptedModel{streamErr: providerErr},
 	}
 	tracker := newIngestionSpanTrackerStub()
-	knowledge := newSmartIngestionKnowledge(t, "v2-private-provider-error")
+	knowledge := newSmartIngestionKnowledge(t, "private-provider-error")
 	service := &knowledgeService{
 		repo: &ingestionKnowledgeRepoStub{},
 		ingestionAdvisor: NewIngestionAdvisor(

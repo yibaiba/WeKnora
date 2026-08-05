@@ -97,12 +97,12 @@ func TestBuildLangfuseGenerationInputRedactsSensitiveTaskMessages(t *testing.T) 
 			ReasoningContent: "private chain of thought",
 			ToolCalls: []ToolCall{{
 				Function: FunctionCall{
-					Name:      "inspect_ingestion_document",
-					Arguments: `{"offset":0,"document":"private"}`,
+					Name:      "preview_ingestion_chunking",
+					Arguments: `{"strategy":"private"}`,
 				},
 			}},
 		},
-		{Role: "tool", Name: "inspect_ingestion_document", Content: "private source excerpt"},
+		{Role: "tool", Name: "preview_ingestion_chunking", Content: "private source excerpt"},
 	}
 
 	encoded, err := json.Marshal(buildLangfuseGenerationInput(ctx, messages))
@@ -112,13 +112,13 @@ func TestBuildLangfuseGenerationInputRedactsSensitiveTaskMessages(t *testing.T) 
 	tracePayload := string(encoded)
 	for _, sensitive := range []string{
 		"sensitive system prompt", "private answer", "private chain of thought",
-		`\"offset\"`, "private source excerpt",
+		`\"strategy\"`, "private source excerpt",
 	} {
 		if strings.Contains(tracePayload, sensitive) {
 			t.Fatalf("redacted input contains %q: %s", sensitive, tracePayload)
 		}
 	}
-	if !strings.Contains(tracePayload, "inspect_ingestion_document") {
+	if !strings.Contains(tracePayload, "preview_ingestion_chunking") {
 		t.Fatalf("redacted input omitted tool name: %s", tracePayload)
 	}
 }

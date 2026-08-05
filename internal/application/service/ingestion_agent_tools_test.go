@@ -34,25 +34,6 @@ func newTestIngestionAgentSession(content string) *ingestionAgentSession {
 	return newIngestionAgentSession(content, types.IngestionChunkingConstraints{})
 }
 
-func TestInspectIngestionDocumentUsesRuneOffsetsAndHardLimit(t *testing.T) {
-	session := newTestIngestionAgentSession("甲乙丙丁")
-	tool := newInspectIngestionDocument(session)
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"offset":1,"limit":2}`))
-	require.NoError(t, err)
-	require.True(t, result.Success)
-
-	var output inspectIngestionDocumentOutput
-	require.NoError(t, json.Unmarshal([]byte(result.Output), &output))
-	require.Equal(t, "乙丙", output.Content)
-	require.Equal(t, 3, output.NextOffset)
-	require.True(t, output.HasMore)
-	require.Equal(t, 4, output.Statistics.CharacterCount)
-
-	result, err = tool.Execute(context.Background(), json.RawMessage(`{"offset":0,"limit":8001}`))
-	require.NoError(t, err)
-	require.False(t, result.Success)
-}
-
 func TestIngestionPreviewDeduplicatesAndCapsDistinctCandidates(t *testing.T) {
 	session := newTestIngestionAgentSession(ingestionTestContent())
 	first, err := session.preview(ingestionTestConfig(300))
@@ -91,6 +72,42 @@ func TestPreviewIngestionToolExposesSubmissionProtocol(t *testing.T) {
 		}
 		require.Equal(t, submitIngestionDecisionTool, output.NextAction)
 	}
+}
+
+func TestPreviewIngestionToolReturnsSafeConstraintFailure(t *testing.T) {
+	config := ingestionTestConfig(200)
+	config.ChunkOverlap = 101
+	arguments, err := json.Marshal(config)
+	require.NoError(t, err)
+
+	result, err := newPreviewIngestionChunking(
+		newTestIngestionAgentSession(ingestionTestContent()),
+	).Execute(context.Background(), arguments)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.ErrorContains(t, errors.New(result.Error), "chunk_overlap 必须在 0 到 100 之间")
+	require.Equal(t, &types.ToolFailure{
+		Code: ingestionFailureOverlapInvalid, Field: "chunk_overlap",
+		Constraint: "at_most_half_chunk_size",
+	}, result.Failure)
+}
+
+func TestPreviewIngestionSchemaUsesBackendConstraints(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Minimum     int      `json:"minimum"`
+			Maximum     int      `json:"maximum"`
+			Description string   `json:"description"`
+			Enum        []string `json:"enum"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(previewIngestionChunkingSchema(), &schema))
+	require.Equal(t, minimumAdvisorChunkSize, schema.Properties["chunk_size"].Minimum)
+	require.Equal(t, maximumAdvisorChunkSize, schema.Properties["chunk_size"].Maximum)
+	require.Equal(t, maximumAdvisorOverlap, schema.Properties["chunk_overlap"].Maximum)
+	require.Contains(t, schema.Properties["chunk_overlap"].Description, "half")
+	require.Equal(t, allowedChunkingStrategyValues[:], schema.Properties["strategy"].Enum)
 }
 
 func TestIngestionPreviewBuildsDistinctCandidatesConcurrently(t *testing.T) {

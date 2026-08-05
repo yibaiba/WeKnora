@@ -72,7 +72,7 @@ test('only opts eligible file uploads and file reparses into the advisor', () =>
   assert.doesNotMatch(availability, /fileType|html/)
   assert.match(payload, /if \(advisorModeAvailable\.value\)/)
   assert.match(payload, /mode: state\.ingestionAdvisorMode/)
-  assert.match(payload, /prompt_version: 'v2'/)
+  assert.doesNotMatch(payload, /prompt_version/)
   assert.match(payload, /state\.allowSmartWebAccess/)
   assert.match(payload, /allow_web_access: true/)
   assert.match(payload, /state\.allowSmartReadOnlyMcp/)

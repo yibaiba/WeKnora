@@ -12,16 +12,14 @@ import (
 )
 
 const (
-	inspectIngestionDocumentTool = "inspect_ingestion_document"
 	previewIngestionChunkingTool = "preview_ingestion_chunking"
 	submitIngestionDecisionTool  = "submit_ingestion_decision"
-	maxIngestionInspectRunes     = 8000
 	maxIngestionCandidates       = 3
 )
 
 type ingestionAgentSession struct {
 	content     string
-	profile     types.IngestionDocumentProfile
+	statistics  types.DocumentStructureStats
 	constraints types.IngestionChunkingConstraints
 
 	mu             sync.RWMutex
@@ -49,32 +47,9 @@ func newIngestionAgentSession(
 	content string,
 	constraints types.IngestionChunkingConstraints,
 ) *ingestionAgentSession {
-	return newIngestionAgentSessionWithProfile(
-		content, constraints, BuildIngestionDocumentProfile(content),
-	)
-}
-
-func newIngestionAgentSessionForPromptVersion(
-	content string,
-	constraints types.IngestionChunkingConstraints,
-	promptVersion string,
-) *ingestionAgentSession {
-	if promptVersion == types.IngestionPromptVersionV1 {
-		return newIngestionAgentSession(content, constraints)
-	}
-	return newIngestionAgentSessionWithProfile(content, constraints, types.IngestionDocumentProfile{
-		Statistics: BuildIngestionDocumentStatistics(content),
-	})
-}
-
-func newIngestionAgentSessionWithProfile(
-	content string,
-	constraints types.IngestionChunkingConstraints,
-	profile types.IngestionDocumentProfile,
-) *ingestionAgentSession {
 	return &ingestionAgentSession{
-		content: content,
-		profile: profile,
+		content:    content,
+		statistics: BuildIngestionDocumentStatistics(content),
 		constraints: types.IngestionChunkingConstraints{
 			TokenLimit: constraints.TokenLimit,
 			Languages:  append([]string(nil), constraints.Languages...),
@@ -140,7 +115,9 @@ func (s *ingestionAgentSession) preview(
 	}
 	id, err := ingestionCandidateID(normalized)
 	if err != nil {
-		return types.IngestionChunkingCandidate{}, err
+		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+			err, ingestionFailureCandidatePreview, "", "serializable_candidate", "生成候选标识失败",
+		)
 	}
 
 	candidate, flight, owner, err := s.reservePreview(id)
@@ -174,7 +151,10 @@ func (s *ingestionAgentSession) reservePreview(
 	}
 	if len(s.candidates)+len(s.inFlight) >= maxIngestionCandidates {
 		return types.IngestionChunkingCandidate{}, nil, false,
-			fmt.Errorf("每个文档最多预览 %d 个不同候选", maxIngestionCandidates)
+			newIngestionToolError(
+				ingestionFailureCandidateLimit, "", "candidate_limit",
+				fmt.Sprintf("每个文档最多预览 %d 个不同候选", maxIngestionCandidates),
+			)
 	}
 	flight := &ingestionCandidateFlight{done: make(chan struct{})}
 	s.inFlight[id] = flight

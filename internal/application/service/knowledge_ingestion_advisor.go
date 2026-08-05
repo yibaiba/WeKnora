@@ -31,11 +31,9 @@ func (s *knowledgeService) applyIngestionAdvisor(
 		return run.Effective, nil
 	}
 
-	promptVersion := ingestionPromptVersion(config)
 	s.beginStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, types.JSONMap{
-		"model_id":       run.KB.SummaryModelID,
-		"prompt_version": promptVersion,
-		"text_length":    len([]rune(run.Content)),
+		"model_id":    run.KB.SummaryModelID,
+		"text_length": len([]rune(run.Content)),
 	})
 	stage := s.tracker().LookupStage(
 		ctx, run.Knowledge.ID, attemptFromCtx(ctx), types.StageDocumentAnalysis,
@@ -46,7 +44,7 @@ func (s *knowledgeService) applyIngestionAdvisor(
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
 	}
 	advisorResult, err := s.analyzeIngestionContent(ctx, ingestionContentAnalysisRequest{
-		Run: run, PromptVersion: promptVersion, Config: config,
+		Run: run, Config: config,
 		AgentProgress: progress.Handle, AnalysisProgress: progress.HandleAnalysis,
 	})
 	progress.RecordEvaluation(advisorResult)
@@ -62,7 +60,6 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	run.Effective.ChunkingConfig.ChunkOverlap = normalized.ChunkOverlap
 	analysis.AppliedChunking = chunkingRecommendationFromConfig(run.Effective.ChunkingConfig)
 	analysis.ModelID = run.KB.SummaryModelID
-	analysis.PromptVersion = promptVersion
 	if err := run.Knowledge.SetIngestionAnalysis(analysis); err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, fmt.Errorf("保存文档分析结果失败: %w", err))
 	}
@@ -77,7 +74,6 @@ func (s *knowledgeService) applyIngestionAdvisor(
 
 type ingestionContentAnalysisRequest struct {
 	Run              ingestionAdvisorRun
-	PromptVersion    string
 	Config           *types.IngestionAdvisorConfig
 	AgentProgress    func(types.IngestionAgentStep)
 	AnalysisProgress func(types.IngestionDocumentAnalysisProgress)
@@ -104,7 +100,6 @@ func (s *knowledgeService) analyzeIngestionContent(
 		GraphEnabled:        run.KB.IsGraphEnabled(),
 		WikiEnabled:         run.KB.IsWikiEnabled(),
 		ModelID:             run.KB.SummaryModelID,
-		PromptVersion:       request.PromptVersion,
 		AllowWebAccess:      request.Config.AllowWebAccess,
 		AllowReadOnlyMCP:    request.Config.AllowReadOnlyMCP,
 		ChunkingConstraints: constraints,
@@ -235,7 +230,6 @@ func ingestionAnalysisOutput(analysis *types.IngestionAnalysis) types.JSONMap {
 		"recommended_chunking":     analysis.RecommendedChunking,
 		"applied_chunking":         analysis.AppliedChunking,
 		"model_id":                 analysis.ModelID,
-		"prompt_version":           analysis.PromptVersion,
 		"candidates":               analysis.Candidates,
 		"selected_candidate_id":    analysis.SelectedCandidateID,
 		"selection_reason_codes":   analysis.SelectionReasonCodes,

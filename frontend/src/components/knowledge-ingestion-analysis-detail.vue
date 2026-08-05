@@ -84,10 +84,6 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
         <dt>{{ t('knowledgeStages.analysis.modelLabel') }}</dt>
         <dd class="analysis-mono">{{ analysis.model_id }}</dd>
       </div>
-      <div>
-        <dt>{{ t('knowledgeStages.analysis.promptVersionLabel') }}</dt>
-        <dd class="analysis-mono">{{ analysis.prompt_version }}</dd>
-      </div>
     </dl>
     <div class="analysis-reasons">
       <span class="analysis-subtitle">{{ t('knowledgeStages.analysis.reasonCodesLabel') }}</span>

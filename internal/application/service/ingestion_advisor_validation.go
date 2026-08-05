@@ -10,6 +10,10 @@ import (
 )
 
 var (
+	allowedChunkingStrategyValues   = [...]string{"auto", "heading", "heuristic", "legacy", "recursive"}
+	allowedIngestionSeparatorValues = [...]string{
+		"\n\n", "\n", "。", "！", "？", "；", ";", " ",
+	}
 	allowedDocumentKinds = map[string]struct{}{
 		types.IngestionDocumentKindPolicyManual: {}, types.IngestionDocumentKindFAQ: {},
 		types.IngestionDocumentKindTabularData: {}, types.IngestionDocumentKindReport: {},
@@ -20,13 +24,27 @@ var (
 		types.IngestionContentModeDocument: {}, types.IngestionContentModeFAQCandidate: {},
 		types.IngestionContentModeWikiCandidate: {},
 	}
-	allowedChunkingStrategies = map[string]struct{}{
-		"auto": {}, "heading": {}, "heuristic": {}, "legacy": {}, "recursive": {},
-	}
-	allowedIngestionSeparators = map[string]struct{}{
-		"\n\n": {}, "\n": {}, "。": {}, "！": {}, "？": {}, "；": {}, ";": {}, " ": {},
-	}
+	allowedChunkingStrategies  = ingestionAllowedValues(allowedChunkingStrategyValues[:])
+	allowedIngestionSeparators = ingestionAllowedValues(allowedIngestionSeparatorValues[:])
 )
+
+const (
+	minimumAdvisorChunkSize  = 100
+	maximumAdvisorChunkSize  = 4000
+	maximumAdvisorOverlap    = 500
+	minimumAdvisorParentSize = 512
+	maximumAdvisorParentSize = 8192
+	minimumAdvisorChildSize  = 64
+	maximumAdvisorChildSize  = 2048
+)
+
+func ingestionAllowedValues(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
+}
 
 // ValidateIngestionAdvisorConfig rejects unsupported modes and prompt
 // versions without normalizing or mutating the upload payload.
@@ -37,19 +55,7 @@ func ValidateIngestionAdvisorConfig(config *types.IngestionAdvisorConfig) error 
 	if config.Mode != types.IngestionAdvisorModeSmart && config.Mode != types.IngestionAdvisorModeOff {
 		return fmt.Errorf("ingestion_advisor.mode %q 不受支持", config.Mode)
 	}
-	if config.PromptVersion != "" &&
-		config.PromptVersion != types.IngestionPromptVersionV1 &&
-		config.PromptVersion != types.IngestionPromptVersionV2 {
-		return fmt.Errorf("ingestion_advisor.prompt_version %q 不受支持", config.PromptVersion)
-	}
 	return nil
-}
-
-func ingestionPromptVersion(config *types.IngestionAdvisorConfig) string {
-	if config != nil && config.PromptVersion != "" {
-		return config.PromptVersion
-	}
-	return types.IngestionPromptVersionV2
 }
 
 // ValidateIngestionAnalysis protects the pipeline from both remote model
@@ -127,41 +133,61 @@ func validateIngestionChunkingRecommendation(
 	constraints types.IngestionChunkingConstraints,
 ) error {
 	if _, ok := allowedChunkingStrategies[value.Strategy]; !ok {
-		return fmt.Errorf("strategy %q 不受支持", value.Strategy)
+		return newIngestionToolError(
+			ingestionFailureStrategyInvalid, "strategy", "supported_strategy",
+			fmt.Sprintf("strategy %q 不受支持", value.Strategy),
+		)
 	}
 	minimumChunkSize, maximumChunkSize := ingestionChunkSizeBounds(constraints)
 	if value.ChunkSize < minimumChunkSize || value.ChunkSize > maximumChunkSize {
-		return fmt.Errorf("chunk_size 必须在 %d 到 %d 之间", minimumChunkSize, maximumChunkSize)
+		return newIngestionToolError(
+			ingestionFailureChunkSizeInvalid, "chunk_size", "effective_chunk_size_range",
+			fmt.Sprintf("chunk_size 必须在 %d 到 %d 之间", minimumChunkSize, maximumChunkSize),
+		)
 	}
-	maxOverlap := min(500, value.ChunkSize/2)
+	maxOverlap := min(maximumAdvisorOverlap, value.ChunkSize/2)
 	if value.ChunkOverlap < 0 || value.ChunkOverlap > maxOverlap {
-		return fmt.Errorf("chunk_overlap 必须在 0 到 %d 之间", maxOverlap)
+		return newIngestionToolError(
+			ingestionFailureOverlapInvalid, "chunk_overlap", "at_most_half_chunk_size",
+			fmt.Sprintf("chunk_overlap 必须在 0 到 %d 之间", maxOverlap),
+		)
 	}
-	if value.ParentChunkSize < 512 || value.ParentChunkSize > 8192 {
-		return fmt.Errorf("parent_chunk_size 必须在 512 到 8192 之间")
+	if value.ParentChunkSize < minimumAdvisorParentSize || value.ParentChunkSize > maximumAdvisorParentSize {
+		return newIngestionToolError(
+			ingestionFailureParentSizeInvalid, "parent_chunk_size", "parent_chunk_size_range",
+			fmt.Sprintf("parent_chunk_size 必须在 %d 到 %d 之间", minimumAdvisorParentSize, maximumAdvisorParentSize),
+		)
 	}
-	if value.ChildChunkSize < 64 || value.ChildChunkSize > 2048 {
-		return fmt.Errorf("child_chunk_size 必须在 64 到 2048 之间")
+	if value.ChildChunkSize < minimumAdvisorChildSize || value.ChildChunkSize > maximumAdvisorChildSize {
+		return newIngestionToolError(
+			ingestionFailureChildSizeInvalid, "child_chunk_size", "child_chunk_size_range",
+			fmt.Sprintf("child_chunk_size 必须在 %d 到 %d 之间", minimumAdvisorChildSize, maximumAdvisorChildSize),
+		)
 	}
 	if value.ChildChunkSize > value.ParentChunkSize {
-		return fmt.Errorf("child_chunk_size 不能大于 parent_chunk_size")
+		return newIngestionToolError(
+			ingestionFailureParentChildInvalid, "child_chunk_size", "not_greater_than_parent_chunk_size",
+			"child_chunk_size 不能大于 parent_chunk_size",
+		)
 	}
 	if len(value.Separators) == 0 {
-		return fmt.Errorf("separators 不能为空")
+		return newIngestionToolError(
+			ingestionFailureSeparatorsInvalid, "separators", "non_empty_supported_separators",
+			"separators 不能为空",
+		)
 	}
 	for _, separator := range value.Separators {
 		if _, ok := allowedIngestionSeparators[separator]; !ok {
-			return fmt.Errorf("separator %q 不受支持", separator)
+			return newIngestionToolError(
+				ingestionFailureSeparatorsInvalid, "separators", "non_empty_supported_separators",
+				fmt.Sprintf("separator %q 不受支持", separator),
+			)
 		}
 	}
 	return nil
 }
 
 func ingestionChunkSizeBounds(constraints types.IngestionChunkingConstraints) (int, int) {
-	const (
-		minimumAdvisorChunkSize = 100
-		maximumAdvisorChunkSize = 4000
-	)
 	if constraints.TokenLimit <= 0 {
 		return minimumAdvisorChunkSize, maximumAdvisorChunkSize
 	}

@@ -21,24 +21,34 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 	base := normalizeSplitterConfig(config, true)
 	chunks, parents, parentIndexes, diagnostics, scoreConfig := splitIngestionPreview(request.content, config, base)
 	if err := validateIngestionChunkPositions(request.content, chunks); err != nil {
-		return types.IngestionChunkingCandidate{}, err
+		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+			err, ingestionFailureChunkPosition, "", "source_rune_positions", "子块位置校验失败",
+		)
 	}
 	if !request.config.EnableParentChild {
 		if err := validateIngestionChunkOrder(chunks); err != nil {
-			return types.IngestionChunkingCandidate{}, err
+			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+				err, ingestionFailureChunkOrder, "", "strictly_increasing_end_positions", "子块顺序校验失败",
+			)
 		}
 	}
 	if len(parents) > 0 {
 		if err := validateIngestionChunkPositions(request.content, parents); err != nil {
-			return types.IngestionChunkingCandidate{}, fmt.Errorf("父块位置校验失败: %w", err)
+			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+				err, ingestionFailureChunkPosition, "", "source_rune_positions", "父块位置校验失败",
+			)
 		}
 		if err := validateIngestionChunkOrder(parents); err != nil {
-			return types.IngestionChunkingCandidate{}, fmt.Errorf("父块顺序校验失败: %w", err)
+			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+				err, ingestionFailureChunkOrder, "", "strictly_increasing_end_positions", "父块顺序校验失败",
+			)
 		}
 	}
 	if request.config.EnableParentChild {
 		if err := validateParentChildPreview(chunks, parents, parentIndexes); err != nil {
-			return types.IngestionChunkingCandidate{}, err
+			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+				err, ingestionFailureParentChildMapping, "", "valid_parent_child_mapping", "父子块映射校验失败",
+			)
 		}
 	}
 

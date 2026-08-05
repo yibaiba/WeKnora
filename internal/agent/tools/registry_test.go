@@ -128,6 +128,30 @@ func TestGetFunctionDefinitions_Empty(t *testing.T) {
 	assert.Equal(t, "[]", string(encoded))
 }
 
+func TestExecuteToolReportsSafeSchemaFailureMetadata(t *testing.T) {
+	registry := NewToolRegistry()
+	registry.RegisterTool(&mockTool{
+		name: "strict_tool",
+		parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{"values":{"type":"array","minItems":1,"items":{"type":"string","enum":["ok"]}}},
+			"required":["values"],
+			"additionalProperties":false
+		}`),
+	})
+
+	result, err := registry.ExecuteTool(
+		context.Background(), "strict_tool", json.RawMessage(`{"values":["bad"],"extra":true}`),
+	)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, "TOOL_ARGUMENTS_INVALID", result.Failure.Code)
+	require.NotEmpty(t, result.Failure.Field)
+	require.Contains(t, result.Error, "is not allowed")
+	require.Contains(t, result.Error, "values[0]")
+}
+
 // TestListTools_Sorted mirrors the determinism guarantee for ListTools.
 func TestListTools_Sorted(t *testing.T) {
 	names := []string{"zeta", "alpha", "kappa", "beta"}

@@ -66,7 +66,6 @@ function phaseStatus(phase: typeof phaseKeys[number]): string {
 }
 
 function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
-  if (step.tool_name === 'inspect_ingestion_document') return 'analyze_document'
   if (step.tool_name === 'preview_ingestion_chunking') return 'preview_candidates'
   if (step.tool_name === 'submit_ingestion_decision') return 'submit_decision'
   if (step.tool_name === 'thinking') return 'evaluate_and_refine'

@@ -176,7 +176,7 @@ func (m *ingestionAdvisorScriptedModel) Chat(
 	[]chat.Message,
 	*chat.ChatOptions,
 ) (*types.ChatResponse, error) {
-	return nil, errors.New("unexpected non-streaming call")
+	return mapEvidenceResponse("完整正文的聚合证据"), nil
 }
 
 func (m *ingestionAdvisorScriptedModel) ChatStream(
@@ -250,7 +250,6 @@ func validIngestionAdvisorRequest() types.IngestionAdvisorRequest {
 		VectorEnabled:     true,
 		KeywordEnabled:    true,
 		ModelID:           "model-1",
-		PromptVersion:     types.IngestionPromptVersionV1,
 	}
 }
 
@@ -329,7 +328,6 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 	}
 	require.Contains(t, previewContext, `"candidate_id":"`)
 	require.Contains(t, previewContext, `"next_action":"preview_or_submit"`)
-	require.Contains(t, result.AgentRun.AvailableTools, inspectIngestionDocumentTool)
 	require.Contains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionDecisionTool)
 	require.Contains(t, result.AgentRun.Warnings, types.IngestionAgentWarning{
@@ -433,6 +431,31 @@ func TestBuildIngestionAgentRunRedactsPayloadsAndWarnsOnOptionalToolFailure(t *t
 	require.NotContains(t, string(persistable), "complete external output")
 }
 
+func TestBuildIngestionAgentRunPersistsSafeFailureMetadata(t *testing.T) {
+	state := &types.AgentState{RoundSteps: []types.AgentStep{{
+		Iteration: 0,
+		ToolCalls: []types.ToolCall{{
+			Name: previewIngestionChunkingTool,
+			Result: &types.ToolResult{
+				Success: false, Error: "private failure details",
+				Failure: &types.ToolFailure{
+					Code: ingestionFailureOverlapInvalid, Field: "chunk_overlap",
+					Constraint: "at_most_half_chunk_size",
+				},
+			},
+		}},
+	}}}
+
+	run := buildIngestionAgentRun(newIngestionAgentRun(nil, nil), state)
+	persisted, err := json.Marshal(run)
+
+	require.NoError(t, err)
+	require.Equal(t, ingestionFailureOverlapInvalid, run.Steps[0].FailureCode)
+	require.Equal(t, "chunk_overlap", run.Steps[0].FailureField)
+	require.Equal(t, "at_most_half_chunk_size", run.Steps[0].FailureConstraint)
+	require.NotContains(t, string(persisted), "private failure details")
+}
+
 func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t *testing.T) {
 	request := validIngestionAdvisorRequest()
 	request.Content = ingestionTestContent()
@@ -460,11 +483,7 @@ func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t
 	}
 	require.Less(t, selected.Score.Total, highest.Score.Total, "fixture must provide a deliberate lower-score choice")
 
-	calls := []types.LLMToolCall{{
-		ID: "inspect-1", Function: types.FunctionCall{
-			Name: inspectIngestionDocumentTool, Arguments: `{"offset":0,"limit":8000}`,
-		},
-	}}
+	calls := make([]types.LLMToolCall, 0, len(configs))
 	for index, config := range configs {
 		arguments, err := jsonMarshalForTest(config)
 		require.NoError(t, err)
@@ -491,7 +510,7 @@ func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t
 	require.Equal(t, selected.ID, result.SelectedCandidateID)
 	require.Equal(t, []string{"deliberate_structure_tradeoff"}, result.SelectionReasonCodes)
 	require.Len(t, result.Candidates, 3)
-	require.Len(t, result.AgentRun.Steps, 5)
+	require.Len(t, result.AgentRun.Steps, 4)
 	require.NotNil(t, model.options[0].ParallelToolCalls)
 	require.True(t, *model.options[0].ParallelToolCalls)
 }
@@ -517,8 +536,6 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 		args     string
 		code     string
 	}{
-		{name: "inspect hard limit", toolName: inspectIngestionDocumentTool,
-			args: `{"offset":0,"limit":8001}`, code: ingestionAdvisorErrorCoreTool},
 		{name: "invalid preview arguments", toolName: previewIngestionChunkingTool,
 			args: `{"strategy":"legacy","chunk_size":"bad"}`, code: ingestionAdvisorErrorCandidate},
 		{name: "unknown candidate", toolName: submitIngestionDecisionTool,
@@ -538,7 +555,7 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 
 			require.Error(t, err)
 			require.Equal(t, test.code, ingestionAdvisorRunErrorCode(err))
-			require.Contains(t, err.Error(), "详情已脱敏")
+			require.Contains(t, err.Error(), "错误码")
 			require.NotContains(t, err.Error(), "cand_unknown")
 			require.NotNil(t, result)
 			require.Nil(t, result.Analysis)
@@ -547,11 +564,12 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 }
 
 func TestModelIngestionAdvisorFailsAtMaxRoundsWithoutSubmission(t *testing.T) {
+	arguments, err := jsonMarshalForTest(ingestionTestConfig(300))
+	require.NoError(t, err)
 	responses := make([][]types.StreamResponse, 0, ingestionAdvisorMaxRounds)
 	for round := 1; round <= ingestionAdvisorMaxRounds; round++ {
 		responses = append(responses, toolResponse(
-			fmt.Sprintf("inspect-%d", round), inspectIngestionDocumentTool,
-			`{"offset":0,"limit":1}`,
+			fmt.Sprintf("preview-%d", round), previewIngestionChunkingTool, arguments,
 		))
 	}
 	model := &ingestionAdvisorScriptedModel{responses: responses}
@@ -600,22 +618,6 @@ func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T)
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorToolCalling, ingestionAdvisorRunErrorCode(err))
 	require.NotNil(t, result)
-}
-
-func TestModelIngestionAdvisorV1PreservesProviderErrorChain(t *testing.T) {
-	providerErr := errors.New("v1 provider diagnostic")
-	model := &ingestionAdvisorScriptedModel{streamErr: providerErr}
-	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
-	request := validIngestionAdvisorRequest()
-	request.PromptVersion = types.IngestionPromptVersionV1
-
-	result, err := advisor.Analyze(
-		context.Background(), request, interfaces.IngestionAdvisorRuntime{},
-	)
-
-	require.NotNil(t, result)
-	require.ErrorIs(t, err, providerErr)
-	require.ErrorContains(t, err, providerErr.Error())
 }
 
 func TestModelIngestionAdvisorSurfacesMissingModelAndProviderErrors(t *testing.T) {
@@ -720,21 +722,7 @@ func TestValidateIngestionAdvisorConfigModes(t *testing.T) {
 	require.NoError(t, ValidateIngestionAdvisorConfig(nil))
 	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{Mode: types.IngestionAdvisorModeSmart}))
 	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{Mode: types.IngestionAdvisorModeOff}))
-	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{
-		Mode: types.IngestionAdvisorModeSmart, PromptVersion: types.IngestionPromptVersionV1,
-	}))
-	require.NoError(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{
-		Mode: types.IngestionAdvisorModeSmart, PromptVersion: types.IngestionPromptVersionV2,
-	}))
 	require.Error(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{Mode: "automatic"}))
-	require.Error(t, ValidateIngestionAdvisorConfig(&types.IngestionAdvisorConfig{
-		Mode: types.IngestionAdvisorModeSmart, PromptVersion: "v3",
-	}))
-	require.Equal(t, types.IngestionPromptVersionV2, ingestionPromptVersion(nil))
-	require.Equal(t, types.IngestionPromptVersionV2, ingestionPromptVersion(&types.IngestionAdvisorConfig{}))
-	require.Equal(t, types.IngestionPromptVersionV1, ingestionPromptVersion(&types.IngestionAdvisorConfig{
-		PromptVersion: types.IngestionPromptVersionV1,
-	}))
 }
 
 func jsonMarshalForTest(value any) (string, error) {

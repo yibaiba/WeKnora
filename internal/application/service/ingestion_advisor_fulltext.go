@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -17,22 +16,14 @@ type ingestionAgentPreparation struct {
 }
 
 type ingestionAgentPreparationRequest struct {
-	Model         chat.Chat
-	Request       types.IngestionAdvisorRequest
-	Session       *ingestionAgentSession
-	PromptVersion string
+	Model   chat.Chat
+	Request types.IngestionAdvisorRequest
+	Session *ingestionAgentSession
 }
 
-type ingestionAgentV2Context struct {
+type ingestionAgentContext struct {
 	Statistics         types.DocumentStructureStats `json:"statistics"`
 	AggregatedEvidence ingestionDocumentEvidence    `json:"aggregated_evidence"`
-}
-
-func effectiveIngestionPromptVersion(version string) string {
-	if version == "" {
-		return types.IngestionPromptVersionV2
-	}
-	return version
 }
 
 func prepareIngestionAgent(
@@ -40,22 +31,11 @@ func prepareIngestionAgent(
 	request ingestionAgentPreparationRequest,
 ) (ingestionAgentPreparation, error) {
 	registry := agenttools.NewToolRegistry()
-	if request.PromptVersion == types.IngestionPromptVersionV1 {
-		query, err := buildIngestionAgentQuery(request.Session.profile)
-		if err != nil {
-			return ingestionAgentPreparation{}, fmt.Errorf("构建文档分析请求失败: %w", err)
-		}
-		registerIngestionCoreTools(registry, request.Session)
-		return ingestionAgentPreparation{
-			Query: query, SystemPrompt: ingestionAgentV1SystemPrompt, Registry: registry,
-		}, nil
-	}
-
 	evidence, err := analyzeFullIngestionDocument(ctx, request.Model, request.Request)
 	if err != nil {
 		return ingestionAgentPreparation{}, err
 	}
-	query, err := buildIngestionAgentV2Query(request.Session.profile.Statistics, evidence)
+	query, err := buildIngestionAgentQuery(request.Session.statistics, evidence)
 	if err != nil {
 		return ingestionAgentPreparation{}, newIngestionAdvisorRunError(
 			ingestionAdvisorErrorDocumentAnalysis, "构建文档全文聚合证据请求失败",
@@ -63,7 +43,7 @@ func prepareIngestionAgent(
 	}
 	registerIngestionDecisionTools(registry, request.Session)
 	return ingestionAgentPreparation{
-		Query: query, SystemPrompt: ingestionAgentV2SystemPrompt, Registry: registry,
+		Query: query, SystemPrompt: ingestionAgentSystemPrompt, Registry: registry,
 	}, nil
 }
 
@@ -90,11 +70,11 @@ func analyzeFullIngestionDocument(
 	})
 }
 
-func buildIngestionAgentV2Query(
+func buildIngestionAgentQuery(
 	statistics types.DocumentStructureStats,
 	evidence ingestionDocumentEvidence,
 ) (string, error) {
-	payload, err := json.Marshal(ingestionAgentV2Context{
+	payload, err := json.Marshal(ingestionAgentContext{
 		Statistics: statistics, AggregatedEvidence: evidence,
 	})
 	if err != nil {
@@ -103,7 +83,7 @@ func buildIngestionAgentV2Query(
 	return "请根据以下全文统计与 Map-Reduce 聚合证据，预览候选并提交入库切分决策：\n" + string(payload), nil
 }
 
-const ingestionAgentV2SystemPrompt = `你是智能文档入库 Agent。全文正文已经由严格的 Map-Reduce 分析完成；你的唯一目标是根据全文统计、聚合证据和真实切分预览选择候选。
+const ingestionAgentSystemPrompt = `你是智能文档入库 Agent。全文正文已经由严格的 Map-Reduce 分析完成；你的唯一目标是根据全文统计、聚合证据和真实切分预览选择候选。
 
 必须遵循：
 1. 你不会获得正文读取工具；不得索要或猜测抽样正文。查询中的 aggregated_evidence 覆盖完整提取正文。

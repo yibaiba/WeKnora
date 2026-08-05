@@ -497,7 +497,6 @@ function buildAdvisorRetryOverrides(mode: IngestionAdvisorMode): KnowledgeProces
   const previousAdvisor = source?.ingestion_advisor
   overrides.ingestion_advisor = {
     mode,
-    prompt_version: 'v2',
     ...(mode === 'smart' && previousAdvisor?.allow_web_access ? { allow_web_access: true } : {}),
     ...(mode === 'smart' && previousAdvisor?.allow_read_only_mcp ? { allow_read_only_mcp: true } : {}),
   }
