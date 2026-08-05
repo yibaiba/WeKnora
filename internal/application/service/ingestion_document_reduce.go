@@ -93,10 +93,14 @@ func reduceIngestionDocumentLevel(
 			Model: request.Model, Group: group, Level: request.Level, Index: index,
 		})
 		if err != nil {
+			failure := ingestionDocumentAnalysisFailureDetails(err)
 			emitReduceProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
 				Phase: "reduce_document", Status: ingestionAnalysisProgressFailed,
 				UnitCount: len(request.Groups), Completed: len(results),
 				Level: request.Level, CoveredCharacters: request.CoveredCharacters, Failed: true,
+				FailureKind: failure.Kind, FailedUnit: failure.Unit,
+				ProviderFailureKind: failure.ProviderKind,
+				HTTPStatus:          failure.HTTPStatus, FailureParameter: failure.Parameter,
 			}, started)
 			return nil, err
 		}
@@ -131,8 +135,8 @@ func reduceIngestionDocumentGroup(
 	}
 	result, err := decodeIngestionDocumentEvidence(response)
 	if err != nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure(
-			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index, err,
+		return ingestionDocumentEvidence{}, invalidDocumentAnalysisFailure(
+			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index,
 		)
 	}
 	return result, nil

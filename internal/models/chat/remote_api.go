@@ -211,7 +211,7 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 			resp, err = c.client.CreateChatCompletion(timeoutCtx, req)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("create chat completion: %w", err)
+			return nil, fmt.Errorf("create chat completion: %w", providerCallError(timeoutCtx, err))
 		}
 	}
 
@@ -255,13 +255,13 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", providerCallError(ctx, err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -321,7 +321,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 		if err != nil {
 			cancel()
 			close(streamChan)
-			return nil, fmt.Errorf("create chat completion stream: %w", err)
+			return nil, fmt.Errorf("create chat completion stream: %w", providerCallError(timeoutCtx, err))
 		}
 	}
 
@@ -388,13 +388,13 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", providerCallError(ctx, err))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
 	}
 
 	streamChan := make(chan types.StreamResponse)

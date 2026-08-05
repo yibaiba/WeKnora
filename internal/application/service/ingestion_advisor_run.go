@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -148,10 +149,7 @@ func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAg
 	if state.TerminatedByTool == submitIngestionDecisionTool && session.decisionSnapshot() != nil {
 		return validateIngestionAnalysisWithConstraints(session.decisionSnapshot(), session.constraints)
 	}
-	if state.StopReason == "max_iterations" && session.candidateCount() > 0 {
-		return ingestionAdvisorMaxRoundsError()
-	}
-	if err := firstFailedIngestionCoreTool(state); err != nil {
+	if err := unresolvedIngestionCoreToolFailure(state); err != nil {
 		return err
 	}
 	if countAgentToolCalls(state) == 0 {
@@ -175,23 +173,55 @@ func ingestionAdvisorMaxRoundsError() error {
 	)
 }
 
-func firstFailedIngestionCoreTool(state *types.AgentState) error {
+func unresolvedIngestionCoreToolFailure(state *types.AgentState) error {
 	if state == nil {
 		return nil
 	}
+	failures := ingestionUnresolvedCoreFailures{}
 	for _, step := range state.RoundSteps {
-		for _, call := range step.ToolCalls {
-			if !isIngestionCoreTool(call.Name) || (call.Result != nil && call.Result.Success) {
-				continue
-			}
-			code := ingestionAdvisorErrorCoreTool
-			if call.Name == previewIngestionChunkingTool || call.Name == submitIngestionDecisionTool {
-				code = ingestionAdvisorErrorCandidate
-			}
-			return newIngestionAdvisorRunError(code, "%s", safeCoreToolFailureMessage(call))
+		for index := range step.ToolCalls {
+			failures.record(&step.ToolCalls[index])
 		}
 	}
+	if failures.submit != nil {
+		return ingestionCoreToolFailure(*failures.submit)
+	}
+	if failures.preview != nil {
+		return ingestionCoreToolFailure(*failures.preview)
+	}
 	return nil
+}
+
+type ingestionUnresolvedCoreFailures struct {
+	preview *types.ToolCall
+	submit  *types.ToolCall
+}
+
+func (f *ingestionUnresolvedCoreFailures) record(call *types.ToolCall) {
+	if !isIngestionCoreTool(call.Name) {
+		return
+	}
+	succeeded := call.Result != nil && call.Result.Success
+	switch call.Name {
+	case previewIngestionChunkingTool:
+		if succeeded {
+			f.preview = nil
+			return
+		}
+		f.preview = call
+	case submitIngestionDecisionTool:
+		if succeeded {
+			f.submit = nil
+			return
+		}
+		f.submit = call
+	}
+}
+
+func ingestionCoreToolFailure(call types.ToolCall) error {
+	return newIngestionAdvisorRunError(
+		ingestionAdvisorErrorCandidate, "%s", safeCoreToolFailureMessage(call),
+	)
 }
 
 func safeCoreToolFailureMessage(call types.ToolCall) string {
@@ -228,20 +258,33 @@ func countAgentToolCalls(state *types.AgentState) int {
 	return total
 }
 
-func classifyIngestionAgentExecutionError(err error, redactDetails bool) error {
-	message := strings.ToLower(err.Error())
-	unsupported := strings.Contains(message, "tool") &&
-		(strings.Contains(message, "unsupported") || strings.Contains(message, "not support"))
+func classifyIngestionAgentExecutionError(err error) error {
 	code := ingestionAdvisorErrorExecution
 	summary := "文档分析 Agent 执行失败"
-	if unsupported {
+	providerErr, typed := chat.ProviderErrorDetails(err)
+	if typed && isToolCallingProviderParameter(providerErr.Parameter) {
 		code = ingestionAdvisorErrorToolCalling
-		summary = "模型不支持原生工具调用"
+		summary = "供应商拒绝原生工具调用参数"
 	}
-	if redactDetails {
+	if !typed {
 		return newIngestionAdvisorRunError(code, "%s，供应商错误详情已脱敏", summary)
 	}
-	return wrapIngestionAdvisorRunError(code, summary, err)
+	return newIngestionAdvisorRunError(code, "%s%s", summary, ingestionProviderErrorSuffix(providerErr))
+}
+
+func ingestionProviderErrorSuffix(details chat.ProviderFailureDetails) string {
+	parts := []string{"类型 " + string(details.Kind)}
+	if details.StatusCode > 0 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", details.StatusCode))
+	}
+	if details.Parameter != "" {
+		parts = append(parts, "参数 "+details.Parameter)
+	}
+	return "（" + strings.Join(parts, "，") + "）"
+}
+
+func isToolCallingProviderParameter(parameter string) bool {
+	return parameter == "tools" || parameter == "tool_choice" || parameter == "parallel_tool_calls"
 }
 
 func sortedWarningCopy(warnings []types.IngestionAgentWarning) []types.IngestionAgentWarning {

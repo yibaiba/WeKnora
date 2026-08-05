@@ -9,6 +9,7 @@ import (
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	appconfig "github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -502,6 +503,9 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 				Phase: "map_document", Status: ingestionAnalysisProgressFailed,
 				UnitCount: 2, Completed: 1,
 				DurationMS: 9, CoveredCharacters: 8000, Failed: true,
+				FailureKind: ingestionAnalysisFailureStrictSchema, FailedUnit: 2,
+				ProviderFailureKind: string(chat.ProviderFailureRequestInvalid),
+				HTTPStatus:          400, FailureParameter: "response_format",
 			}},
 		},
 		spanTracker: tracker,
@@ -517,6 +521,11 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 		ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorErrorDocumentAnalysis,
 	}, tracker.failCodes)
 	require.Contains(t, tracker.failed[0], "map_document")
+	require.Contains(t, tracker.failMessages[0], "失败单元 2")
+	require.Contains(t, tracker.failMessages[0], "严格 JSON Schema")
+	require.Contains(t, tracker.failMessages[0], "request_invalid")
+	require.Contains(t, tracker.failMessages[0], "HTTP 400")
+	require.Contains(t, tracker.failMessages[0], "response_format")
 	require.Equal(t, types.StageDocumentAnalysis, tracker.failed[1])
 	require.NotContains(t, tracker.spans, types.StageChunking)
 	require.NotContains(t, tracker.spans, types.StageEmbedding)

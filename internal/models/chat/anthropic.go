@@ -148,7 +148,7 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", providerCallError(ctx, err))
 	}
 	defer resp.Body.Close()
 
@@ -163,21 +163,19 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 			return nil, err
 		}
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, chatResp.Content)
+			return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
 		}
 		logUsage(ctx, c.modelName, &chatResp.Usage)
 		return chatResp, nil
 	}
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
+	}
+
 	var chatResp anthropicResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		if chatResp.Error != nil && chatResp.Error.Message != "" {
-			return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, chatResp.Error.Message)
-		}
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	result := c.parseResponse(&chatResp)
@@ -210,12 +208,12 @@ func (c *AnthropicChat) ChatStream(ctx context.Context, messages []Message, opts
 
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", providerCallError(ctx, err))
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
 	}
 
 	streamChan := make(chan types.StreamResponse)

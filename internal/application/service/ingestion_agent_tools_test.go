@@ -473,3 +473,28 @@ func TestValidateIngestionAgentOutcomeReportsMaxRoundsAfterRecoveredPreview(t *t
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorMaxRounds, ingestionAdvisorRunErrorCode(err))
 }
+
+func TestValidateIngestionAgentOutcomeReportsUnresolvedSubmitFailureBeforeMaxRounds(t *testing.T) {
+	session := newTestIngestionAgentSession(ingestionTestContent())
+	_, err := session.preview(ingestionTestConfig(300))
+	require.NoError(t, err)
+	state := &types.AgentState{
+		StopReason: "max_iterations",
+		RoundSteps: []types.AgentStep{{ToolCalls: []types.ToolCall{
+			{Name: previewIngestionChunkingTool, Result: &types.ToolResult{Success: true}},
+			{Name: submitIngestionDecisionTool, Result: &types.ToolResult{
+				Success: false,
+				Failure: &types.ToolFailure{
+					Code: ingestionFailureDecisionInvalid, Field: "candidate_id",
+					Constraint: "previewed_hard_valid_candidate",
+				},
+			}},
+		}}},
+	}
+
+	err = validateIngestionAgentOutcome(state, session)
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorCandidate, ingestionAdvisorRunErrorCode(err))
+	require.Contains(t, err.Error(), ingestionFailureDecisionInvalid)
+}

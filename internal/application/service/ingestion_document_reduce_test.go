@@ -77,6 +77,7 @@ func TestFullDocumentAnalysisCovers15032RunesBeforeReduction(t *testing.T) {
 	content := strings.Repeat("文", 15032)
 	units, err := splitIngestionDocumentAnalysisUnits(content)
 	require.NoError(t, err)
+	require.Len(t, units, 2)
 	var mapCalls atomic.Int32
 	var reduceCalls atomic.Int32
 	model := &ingestionMapModelStub{response: func(_ context.Context, messages []chat.Message) (*types.ChatResponse, error) {
@@ -127,6 +128,8 @@ func TestReduceIngestionDocumentFailsOnInvalidResponseWithoutPartialResult(t *te
 	require.Equal(t, ingestionAnalysisProgressFailed, progress[1].Status)
 	require.True(t, progress[1].Failed)
 	require.Zero(t, progress[1].Completed)
+	require.Equal(t, ingestionAnalysisFailureInvalidResponse, progress[1].FailureKind)
+	require.Equal(t, 1, progress[1].FailedUnit)
 }
 
 func TestGroupIngestionDocumentEvidenceRejectsOversizedSingleItem(t *testing.T) {

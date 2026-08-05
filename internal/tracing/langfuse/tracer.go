@@ -328,6 +328,13 @@ func observationTraceError(redactDetails bool, err error) error {
 	if err == nil || !redactDetails {
 		return err
 	}
+	var safe interface {
+		error
+		SafeForObservability() bool
+	}
+	if errors.As(err, &safe) && safe.SafeForObservability() {
+		return safe
+	}
 	return errRedactedObservation
 }
 

@@ -129,8 +129,8 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 		require.True(t, call.redacted)
 		require.Equal(t, float64(0), call.options.Temperature)
 		require.True(t, call.options.TemperatureSet)
-		require.Equal(t, ingestionDocumentAnalysisCompletionTokens, call.options.MaxCompletionTokens)
 		require.Equal(t, ingestionDocumentAnalysisCompletionTokens, call.options.MaxTokens)
+		require.Zero(t, call.options.MaxCompletionTokens)
 		require.JSONEq(t, string(ingestionDocumentEvidenceSchema), string(call.options.Format))
 	}
 	require.NotContains(t, logs.String(), "sensitive-map-log")
@@ -169,10 +169,57 @@ func TestMapIngestionDocumentFailsWholeBatchWithoutEchoingSensitiveErrors(t *tes
 	require.Equal(t, ingestionAnalysisProgressRunning, progress[0].Status)
 	require.Equal(t, ingestionAnalysisProgressFailed, progress[1].Status)
 	require.True(t, progress[1].Failed)
+	require.Equal(t, ingestionAnalysisFailureProviderCall, progress[1].FailureKind)
+	require.Equal(t, 4, progress[1].FailedUnit)
+}
+
+func TestDocumentAnalysisFailureClassifiesWithoutLeakingProviderDetails(t *testing.T) {
+	tests := []struct {
+		name  string
+		cause error
+		kind  string
+	}{
+		{name: "strict schema", cause: chat.NewProviderError(
+			chat.ProviderFailureRequestInvalid, 400, "response_format",
+		), kind: ingestionAnalysisFailureStrictSchema},
+		{name: "request parameters", cause: chat.NewProviderError(
+			chat.ProviderFailureRequestInvalid, 400, "max_tokens",
+		), kind: ingestionAnalysisFailureRequestParameters},
+		{name: "rate limited", cause: chat.NewProviderError(
+			chat.ProviderFailureRateLimited, 429, "",
+		), kind: ingestionAnalysisFailureRateLimited},
+		{name: "request rejected", cause: chat.NewProviderError(
+			chat.ProviderFailureRequestInvalid, 400, "",
+		), kind: ingestionAnalysisFailureRequestRejected},
+		{name: "timeout", cause: context.DeadlineExceeded, kind: ingestionAnalysisFailureTimeout},
+		{name: "provider", cause: errors.New("provider private"), kind: ingestionAnalysisFailureProviderCall},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := documentAnalysisFailure("Map", 2, test.cause)
+			metadata := ingestionDocumentAnalysisFailureDetails(err)
+
+			require.Equal(t, test.kind, metadata.Kind)
+			require.Equal(t, 3, metadata.Unit)
+			require.Contains(t, err.Error(), ingestionDocumentAnalysisFailureLabel(test.kind))
+			require.NotContains(t, err.Error(), "private")
+		})
+	}
+}
+
+func TestInvalidDocumentAnalysisFailureUsesTypedClassification(t *testing.T) {
+	err := invalidDocumentAnalysisFailure("Map", 1)
+	metadata := ingestionDocumentAnalysisFailureDetails(err)
+
+	require.Equal(t, ingestionAnalysisFailureInvalidResponse, metadata.Kind)
+	require.Equal(t, 2, metadata.Unit)
+	require.Contains(t, err.Error(), "模型返回结构无效")
 }
 
 func TestDecodeIngestionDocumentEvidenceRejectsInvalidStructures(t *testing.T) {
 	tests := []string{
+		`{"summary":"","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
+		`{"summary":"ok","document_kind_candidates":[],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
 		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"],"extra":true}`,
 		`{"summary":"ok","document_kind_candidates":["unknown"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
 		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":[],"chunking_signals":["headings"]}`,
@@ -190,6 +237,10 @@ func TestDecodeIngestionDocumentEvidenceRejectsInvalidStructures(t *testing.T) {
 
 func TestIngestionDocumentEvidenceSchemaUsesSupportedStrictKeywords(t *testing.T) {
 	require.NotContains(t, string(ingestionDocumentEvidenceSchema), "uniqueItems")
+	require.Contains(t, string(ingestionDocumentEvidenceSchema), "minLength")
+	require.Contains(t, string(ingestionDocumentEvidenceSchema), "maxLength")
+	require.Contains(t, string(ingestionDocumentEvidenceSchema), "minItems")
+	require.Contains(t, string(ingestionDocumentEvidenceSchema), "maxItems")
 }
 
 func ingestionMapTestUnits(count int) []ingestionDocumentAnalysisUnit {

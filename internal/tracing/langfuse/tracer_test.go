@@ -15,6 +15,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+type safeTraceError struct{ message string }
+
+func (e safeTraceError) Error() string              { return e.message }
+func (e safeTraceError) SafeForObservability() bool { return true }
+
 // newTestManager builds a Manager wired to an in-memory span exporter via the
 // SimpleSpanProcessor (synchronous export on span End), so tests can assert on
 // exported spans deterministically without an HTTP server.
@@ -188,6 +193,26 @@ func TestGenerationFinishPreservesUnredactedErrorDetails(t *testing.T) {
 	span := exportedSpanByName(t, exp.GetSpans(), "unredacted-llm")
 	if span.Status.Description != providerError {
 		t.Fatalf("status description = %q; want %q", span.Status.Description, providerError)
+	}
+}
+
+func TestGenerationFinishPreservesTypedSafeErrorInRedactedContext(t *testing.T) {
+	m, exp := newTestManager(t)
+	const sensitiveWrapper = "private document wrapper"
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, generation := m.StartGeneration(ctx, GenerationOptions{Name: "safe-llm", Model: "m"})
+	generation.Finish(
+		nil, nil,
+		fmt.Errorf("%s: %w", sensitiveWrapper, safeTraceError{message: "status=400 parameter=response_format"}),
+	)
+
+	span := exportedSpanByName(t, exp.GetSpans(), "safe-llm")
+	if span.Status.Description != "status=400 parameter=response_format" {
+		t.Fatalf("status description = %q", span.Status.Description)
+	}
+	if strings.Contains(span.Status.Description, sensitiveWrapper) {
+		t.Fatalf("status description leaked wrapper: %q", span.Status.Description)
 	}
 }
 

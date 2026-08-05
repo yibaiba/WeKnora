@@ -108,6 +108,32 @@ func TestAnthropicChatSendsExplicitZeroAndStructuredOutput(t *testing.T) {
 	}, format["schema"])
 }
 
+func TestAnthropicChatReturnsTypedSafeErrorForRedactedRequest(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"private document"}}`))
+	}))
+	defer server.Close()
+
+	model, err := NewAnthropicChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL,
+		ModelName: "claude-sonnet-4-5", ModelID: "model-id", APIKey: "test-key",
+		Provider: string(provider.ProviderAnthropic),
+	})
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private document"}}, nil)
+
+	require.Error(t, err)
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureRequestInvalid, details.Kind)
+	require.Equal(t, http.StatusBadRequest, details.StatusCode)
+	require.NotContains(t, err.Error(), "private document")
+}
+
 func TestAnthropicChat_CacheUsage(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

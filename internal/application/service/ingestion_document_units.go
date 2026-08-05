@@ -27,20 +27,51 @@ func splitIngestionDocumentAnalysisUnits(content string) ([]ingestionDocumentAna
 	config.AllowZeroOverlap = true
 	chunks := chunker.SplitText(content, config)
 	runes := []rune(content)
-	units := make([]ingestionDocumentAnalysisUnit, 0, len(chunks))
-	for index, chunk := range chunks {
-		if chunk.Start < 0 || chunk.End < chunk.Start || chunk.End > len(runes) {
-			return nil, fmt.Errorf("文档分析单元 %d 位置越界: [%d,%d)", index, chunk.Start, chunk.End)
-		}
-		units = append(units, ingestionDocumentAnalysisUnit{
-			Index: index, Start: chunk.Start, End: chunk.End,
-			Content: string(runes[chunk.Start:chunk.End]),
-		})
+	if err := validateIngestionDocumentChunkCoverage(chunks, len(runes)); err != nil {
+		return nil, err
 	}
+	units := coalesceIngestionDocumentAnalysisUnits(chunks, runes)
 	if err := validateIngestionDocumentAnalysisCoverage(content, units); err != nil {
 		return nil, err
 	}
 	return units, nil
+}
+
+func validateIngestionDocumentChunkCoverage(chunks []chunker.Chunk, runeCount int) error {
+	cursor := 0
+	for index, chunk := range chunks {
+		if chunk.Start != cursor || chunk.End <= chunk.Start || chunk.End > runeCount {
+			return fmt.Errorf(
+				"文档分析切分块 %d 范围无效或不连续: [%d,%d)，期望起点 %d",
+				index, chunk.Start, chunk.End, cursor,
+			)
+		}
+		cursor = chunk.End
+	}
+	if cursor != runeCount {
+		return fmt.Errorf("文档分析切分块覆盖不完整: 已覆盖 %d，总长度 %d", cursor, runeCount)
+	}
+	return nil
+}
+
+func coalesceIngestionDocumentAnalysisUnits(
+	chunks []chunker.Chunk,
+	runes []rune,
+) []ingestionDocumentAnalysisUnit {
+	units := make([]ingestionDocumentAnalysisUnit, 0, len(chunks))
+	for _, chunk := range chunks {
+		last := len(units) - 1
+		if last >= 0 && chunk.End-units[last].Start <= ingestionDocumentAnalysisUnitRunes {
+			units[last].End = chunk.End
+			units[last].Content = string(runes[units[last].Start:chunk.End])
+			continue
+		}
+		units = append(units, ingestionDocumentAnalysisUnit{
+			Index: len(units), Start: chunk.Start, End: chunk.End,
+			Content: string(runes[chunk.Start:chunk.End]),
+		})
+	}
+	return units
 }
 
 func validateIngestionDocumentAnalysisCoverage(

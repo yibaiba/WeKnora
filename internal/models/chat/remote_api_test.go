@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRemoteAPIChatSendsExplicitZeroAndStrictJSONSchema(t *testing.T) {
+func TestRemoteAPIChatSendsSingleCompletionLimitAndStrictJSONSchema(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	var captured map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,11 +35,13 @@ func TestRemoteAPIChatSendsExplicitZeroAndStrictJSONSchema(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`)
 
 	_, err = model.Chat(context.Background(), []Message{{Role: "user", Content: "analyze"}}, &ChatOptions{
-		Temperature: 0, TemperatureSet: true, MaxCompletionTokens: 1024, Format: schema,
+		Temperature: 0, TemperatureSet: true, MaxTokens: 1024, Format: schema,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, float64(0), captured["temperature"])
+	require.Equal(t, float64(1024), captured["max_tokens"])
+	require.NotContains(t, captured, "max_completion_tokens")
 	responseFormat := captured["response_format"].(map[string]any)
 	require.Equal(t, "json_schema", responseFormat["type"])
 	jsonSchema := responseFormat["json_schema"].(map[string]any)
@@ -50,6 +52,34 @@ func TestRemoteAPIChatSendsExplicitZeroAndStrictJSONSchema(t *testing.T) {
 			"summary": map[string]any{"type": "string"},
 		}, "required": []any{"summary"}, "additionalProperties": false,
 	}, jsonSchema["schema"])
+}
+
+func TestRemoteAPIChatReturnsTypedSafeErrorForRedactedRequest(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","param":"response_format","message":"private document"}}`))
+	}))
+	defer server.Close()
+
+	model, err := NewRemoteAPIChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
+		ModelName: "gpt-4o", ModelID: "gpt-4o", APIKey: "test-key", Provider: "openai",
+	})
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private document"}}, &ChatOptions{
+		Temperature: 0, TemperatureSet: true,
+	})
+
+	require.Error(t, err)
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureRequestInvalid, details.Kind)
+	require.Equal(t, http.StatusBadRequest, details.StatusCode)
+	require.Equal(t, "response_format", details.Parameter)
+	require.NotContains(t, err.Error(), "private document")
 }
 
 func TestRemoteAPIChatKeepsAzureEndpointForExplicitTemperature(t *testing.T) {

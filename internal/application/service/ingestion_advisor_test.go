@@ -652,7 +652,9 @@ func TestModelIngestionAdvisorRejectsPreviewWithoutSubmission(t *testing.T) {
 }
 
 func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T) {
-	model := &ingestionAdvisorScriptedModel{streamErr: errors.New("tool calling unsupported by provider")}
+	model := &ingestionAdvisorScriptedModel{streamErr: chat.NewProviderError(
+		chat.ProviderFailureRequestInvalid, 400, "tools",
+	)}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
 
 	result, err := advisor.Analyze(
@@ -662,6 +664,19 @@ func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T)
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorToolCalling, ingestionAdvisorRunErrorCode(err))
 	require.NotNil(t, result)
+}
+
+func TestModelIngestionAdvisorDoesNotClassifyUnstructuredProviderMessage(t *testing.T) {
+	model := &ingestionAdvisorScriptedModel{streamErr: errors.New("tool calling unsupported by provider")}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	_, err := advisor.Analyze(
+		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
+	)
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorExecution, ingestionAdvisorRunErrorCode(err))
+	require.NotContains(t, err.Error(), "tool calling unsupported by provider")
 }
 
 func TestModelIngestionAdvisorSurfacesMissingModelAndProviderErrors(t *testing.T) {

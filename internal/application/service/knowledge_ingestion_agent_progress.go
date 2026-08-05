@@ -239,8 +239,22 @@ func ingestionAnalysisResultPayload(event types.IngestionDocumentAnalysisProgres
 }
 
 func ingestionAnalysisFailureMessage(event types.IngestionDocumentAnalysisProgress) string {
-	return fmt.Sprintf(
+	message := fmt.Sprintf(
 		"文档全文 %s 阶段失败（完成 %d/%d，耗时 %dms，覆盖字符 %d）",
 		event.Phase, event.Completed, event.UnitCount, event.DurationMS, event.CoveredCharacters,
 	)
+	if event.FailedUnit <= 0 {
+		return message
+	}
+	message = fmt.Sprintf(
+		"%s；失败单元 %d：%s",
+		message, event.FailedUnit, ingestionDocumentAnalysisFailureLabel(event.FailureKind),
+	)
+	if event.ProviderFailureKind == "" && event.HTTPStatus <= 0 && event.FailureParameter == "" {
+		return message
+	}
+	return message + ingestionDocumentAnalysisFailureSuffix(ingestionDocumentAnalysisFailureMetadata{
+		ProviderKind: event.ProviderFailureKind,
+		HTTPStatus:   event.HTTPStatus, Parameter: event.FailureParameter,
+	})
 }

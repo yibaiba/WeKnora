@@ -34,6 +34,27 @@ func TestSplitIngestionDocumentAnalysisUnitsUsesSourceSlicesForTables(t *testing
 	require.Equal(t, content, joinIngestionDocumentUnits(units))
 }
 
+func TestSplitIngestionDocumentAnalysisUnitsCoalescesTableBoundaries(t *testing.T) {
+	var content strings.Builder
+	for index := 0; index < 24; index++ {
+		content.WriteString("# 表格\n\n| 项目 | 结果 |\n| --- | --- |\n")
+		content.WriteString(strings.Repeat("| 检查项 | 通过 |\n", 30))
+		content.WriteString("\n")
+	}
+	padding := 15032 - utf8.RuneCountInString(content.String())
+	require.Positive(t, padding)
+	content.WriteString(strings.Repeat("补", padding))
+
+	units, err := splitIngestionDocumentAnalysisUnits(content.String())
+
+	require.NoError(t, err)
+	require.Len(t, units, 2)
+	require.Equal(t, content.String(), joinIngestionDocumentUnits(units))
+	for _, unit := range units {
+		require.LessOrEqual(t, utf8.RuneCountInString(unit.Content), ingestionDocumentAnalysisUnitRunes)
+	}
+}
+
 func TestSplitIngestionDocumentAnalysisUnitsHandlesLongUnstructuredText(t *testing.T) {
 	content := strings.Repeat("无标题正文", 4000)
 

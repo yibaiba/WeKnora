@@ -102,7 +102,7 @@ func (a *modelIngestionAdvisor) analyze(
 	result := buildIngestionAdvisorResult(session, run)
 	cleanupErr := cleanupIngestionWebSearch(ctx, webState, ingestionAgentSessionID(request))
 	if executeErr != nil {
-		return result, classifyIngestionAgentExecutionError(errors.Join(executeErr, cleanupErr), true)
+		return result, classifyIngestionAgentExecutionError(errors.Join(executeErr, cleanupErr))
 	}
 	if cleanupErr != nil {
 		return result, wrapIngestionAdvisorRunError(

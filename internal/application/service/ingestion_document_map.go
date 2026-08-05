@@ -95,6 +95,7 @@ func mapIngestionDocument(
 	}
 	err := group.Wait()
 	status := ingestionAnalysisProgressSucceeded
+	failure := ingestionDocumentAnalysisFailureDetails(err)
 	if err != nil {
 		status = ingestionAnalysisProgressFailed
 	}
@@ -102,6 +103,9 @@ func mapIngestionDocument(
 		Phase: "map_document", Status: status,
 		UnitCount: len(request.Units), Completed: int(completed.Load()),
 		DurationMS: time.Since(started).Milliseconds(), CoveredCharacters: int(covered.Load()), Failed: err != nil,
+		FailureKind: failure.Kind, FailedUnit: failure.Unit,
+		ProviderFailureKind: failure.ProviderKind,
+		HTTPStatus:          failure.HTTPStatus, FailureParameter: failure.Parameter,
 	})
 	if err != nil {
 		return nil, err
@@ -135,7 +139,7 @@ func analyzeIngestionDocumentUnit(
 	}
 	evidence, err := decodeIngestionDocumentEvidence(response)
 	if err != nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", request.Unit.Index, err)
+		return ingestionDocumentEvidence{}, invalidDocumentAnalysisFailure("Map", request.Unit.Index)
 	}
 	return evidence, nil
 }
@@ -150,9 +154,10 @@ func buildIngestionDocumentMapPrompt(unit ingestionDocumentAnalysisUnit, totalUn
 func ingestionDocumentAnalysisOptions() *chat.ChatOptions {
 	thinking := false
 	return &chat.ChatOptions{
+		// Provider adapters translate MaxTokens for models that require max_completion_tokens.
+		// Setting both here sends conflicting fields to generic OpenAI-compatible endpoints.
 		Temperature: 0, TemperatureSet: true, MaxTokens: ingestionDocumentAnalysisCompletionTokens,
-		MaxCompletionTokens: ingestionDocumentAnalysisCompletionTokens,
-		Thinking:            &thinking, Format: ingestionDocumentEvidenceSchema,
+		Thinking: &thinking, Format: ingestionDocumentEvidenceSchema,
 	}
 }
 
@@ -242,20 +247,6 @@ func validateEvidenceSignals(values []string, field string) error {
 		}
 	}
 	return nil
-}
-
-func documentAnalysisFailure(stage string, unit int, cause error) error {
-	reason := "模型调用失败"
-	if errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, context.Canceled) {
-		reason = "调用超时或已取消"
-	} else if strings.Contains(cause.Error(), "Schema") || strings.Contains(cause.Error(), "JSON") ||
-		strings.Contains(cause.Error(), "证据") || strings.Contains(cause.Error(), "候选") ||
-		strings.Contains(cause.Error(), "summary") || strings.Contains(cause.Error(), "signals") {
-		reason = "模型返回结构无效"
-	}
-	return newIngestionAdvisorRunError(
-		ingestionAdvisorErrorDocumentAnalysis, "文档全文 %s 分析失败（单元 %d）：%s", stage, unit+1, reason,
-	)
 }
 
 func emitIngestionAnalysisProgress(
