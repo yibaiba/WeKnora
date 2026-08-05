@@ -249,7 +249,8 @@ func ingestionMapTestUnits(count int) []ingestionDocumentAnalysisUnit {
 		content := fmt.Sprintf("unit-%02d", index)
 		units[index] = ingestionDocumentAnalysisUnit{
 			Index: index, Start: index * len([]rune(content)),
-			End: (index + 1) * len([]rune(content)), Content: content,
+			End:             (index + 1) * len([]rune(content)),
+			EstimatedTokens: estimateIngestionDocumentTokens(content), Content: content,
 		}
 	}
 	return units

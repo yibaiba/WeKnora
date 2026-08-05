@@ -52,7 +52,15 @@ func analyzeFullIngestionDocument(
 	model chat.Chat,
 	request types.IngestionAdvisorRequest,
 ) (ingestionDocumentEvidence, error) {
-	units, err := splitIngestionDocumentAnalysisUnits(request.Content)
+	budget, err := calculateIngestionDocumentAnalysisTokenBudget(
+		chat.ResolveContextWindowTokens(model), ingestionDocumentRuneCount(request.Content),
+	)
+	if err != nil {
+		return ingestionDocumentEvidence{}, newIngestionAdvisorRunError(
+			ingestionAdvisorErrorDocumentAnalysis, "文档全文 Map 分析准备失败：%s", err,
+		)
+	}
+	units, err := splitIngestionDocumentAnalysisUnits(request.Content, budget.ContentTokens)
 	if err != nil {
 		return ingestionDocumentEvidence{}, newIngestionAdvisorRunError(
 			ingestionAdvisorErrorDocumentAnalysis, "文档全文 Map 分析准备失败：%s", err,
@@ -63,6 +71,13 @@ func analyzeFullIngestionDocument(
 	})
 	if err != nil {
 		return ingestionDocumentEvidence{}, err
+	}
+	if err := validateIngestionDocumentAnalysisCoverage(
+		request.Content, units, budget.ContentTokens,
+	); err != nil {
+		return ingestionDocumentEvidence{}, newIngestionAdvisorRunError(
+			ingestionAdvisorErrorDocumentAnalysis, "文档全文 Map 分析结果覆盖校验失败：%s", err,
+		)
 	}
 	return reduceIngestionDocument(ctx, ingestionDocumentReduceRequest{
 		Model: model, Evidence: mapped, CoveredCharacters: len([]rune(request.Content)),

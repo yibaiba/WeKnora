@@ -20,6 +20,7 @@ import (
 
 type ingestionAdvisorFullTextModel struct {
 	agent               *ingestionAdvisorScriptedModel
+	contextWindowTokens int
 	mapErr              error
 	mapWaitForContext   bool
 	agentWaitForContext bool
@@ -81,6 +82,9 @@ func (m *ingestionAdvisorFullTextModel) ChatStream(
 
 func (m *ingestionAdvisorFullTextModel) GetModelName() string { return "advisor-full-text" }
 func (m *ingestionAdvisorFullTextModel) GetModelID() string   { return "model-1" }
+func (m *ingestionAdvisorFullTextModel) ContextWindowTokens() int {
+	return m.contextWindowTokens
+}
 
 func TestModelIngestionAdvisorMapsFullTextBeforePreviewAndSubmission(t *testing.T) {
 	request := validIngestionAdvisorRequest()
@@ -182,6 +186,22 @@ func TestModelIngestionAdvisorAnalysisFailureDoesNotStartAgent(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorDocumentAnalysis, ingestionAdvisorRunErrorCode(err))
 	require.NotContains(t, err.Error(), "private body")
+	require.Empty(t, agentModel.calls)
+}
+
+func TestModelIngestionAdvisorRejectsInsufficientBudgetBeforeModelCall(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	agentModel := &ingestionAdvisorScriptedModel{}
+	model := &ingestionAdvisorFullTextModel{
+		agent: agentModel, contextWindowTokens: 1024,
+	}
+	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
+
+	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "token 预算不足")
+	require.Empty(t, model.mapCalls)
 	require.Empty(t, agentModel.calls)
 }
 

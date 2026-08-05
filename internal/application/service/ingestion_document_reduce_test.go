@@ -75,9 +75,10 @@ func TestReduceIngestionDocumentRecursesWithinBudgetAndPreservesOrder(t *testing
 
 func TestFullDocumentAnalysisCovers15032RunesBeforeReduction(t *testing.T) {
 	content := strings.Repeat("文", 15032)
-	units, err := splitIngestionDocumentAnalysisUnits(content)
+	budget := requireAnalysisBudget(t, 8192, content)
+	units, err := splitIngestionDocumentAnalysisUnits(content, budget.ContentTokens)
 	require.NoError(t, err)
-	require.Len(t, units, 2)
+	require.Greater(t, len(units), 1)
 	var mapCalls atomic.Int32
 	var reduceCalls atomic.Int32
 	model := &ingestionMapModelStub{response: func(_ context.Context, messages []chat.Message) (*types.ChatResponse, error) {
