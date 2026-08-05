@@ -82,6 +82,35 @@ func TestRemoteAPIChatReturnsTypedSafeErrorForRedactedRequest(t *testing.T) {
 	require.NotContains(t, err.Error(), "private document")
 }
 
+func TestRemoteAPIChatCarriesSafeRetryAfterForRateLimit(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"private response"}}`))
+	}))
+	defer server.Close()
+
+	model, err := NewRemoteAPIChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
+		ModelName: "gpt-4o", ModelID: "gpt-4o", APIKey: "test-key", Provider: "openai",
+	})
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private request"}}, &ChatOptions{
+		Temperature: 0, TemperatureSet: true,
+	})
+
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureRateLimited, details.Kind)
+	require.NotNil(t, details.RetryAfter)
+	require.Equal(t, 30*time.Second, *details.RetryAfter)
+	require.NotContains(t, err.Error(), "private response")
+	require.NotContains(t, err.Error(), "private request")
+}
+
 func TestRemoteAPIChatKeepsAzureEndpointForExplicitTemperature(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	var captured map[string]any

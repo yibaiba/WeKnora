@@ -263,7 +263,10 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
+		return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
+			StatusCode: resp.StatusCode, Body: body,
+			RetryAfterHeader: resp.Header.Get("Retry-After"),
+		})
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -396,7 +399,10 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
+		return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
+			StatusCode: resp.StatusCode, Body: body,
+			RetryAfterHeader: resp.Header.Get("Retry-After"),
+		})
 	}
 
 	streamChan := make(chan types.StreamResponse)

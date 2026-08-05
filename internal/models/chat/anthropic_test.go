@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -132,6 +133,34 @@ func TestAnthropicChatReturnsTypedSafeErrorForRedactedRequest(t *testing.T) {
 	require.Equal(t, ProviderFailureRequestInvalid, details.Kind)
 	require.Equal(t, http.StatusBadRequest, details.StatusCode)
 	require.NotContains(t, err.Error(), "private document")
+}
+
+func TestAnthropicChatCarriesSafeRetryAfterForRateLimit(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "3")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"private response"}}`))
+	}))
+	defer server.Close()
+
+	model, err := NewAnthropicChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL,
+		ModelName: "claude-sonnet-4-5", ModelID: "model-id", APIKey: "test-key",
+		Provider: string(provider.ProviderAnthropic),
+	})
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private request"}}, nil)
+
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureRateLimited, details.Kind)
+	require.NotNil(t, details.RetryAfter)
+	require.Equal(t, 3*time.Second, *details.RetryAfter)
+	require.NotContains(t, err.Error(), "private response")
+	require.NotContains(t, err.Error(), "private request")
 }
 
 func TestAnthropicChat_CacheUsage(t *testing.T) {

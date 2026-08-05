@@ -165,14 +165,20 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 			return nil, err
 		}
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
+			return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
+				StatusCode: resp.StatusCode, Body: body,
+				RetryAfterHeader: resp.Header.Get("Retry-After"),
+			})
 		}
 		logUsage(ctx, c.modelName, &chatResp.Usage)
 		return chatResp, nil
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
+		return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
+			StatusCode: resp.StatusCode, Body: body,
+			RetryAfterHeader: resp.Header.Get("Retry-After"),
+		})
 	}
 
 	var chatResp anthropicResponse
@@ -215,7 +221,10 @@ func (c *AnthropicChat) ChatStream(ctx context.Context, messages []Message, opts
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, providerHTTPErrorForContext(ctx, resp.StatusCode, body)
+		return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
+			StatusCode: resp.StatusCode, Body: body,
+			RetryAfterHeader: resp.Header.Get("Retry-After"),
+		})
 	}
 
 	streamChan := make(chan types.StreamResponse)
