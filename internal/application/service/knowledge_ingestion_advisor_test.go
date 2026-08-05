@@ -52,23 +52,35 @@ func (s *ingestionAdvisorStub) Analyze(
 }
 
 func emitIngestionAnalysisProgressForTest(progress func(types.IngestionDocumentAnalysisProgress)) {
-	progress(types.IngestionDocumentAnalysisProgress{
+	progress(withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
 		UnitCount: 2, CoveredCharacters: 22,
-	})
-	progress(types.IngestionDocumentAnalysisProgress{
+	}))
+	progress(withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 		Phase: "map_document", Status: ingestionAnalysisProgressSucceeded, UnitCount: 2, Completed: 2,
-		DurationMS: 7, CoveredCharacters: 22,
-	})
-	progress(types.IngestionDocumentAnalysisProgress{
+		DurationMS: 7, CoveredCharacters: 22, RetryCount: 1,
+	}))
+	progress(withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 		Phase: "reduce_document", Status: ingestionAnalysisProgressRunning,
 		UnitCount: 1, Level: 1, CoveredCharacters: 22,
-	})
-	progress(types.IngestionDocumentAnalysisProgress{
+	}))
+	progress(withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 		Phase: "reduce_document", Status: ingestionAnalysisProgressSucceeded,
 		UnitCount: 1, Completed: 1, Level: 1,
 		DurationMS: 3, CoveredCharacters: 22,
-	})
+	}))
+}
+
+func withIngestionAnalysisBudgetForTest(
+	event types.IngestionDocumentAnalysisProgress,
+) types.IngestionDocumentAnalysisProgress {
+	event.ContextWindowTokens = 8192
+	event.CompletionTokenBudget = 1024
+	event.PromptSchemaTokens = 300
+	event.SafetyTokens = 820
+	event.ContentTokenBudget = 6048
+	event.EstimatedSourceTokens = 7
+	return event
 }
 
 func emitIngestionProgressForTest(progress func(types.IngestionAgentStep)) {
@@ -150,21 +162,22 @@ func TestIngestionAnalysisSpanClosesOriginalRunningSpan(t *testing.T) {
 	tracker := newIngestionSpanTrackerStub()
 	parent := &Span{KnowledgeID: "knowledge-1", Attempt: 1, SpanID: "analysis-1", Kind: types.SpanKindStage}
 	progress := newIngestionAgentSpanProgress(context.Background(), tracker, parent)
-	progress.HandleAnalysis(types.IngestionDocumentAnalysisProgress{
+	progress.HandleAnalysis(withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
 		UnitCount: 2, CoveredCharacters: 15032,
-	})
+	}))
 
 	require.Len(t, tracker.subspans, 1)
 	require.Empty(t, tracker.subEnded)
-	progress.HandleAnalysis(types.IngestionDocumentAnalysisProgress{
+	progress.HandleAnalysis(withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 		Phase: "map_document", Status: ingestionAnalysisProgressSucceeded,
-		UnitCount: 2, Completed: 2, DurationMS: 42, CoveredCharacters: 15032,
-	})
+		UnitCount: 2, Completed: 2, DurationMS: 42, CoveredCharacters: 15032, RetryCount: 1,
+	}))
 
 	require.Equal(t, tracker.subspans, tracker.subEnded)
 	require.Equal(t, types.JSONMap{
 		"completed": 2, "duration_ms": int64(42), "covered_characters": 15032,
+		"retry_count": 1,
 	}, tracker.subOutputs[0])
 }
 
@@ -396,15 +409,23 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Contains(t, tracker.subspans[6], "evaluate_and_refine")
 	require.Equal(t, types.JSONMap{
 		"unit_count": 2, "level": 0, "covered_characters": 22,
+		"context_window_tokens": 8192, "completion_token_budget": 1024,
+		"prompt_schema_tokens": 300, "safety_tokens": 820,
+		"content_token_budget": 6048, "estimated_source_tokens": 7,
 	}, tracker.subInputs[1])
 	require.Equal(t, types.JSONMap{
 		"unit_count": 1, "level": 1, "covered_characters": 22,
+		"context_window_tokens": 8192, "completion_token_budget": 1024,
+		"prompt_schema_tokens": 300, "safety_tokens": 820,
+		"content_token_budget": 6048, "estimated_source_tokens": 7,
 	}, tracker.subInputs[2])
 	require.Equal(t, types.JSONMap{
 		"completed": 2, "duration_ms": int64(7), "covered_characters": 22,
+		"retry_count": 1,
 	}, tracker.subOutputs[1])
 	require.Equal(t, types.JSONMap{
 		"completed": 1, "duration_ms": int64(3), "covered_characters": 22,
+		"retry_count": 0,
 	}, tracker.subOutputs[2])
 	progressJSON, marshalProgressErr := json.Marshal([]types.JSONMap{
 		tracker.subInputs[1], tracker.subInputs[2], tracker.subOutputs[1], tracker.subOutputs[2],
@@ -496,17 +517,18 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 		repo: repo,
 		ingestionAdvisor: &ingestionAdvisorStub{
 			errors: []error{advisorErr},
-			analysisProgress: []types.IngestionDocumentAnalysisProgress{{
+			analysisProgress: []types.IngestionDocumentAnalysisProgress{withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 				Phase: "map_document", Status: ingestionAnalysisProgressRunning,
 				UnitCount: 2, CoveredCharacters: 15032,
-			}, {
+			}), withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
 				Phase: "map_document", Status: ingestionAnalysisProgressFailed,
 				UnitCount: 2, Completed: 1,
 				DurationMS: 9, CoveredCharacters: 8000, Failed: true,
+				RetryCount: 2, FailedUnitAttempts: 3,
 				FailureKind: ingestionAnalysisFailureStrictSchema, FailedUnit: 2,
 				ProviderFailureKind: string(chat.ProviderFailureRequestInvalid),
 				HTTPStatus:          400, FailureParameter: "response_format",
-			}},
+			})},
 		},
 		spanTracker: tracker,
 	}
@@ -522,6 +544,8 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 	}, tracker.failCodes)
 	require.Contains(t, tracker.failed[0], "map_document")
 	require.Contains(t, tracker.failMessages[0], "失败单元 2")
+	require.Contains(t, tracker.failMessages[0], "尝试 3 次")
+	require.Contains(t, tracker.failMessages[0], "重试 2 次")
 	require.Contains(t, tracker.failMessages[0], "严格 JSON Schema")
 	require.Contains(t, tracker.failMessages[0], "request_invalid")
 	require.Contains(t, tracker.failMessages[0], "HTTP 400")

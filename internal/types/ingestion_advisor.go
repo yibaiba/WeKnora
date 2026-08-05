@@ -54,19 +54,27 @@ type IngestionAdvisorRequest struct {
 }
 
 type IngestionDocumentAnalysisProgress struct {
-	Phase               string
-	Status              string
-	UnitCount           int
-	Completed           int
-	Level               int
-	DurationMS          int64
-	CoveredCharacters   int
-	Failed              bool
-	FailureKind         string
-	FailedUnit          int
-	ProviderFailureKind string
-	HTTPStatus          int
-	FailureParameter    string
+	Phase                 string
+	Status                string
+	ContextWindowTokens   int
+	CompletionTokenBudget int
+	PromptSchemaTokens    int
+	SafetyTokens          int
+	ContentTokenBudget    int
+	EstimatedSourceTokens int
+	UnitCount             int
+	Completed             int
+	RetryCount            int
+	FailedUnitAttempts    int
+	Level                 int
+	DurationMS            int64
+	CoveredCharacters     int
+	Failed                bool
+	FailureKind           string
+	FailedUnit            int
+	ProviderFailureKind   string
+	HTTPStatus            int
+	FailureParameter      string
 }
 
 // IngestionChunkingConstraints are knowledge-base-owned splitter inputs. The

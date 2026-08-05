@@ -11,11 +11,12 @@ import (
 const ingestionDocumentAnalysisMinimumSafetyTokens = 512
 
 type ingestionDocumentAnalysisTokenBudget struct {
-	ContextWindowTokens int
-	CompletionTokens    int
-	PromptSchemaTokens  int
-	SafetyTokens        int
-	ContentTokens       int
+	ContextWindowTokens   int
+	CompletionTokens      int
+	PromptSchemaTokens    int
+	SafetyTokens          int
+	ContentTokens         int
+	EstimatedSourceTokens int
 }
 
 type ingestionDocumentAnalysisUnit struct {
@@ -28,15 +29,17 @@ type ingestionDocumentAnalysisUnit struct {
 
 func calculateIngestionDocumentAnalysisTokenBudget(
 	contextWindowTokens int,
-	documentRuneCount int,
+	content string,
 ) (ingestionDocumentAnalysisTokenBudget, error) {
+	documentRuneCount := utf8.RuneCountInString(content)
 	safetyTokens := max(ingestionDocumentAnalysisMinimumSafetyTokens, (contextWindowTokens+9)/10)
 	promptSchemaTokens := ingestionDocumentMapPromptSchemaTokens(documentRuneCount)
 	budget := ingestionDocumentAnalysisTokenBudget{
-		ContextWindowTokens: contextWindowTokens,
-		CompletionTokens:    ingestionDocumentAnalysisCompletionTokens,
-		PromptSchemaTokens:  promptSchemaTokens,
-		SafetyTokens:        safetyTokens,
+		ContextWindowTokens:   contextWindowTokens,
+		CompletionTokens:      ingestionDocumentAnalysisCompletionTokens,
+		PromptSchemaTokens:    promptSchemaTokens,
+		SafetyTokens:          safetyTokens,
+		EstimatedSourceTokens: estimateIngestionDocumentTokens(content),
 	}
 	budget.ContentTokens = contextWindowTokens - budget.CompletionTokens - promptSchemaTokens - safetyTokens
 	if budget.ContentTokens <= 0 {
@@ -234,8 +237,4 @@ func validateIngestionDocumentAnalysisCoverage(
 
 func estimateIngestionDocumentTokens(content string) int {
 	return chunker.ApproxTokenCount(content, chunker.DetectLanguage(content))
-}
-
-func ingestionDocumentRuneCount(content string) int {
-	return utf8.RuneCountInString(content)
 }

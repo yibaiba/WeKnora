@@ -10,18 +10,20 @@ import (
 
 func TestCalculateIngestionDocumentAnalysisTokenBudgetUsesRequiredReserves(t *testing.T) {
 	const contextWindow = 8192
-	budget, err := calculateIngestionDocumentAnalysisTokenBudget(contextWindow, 15032)
+	content := strings.Repeat("文", 15032)
+	budget, err := calculateIngestionDocumentAnalysisTokenBudget(contextWindow, content)
 
 	require.NoError(t, err)
 	require.Equal(t, contextWindow, budget.ContextWindowTokens)
 	require.Equal(t, ingestionDocumentAnalysisCompletionTokens, budget.CompletionTokens)
 	require.Equal(t, (contextWindow+9)/10, budget.SafetyTokens)
 	require.Positive(t, budget.PromptSchemaTokens)
+	require.Equal(t, estimateIngestionDocumentTokens(content), budget.EstimatedSourceTokens)
 	require.Equal(t, contextWindow-budget.CompletionTokens-budget.PromptSchemaTokens-budget.SafetyTokens, budget.ContentTokens)
 }
 
 func TestCalculateIngestionDocumentAnalysisTokenBudgetRejectsInsufficientWindow(t *testing.T) {
-	budget, err := calculateIngestionDocumentAnalysisTokenBudget(1024, 15032)
+	budget, err := calculateIngestionDocumentAnalysisTokenBudget(1024, strings.Repeat("文", 15032))
 
 	require.ErrorContains(t, err, "token 预算不足")
 	require.LessOrEqual(t, budget.ContentTokens, 0)
@@ -134,9 +136,7 @@ func requireAnalysisBudget(
 	content string,
 ) ingestionDocumentAnalysisTokenBudget {
 	t.Helper()
-	budget, err := calculateIngestionDocumentAnalysisTokenBudget(
-		contextWindow, utf8.RuneCountInString(content),
-	)
+	budget, err := calculateIngestionDocumentAnalysisTokenBudget(contextWindow, content)
 	require.NoError(t, err)
 	return budget
 }

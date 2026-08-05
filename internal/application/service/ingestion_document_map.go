@@ -44,6 +44,7 @@ type ingestionDocumentMapRequest struct {
 	Units       []ingestionDocumentAnalysisUnit
 	Progress    func(types.IngestionDocumentAnalysisProgress)
 	RetryPolicy ingestionDocumentAnalysisRetryPolicy
+	Budget      ingestionDocumentAnalysisTokenBudget
 }
 
 type ingestionDocumentMapUnitRequest struct {
@@ -71,22 +72,24 @@ func mapIngestionDocument(
 	request ingestionDocumentMapRequest,
 ) ([]ingestionDocumentEvidence, error) {
 	started := time.Now()
-	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
+	emitIngestionAnalysisProgress(request.Progress, ingestionAnalysisProgressWithBudget(types.IngestionDocumentAnalysisProgress{
 		Phase: "map_document", Status: ingestionAnalysisProgressRunning,
 		UnitCount: len(request.Units), CoveredCharacters: ingestionAnalysisUnitCoverage(request.Units),
-	})
+	}, request.Budget))
 	results := make([]ingestionDocumentEvidence, len(request.Units))
 	var completed atomic.Int64
 	var covered atomic.Int64
+	var retries atomic.Int64
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(ingestionDocumentMapConcurrency)
 	for index := range request.Units {
 		index := index
 		group.Go(func() error {
-			evidence, _, err := analyzeIngestionDocumentUnit(groupCtx, ingestionDocumentMapUnitRequest{
+			evidence, attempts, err := analyzeIngestionDocumentUnit(groupCtx, ingestionDocumentMapUnitRequest{
 				Model: request.Model, Unit: request.Units[index], TotalUnits: len(request.Units),
 				RetryPolicy: request.RetryPolicy,
 			})
+			retries.Add(int64(max(attempts-1, 0)))
 			if err != nil {
 				return err
 			}
@@ -102,14 +105,15 @@ func mapIngestionDocument(
 	if err != nil {
 		status = ingestionAnalysisProgressFailed
 	}
-	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
+	emitIngestionAnalysisProgress(request.Progress, ingestionAnalysisProgressWithBudget(types.IngestionDocumentAnalysisProgress{
 		Phase: "map_document", Status: status,
 		UnitCount: len(request.Units), Completed: int(completed.Load()),
 		DurationMS: time.Since(started).Milliseconds(), CoveredCharacters: int(covered.Load()), Failed: err != nil,
+		RetryCount: int(retries.Load()), FailedUnitAttempts: failure.Attempts,
 		FailureKind: failure.Kind, FailedUnit: failure.Unit,
 		ProviderFailureKind: failure.ProviderKind,
 		HTTPStatus:          failure.HTTPStatus, FailureParameter: failure.Parameter,
-	})
+	}, request.Budget))
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +134,9 @@ func analyzeIngestionDocumentUnit(
 ) (ingestionDocumentEvidence, int, error) {
 	if request.Model == nil {
 		return ingestionDocumentEvidence{}, 0,
-			documentAnalysisFailure("Map", request.Unit.Index, errors.New("模型未配置"))
+			documentAnalysisFailureWithAttempts(documentAnalysisFailureRequest{
+				Stage: "Map", Unit: request.Unit.Index, Cause: errors.New("模型未配置"),
+			})
 	}
 	messages := []chat.Message{
 		{Role: "system", Content: ingestionDocumentMapSystemPrompt},
@@ -142,12 +148,14 @@ func analyzeIngestionDocumentUnit(
 	}, request.RetryPolicy)
 	if err != nil {
 		return ingestionDocumentEvidence{}, call.Attempts,
-			documentAnalysisFailure("Map", request.Unit.Index, err)
+			documentAnalysisFailureWithAttempts(documentAnalysisFailureRequest{
+				Stage: "Map", Unit: request.Unit.Index, Cause: err, Attempts: call.Attempts,
+			})
 	}
 	evidence, err := decodeIngestionDocumentEvidence(call.Response)
 	if err != nil {
 		return ingestionDocumentEvidence{}, call.Attempts,
-			invalidDocumentAnalysisFailure("Map", request.Unit.Index)
+			invalidDocumentAnalysisFailureWithAttempts("Map", request.Unit.Index, call.Attempts)
 	}
 	return evidence, call.Attempts, nil
 }
@@ -264,6 +272,19 @@ func emitIngestionAnalysisProgress(
 	if progress != nil {
 		progress(event)
 	}
+}
+
+func ingestionAnalysisProgressWithBudget(
+	event types.IngestionDocumentAnalysisProgress,
+	budget ingestionDocumentAnalysisTokenBudget,
+) types.IngestionDocumentAnalysisProgress {
+	event.ContextWindowTokens = budget.ContextWindowTokens
+	event.CompletionTokenBudget = budget.CompletionTokens
+	event.PromptSchemaTokens = budget.PromptSchemaTokens
+	event.SafetyTokens = budget.SafetyTokens
+	event.ContentTokenBudget = budget.ContentTokens
+	event.EstimatedSourceTokens = budget.EstimatedSourceTokens
+	return event
 }
 
 const ingestionDocumentMapSystemPrompt = `你是文档全文分析器的 Map 阶段。分析一个连续原文单元，输出严格 JSON，不得输出 Markdown 或额外字段。

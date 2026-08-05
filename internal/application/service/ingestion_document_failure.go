@@ -24,21 +24,39 @@ type ingestionDocumentAnalysisError struct {
 	metadata ingestionDocumentAnalysisFailureMetadata
 }
 
+type documentAnalysisFailureRequest struct {
+	Stage    string
+	Unit     int
+	Cause    error
+	Attempts int
+}
+
 func documentAnalysisFailure(stage string, unit int, cause error) error {
+	return documentAnalysisFailureWithAttempts(documentAnalysisFailureRequest{
+		Stage: stage, Unit: unit, Cause: cause, Attempts: 1,
+	})
+}
+
+func documentAnalysisFailureWithAttempts(request documentAnalysisFailureRequest) error {
 	metadata := ingestionDocumentAnalysisFailureMetadata{
-		Kind: classifyIngestionDocumentAnalysisFailure(cause), Unit: unit + 1,
+		Kind: classifyIngestionDocumentAnalysisFailure(request.Cause),
+		Unit: request.Unit + 1, Attempts: request.Attempts,
 	}
-	if providerErr, ok := chat.ProviderErrorDetails(cause); ok {
+	if providerErr, ok := chat.ProviderErrorDetails(request.Cause); ok {
 		metadata.ProviderKind = string(providerErr.Kind)
 		metadata.HTTPStatus = providerErr.StatusCode
 		metadata.Parameter = providerErr.Parameter
 	}
-	return newDocumentAnalysisFailure(stage, metadata)
+	return newDocumentAnalysisFailure(request.Stage, metadata)
 }
 
 func invalidDocumentAnalysisFailure(stage string, unit int) error {
+	return invalidDocumentAnalysisFailureWithAttempts(stage, unit, 1)
+}
+
+func invalidDocumentAnalysisFailureWithAttempts(stage string, unit, attempts int) error {
 	return newDocumentAnalysisFailure(stage, ingestionDocumentAnalysisFailureMetadata{
-		Kind: ingestionAnalysisFailureInvalidResponse, Unit: unit + 1,
+		Kind: ingestionAnalysisFailureInvalidResponse, Unit: unit + 1, Attempts: attempts,
 	})
 }
 
@@ -60,6 +78,7 @@ type ingestionDocumentAnalysisFailureMetadata struct {
 	ProviderKind string
 	HTTPStatus   int
 	Parameter    string
+	Attempts     int
 }
 
 func ingestionDocumentAnalysisFailureDetails(err error) ingestionDocumentAnalysisFailureMetadata {

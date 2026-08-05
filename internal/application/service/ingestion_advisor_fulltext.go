@@ -53,7 +53,7 @@ func analyzeFullIngestionDocument(
 	request types.IngestionAdvisorRequest,
 ) (ingestionDocumentEvidence, error) {
 	budget, err := calculateIngestionDocumentAnalysisTokenBudget(
-		chat.ResolveContextWindowTokens(model), ingestionDocumentRuneCount(request.Content),
+		chat.ResolveContextWindowTokens(model), request.Content,
 	)
 	if err != nil {
 		return ingestionDocumentEvidence{}, newIngestionAdvisorRunError(
@@ -67,7 +67,7 @@ func analyzeFullIngestionDocument(
 		)
 	}
 	mapped, err := mapIngestionDocument(ctx, ingestionDocumentMapRequest{
-		Model: model, Units: units, Progress: request.AnalysisProgressFn,
+		Model: model, Units: units, Progress: request.AnalysisProgressFn, Budget: budget,
 	})
 	if err != nil {
 		return ingestionDocumentEvidence{}, err
@@ -81,7 +81,7 @@ func analyzeFullIngestionDocument(
 	}
 	return reduceIngestionDocument(ctx, ingestionDocumentReduceRequest{
 		Model: model, Evidence: mapped, CoveredCharacters: len([]rune(request.Content)),
-		Progress: request.AnalysisProgressFn,
+		Progress: request.AnalysisProgressFn, Budget: budget,
 	})
 }
 

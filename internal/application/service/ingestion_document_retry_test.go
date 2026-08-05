@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -229,6 +230,66 @@ func TestMapRetriesStayWithinFourWorkers(t *testing.T) {
 	require.Len(t, model.callSnapshot(), len(units)+ingestionDocumentMapConcurrency)
 }
 
+func TestMapProgressReportsBudgetAndRetryStatistics(t *testing.T) {
+	content := "完整正文"
+	budget := requireAnalysisBudget(t, 8192, content)
+	transient := chat.NewProviderError(chat.ProviderFailureUnavailable, http.StatusServiceUnavailable, "")
+	model := &ingestionRetryModel{steps: []ingestionRetryStep{
+		{err: transient}, {response: mapEvidenceResponse("mapped")},
+	}}
+	var progress []types.IngestionDocumentAnalysisProgress
+
+	result, err := mapIngestionDocument(context.Background(), ingestionDocumentMapRequest{
+		Model: model, Units: []ingestionDocumentAnalysisUnit{newTestAnalysisUnit(0, 0, 4, content)},
+		RetryPolicy: immediateRetryPolicy(), Budget: budget,
+		Progress: func(event types.IngestionDocumentAnalysisProgress) {
+			progress = append(progress, event)
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.Len(t, progress, 2)
+	require.Equal(t, 1, progress[1].RetryCount)
+	require.Zero(t, progress[1].FailedUnitAttempts)
+	requireAnalysisProgressBudget(t, progress[0], budget)
+	requireAnalysisProgressBudget(t, progress[1], budget)
+	payload, marshalErr := json.Marshal(progress)
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(payload), content)
+	require.NotContains(t, string(payload), "mapped")
+}
+
+func TestMapProgressReportsFinalFailedAttemptsWithoutPartialResult(t *testing.T) {
+	content := "完整正文"
+	budget := requireAnalysisBudget(t, 8192, content)
+	transient := chat.NewProviderError(chat.ProviderFailureUnavailable, http.StatusServiceUnavailable, "")
+	model := &ingestionRetryModel{steps: []ingestionRetryStep{
+		{err: transient}, {err: transient}, {err: transient},
+	}}
+	var progress []types.IngestionDocumentAnalysisProgress
+
+	result, err := mapIngestionDocument(context.Background(), ingestionDocumentMapRequest{
+		Model: model, Units: []ingestionDocumentAnalysisUnit{newTestAnalysisUnit(0, 0, 4, content)},
+		RetryPolicy: immediateRetryPolicy(), Budget: budget,
+		Progress: func(event types.IngestionDocumentAnalysisProgress) {
+			progress = append(progress, event)
+		},
+	})
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Len(t, progress, 2)
+	terminal := progress[1]
+	require.Zero(t, terminal.Completed)
+	require.Zero(t, terminal.CoveredCharacters)
+	require.Equal(t, 2, terminal.RetryCount)
+	require.Equal(t, 3, terminal.FailedUnitAttempts)
+	require.Equal(t, http.StatusServiceUnavailable, terminal.HTTPStatus)
+	require.Equal(t, string(chat.ProviderFailureUnavailable), terminal.ProviderFailureKind)
+	requireAnalysisProgressBudget(t, terminal, budget)
+}
+
 func TestReduceRetryPreservesRequestAndOrder(t *testing.T) {
 	transient := chat.NewProviderError(chat.ProviderFailureUnavailable, http.StatusBadGateway, "")
 	model := &ingestionRetryModel{steps: []ingestionRetryStep{
@@ -237,10 +298,15 @@ func TestReduceRetryPreservesRequestAndOrder(t *testing.T) {
 	input := []ingestionDocumentEvidence{
 		validIngestionDocumentEvidence("first"), validIngestionDocumentEvidence("second"),
 	}
+	budget := requireAnalysisBudget(t, 8192, "source content")
+	var progress []types.IngestionDocumentAnalysisProgress
 
 	result, err := reduceIngestionDocument(context.Background(), ingestionDocumentReduceRequest{
 		Model: model, Evidence: input, CoveredCharacters: 20,
-		RetryPolicy: immediateRetryPolicy(),
+		RetryPolicy: immediateRetryPolicy(), Budget: budget,
+		Progress: func(event types.IngestionDocumentAnalysisProgress) {
+			progress = append(progress, event)
+		},
 	})
 
 	require.NoError(t, err)
@@ -251,6 +317,9 @@ func TestReduceRetryPreservesRequestAndOrder(t *testing.T) {
 	require.Equal(t, calls[0].options, calls[1].options)
 	batch := decodeEvidenceBatchForTest(t, calls[0].messages[1].Content)
 	require.Equal(t, []string{"first", "second"}, evidenceSummaries(batch.Evidence))
+	require.Len(t, progress, 2)
+	require.Equal(t, 1, progress[1].RetryCount)
+	requireAnalysisProgressBudget(t, progress[1], budget)
 }
 
 func retryTestCall(model chat.Chat) ingestionDocumentAnalysisCall {
@@ -272,4 +341,18 @@ func immediateRetryPolicy() ingestionDocumentAnalysisRetryPolicy {
 	return ingestionDocumentAnalysisRetryPolicy{Wait: func(context.Context, time.Duration) error {
 		return nil
 	}}
+}
+
+func requireAnalysisProgressBudget(
+	t *testing.T,
+	event types.IngestionDocumentAnalysisProgress,
+	budget ingestionDocumentAnalysisTokenBudget,
+) {
+	t.Helper()
+	require.Equal(t, budget.ContextWindowTokens, event.ContextWindowTokens)
+	require.Equal(t, budget.CompletionTokens, event.CompletionTokenBudget)
+	require.Equal(t, budget.PromptSchemaTokens, event.PromptSchemaTokens)
+	require.Equal(t, budget.SafetyTokens, event.SafetyTokens)
+	require.Equal(t, budget.ContentTokens, event.ContentTokenBudget)
+	require.Equal(t, budget.EstimatedSourceTokens, event.EstimatedSourceTokens)
 }

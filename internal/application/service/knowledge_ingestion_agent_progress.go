@@ -224,9 +224,15 @@ func isIngestionAnalysisPhase(phase string) bool {
 
 func ingestionAnalysisStartPayload(event types.IngestionDocumentAnalysisProgress) types.JSONMap {
 	return types.JSONMap{
-		"unit_count":         event.UnitCount,
-		"level":              event.Level,
-		"covered_characters": event.CoveredCharacters,
+		"unit_count":              event.UnitCount,
+		"level":                   event.Level,
+		"covered_characters":      event.CoveredCharacters,
+		"context_window_tokens":   event.ContextWindowTokens,
+		"completion_token_budget": event.CompletionTokenBudget,
+		"prompt_schema_tokens":    event.PromptSchemaTokens,
+		"safety_tokens":           event.SafetyTokens,
+		"content_token_budget":    event.ContentTokenBudget,
+		"estimated_source_tokens": event.EstimatedSourceTokens,
 	}
 }
 
@@ -235,20 +241,23 @@ func ingestionAnalysisResultPayload(event types.IngestionDocumentAnalysisProgres
 		"completed":          event.Completed,
 		"duration_ms":        event.DurationMS,
 		"covered_characters": event.CoveredCharacters,
+		"retry_count":        event.RetryCount,
 	}
 }
 
 func ingestionAnalysisFailureMessage(event types.IngestionDocumentAnalysisProgress) string {
 	message := fmt.Sprintf(
-		"文档全文 %s 阶段失败（完成 %d/%d，耗时 %dms，覆盖字符 %d）",
-		event.Phase, event.Completed, event.UnitCount, event.DurationMS, event.CoveredCharacters,
+		"文档全文 %s 阶段失败（完成 %d/%d，耗时 %dms，覆盖字符 %d，重试 %d 次）",
+		event.Phase, event.Completed, event.UnitCount, event.DurationMS,
+		event.CoveredCharacters, event.RetryCount,
 	)
 	if event.FailedUnit <= 0 {
 		return message
 	}
 	message = fmt.Sprintf(
-		"%s；失败单元 %d：%s",
-		message, event.FailedUnit, ingestionDocumentAnalysisFailureLabel(event.FailureKind),
+		"%s；失败单元 %d（尝试 %d 次）：%s",
+		message, event.FailedUnit, event.FailedUnitAttempts,
+		ingestionDocumentAnalysisFailureLabel(event.FailureKind),
 	)
 	if event.ProviderFailureKind == "" && event.HTTPStatus <= 0 && event.FailureParameter == "" {
 		return message

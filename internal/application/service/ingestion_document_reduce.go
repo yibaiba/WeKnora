@@ -29,6 +29,7 @@ type ingestionDocumentReduceRequest struct {
 	CoveredCharacters int
 	Progress          func(types.IngestionDocumentAnalysisProgress)
 	RetryPolicy       ingestionDocumentAnalysisRetryPolicy
+	Budget            ingestionDocumentAnalysisTokenBudget
 }
 
 type ingestionDocumentReduceLevelRequest struct {
@@ -38,6 +39,7 @@ type ingestionDocumentReduceLevelRequest struct {
 	CoveredCharacters int
 	Progress          func(types.IngestionDocumentAnalysisProgress)
 	RetryPolicy       ingestionDocumentAnalysisRetryPolicy
+	Budget            ingestionDocumentAnalysisTokenBudget
 }
 
 type ingestionDocumentReduceGroupRequest struct {
@@ -72,6 +74,7 @@ func reduceIngestionDocument(
 			Model: request.Model, Groups: groups, Level: level,
 			CoveredCharacters: request.CoveredCharacters, Progress: request.Progress,
 			RetryPolicy: request.RetryPolicy,
+			Budget:      request.Budget,
 		})
 		if err != nil {
 			return ingestionDocumentEvidence{}, err
@@ -86,27 +89,30 @@ func reduceIngestionDocumentLevel(
 	request ingestionDocumentReduceLevelRequest,
 ) ([]ingestionDocumentEvidence, error) {
 	started := time.Now()
-	emitIngestionAnalysisProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
+	emitIngestionAnalysisProgress(request.Progress, ingestionAnalysisProgressWithBudget(types.IngestionDocumentAnalysisProgress{
 		Phase: "reduce_document", Status: ingestionAnalysisProgressRunning,
 		UnitCount: len(request.Groups), Level: request.Level,
 		CoveredCharacters: request.CoveredCharacters,
-	})
+	}, request.Budget))
 	results := make([]ingestionDocumentEvidence, 0, len(request.Groups))
+	retryCount := 0
 	for index, group := range request.Groups {
-		result, _, err := reduceIngestionDocumentGroup(ctx, ingestionDocumentReduceGroupRequest{
+		result, attempts, err := reduceIngestionDocumentGroup(ctx, ingestionDocumentReduceGroupRequest{
 			Model: request.Model, Group: group, Level: request.Level, Index: index,
 			RetryPolicy: request.RetryPolicy,
 		})
+		retryCount += max(attempts-1, 0)
 		if err != nil {
 			failure := ingestionDocumentAnalysisFailureDetails(err)
 			emitReduceProgress(request.Progress, types.IngestionDocumentAnalysisProgress{
 				Phase: "reduce_document", Status: ingestionAnalysisProgressFailed,
 				UnitCount: len(request.Groups), Completed: len(results),
 				Level: request.Level, CoveredCharacters: request.CoveredCharacters, Failed: true,
+				RetryCount: retryCount, FailedUnitAttempts: failure.Attempts,
 				FailureKind: failure.Kind, FailedUnit: failure.Unit,
 				ProviderFailureKind: failure.ProviderKind,
 				HTTPStatus:          failure.HTTPStatus, FailureParameter: failure.Parameter,
-			}, started)
+			}, request.Budget, started)
 			return nil, err
 		}
 		results = append(results, result)
@@ -115,7 +121,8 @@ func reduceIngestionDocumentLevel(
 		Phase: "reduce_document", Status: ingestionAnalysisProgressSucceeded,
 		UnitCount: len(request.Groups), Completed: len(results),
 		Level: request.Level, CoveredCharacters: request.CoveredCharacters,
-	}, started)
+		RetryCount: retryCount,
+	}, request.Budget, started)
 	return results, nil
 }
 
@@ -124,9 +131,11 @@ func reduceIngestionDocumentGroup(
 	request ingestionDocumentReduceGroupRequest,
 ) (ingestionDocumentEvidence, int, error) {
 	if request.Model == nil {
-		return ingestionDocumentEvidence{}, 0, documentAnalysisFailure(
-			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index, fmt.Errorf("模型未配置"),
-		)
+		return ingestionDocumentEvidence{}, 0,
+			documentAnalysisFailureWithAttempts(documentAnalysisFailureRequest{
+				Stage: fmt.Sprintf("Reduce 第 %d 层", request.Level),
+				Unit:  request.Index, Cause: fmt.Errorf("模型未配置"),
+			})
 	}
 	callCtx := sensitiveIngestionLLMContext(ctx, "ingestion_document_reduce")
 	call, err := callIngestionDocumentAnalysis(callCtx, ingestionDocumentAnalysisCall{
@@ -136,15 +145,18 @@ func reduceIngestionDocumentGroup(
 		}, Options: ingestionDocumentAnalysisOptions(),
 	}, request.RetryPolicy)
 	if err != nil {
-		return ingestionDocumentEvidence{}, call.Attempts, documentAnalysisFailure(
-			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index, err,
-		)
+		return ingestionDocumentEvidence{}, call.Attempts,
+			documentAnalysisFailureWithAttempts(documentAnalysisFailureRequest{
+				Stage: fmt.Sprintf("Reduce 第 %d 层", request.Level),
+				Unit:  request.Index, Cause: err, Attempts: call.Attempts,
+			})
 	}
 	result, err := decodeIngestionDocumentEvidence(call.Response)
 	if err != nil {
-		return ingestionDocumentEvidence{}, call.Attempts, invalidDocumentAnalysisFailure(
-			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index,
-		)
+		return ingestionDocumentEvidence{}, call.Attempts,
+			invalidDocumentAnalysisFailureWithAttempts(
+				fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index, call.Attempts,
+			)
 	}
 	return result, call.Attempts, nil
 }
@@ -230,10 +242,11 @@ func reduceGroupingFailure(level int) error {
 func emitReduceProgress(
 	progress func(types.IngestionDocumentAnalysisProgress),
 	event types.IngestionDocumentAnalysisProgress,
+	budget ingestionDocumentAnalysisTokenBudget,
 	started time.Time,
 ) {
 	event.DurationMS = time.Since(started).Milliseconds()
-	emitIngestionAnalysisProgress(progress, event)
+	emitIngestionAnalysisProgress(progress, ingestionAnalysisProgressWithBudget(event, budget))
 }
 
 const ingestionDocumentReduceSystemPrompt = `你是文档全文分析器的 Reduce 阶段。按输入顺序归并全部证据，输出与 Map 相同的严格 JSON，不得输出 Markdown 或额外字段。
