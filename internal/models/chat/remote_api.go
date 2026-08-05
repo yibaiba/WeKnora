@@ -320,7 +320,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 	req := *(body.(*openai.ChatCompletionRequest))
 	c.logRequest(timeoutCtx, req, true)
 
-	streamDumper := newStreamPacketDumper(c.modelName, &req)
+	streamDumper := newStreamPacketDumper(timeoutCtx, c.modelName, &req)
 	if streamDumper != nil {
 		logger.Infof(timeoutCtx, "[LLM Stream Raw Dump] writing packets to %s", streamDumper.Path())
 	}
@@ -418,7 +418,7 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 	}
 
 	streamChan := make(chan types.StreamResponse)
-	streamDumper := newStreamPacketDumper(c.modelName, customReq)
+	streamDumper := newStreamPacketDumper(ctx, c.modelName, customReq)
 	if streamDumper != nil {
 		logger.Infof(ctx, "[LLM Stream Raw Dump] writing packets to %s", streamDumper.Path())
 	}

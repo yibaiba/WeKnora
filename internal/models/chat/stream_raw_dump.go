@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // streamRawDumpDir returns the directory for per-stream raw packet dumps.
@@ -38,7 +41,10 @@ type streamPacketDumper struct {
 	seq   int
 }
 
-func newStreamPacketDumper(modelName string, request any) *streamPacketDumper {
+func newStreamPacketDumper(ctx context.Context, modelName string, request any) *streamPacketDumper {
+	if types.LLMTracePayloadsRedacted(ctx) {
+		return nil
+	}
 	dir := streamRawDumpDir()
 	if dir == "" {
 		return nil
