@@ -22,15 +22,16 @@ import (
 // providerAdapter（见 provider.go），thinking 编码委托给 ThinkingStrategy
 // （见 thinking.go）。
 type RemoteAPIChat struct {
-	modelName  string
-	client     *openai.Client
-	modelID    string
-	baseURL    string
-	apiKey     string
-	apiVersion string
-	provider   provider.ProviderName
-	appID      string
-	appSecret  string
+	modelName           string
+	client              *openai.Client
+	modelID             string
+	contextWindowTokens int
+	baseURL             string
+	apiKey              string
+	apiVersion          string
+	provider            provider.ProviderName
+	appID               string
+	appSecret           string
 	// customHeaders 为用户在模型配置中指定的自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
 	customHeaders map[string]string
 
@@ -101,18 +102,19 @@ func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 	}
 
 	return &RemoteAPIChat{
-		modelName:        modelName,
-		client:           openai.NewClientWithConfig(config),
-		modelID:          chatConfig.ModelID,
-		baseURL:          strings.TrimRight(config.BaseURL, "/"),
-		apiKey:           apiKey,
-		apiVersion:       config.APIVersion,
-		provider:         providerName,
-		appID:            chatConfig.AppID,
-		appSecret:        chatConfig.AppSecret,
-		customHeaders:    chatConfig.CustomHeaders,
-		adapter:          resolveProvider(providerName, modelName),
-		thinkingOverride: parseThinkingOverride(chatConfig.ExtraConfig),
+		modelName:           modelName,
+		client:              openai.NewClientWithConfig(config),
+		modelID:             chatConfig.ModelID,
+		contextWindowTokens: chatConfig.ContextWindowTokens,
+		baseURL:             strings.TrimRight(config.BaseURL, "/"),
+		apiKey:              apiKey,
+		apiVersion:          config.APIVersion,
+		provider:            providerName,
+		appID:               chatConfig.AppID,
+		appSecret:           chatConfig.AppSecret,
+		customHeaders:       chatConfig.CustomHeaders,
+		adapter:             resolveProvider(providerName, modelName),
+		thinkingOverride:    parseThinkingOverride(chatConfig.ExtraConfig),
 	}, nil
 }
 
@@ -421,6 +423,10 @@ func (c *RemoteAPIChat) GetModelName() string {
 // GetModelID 获取模型ID
 func (c *RemoteAPIChat) GetModelID() string {
 	return c.modelID
+}
+
+func (c *RemoteAPIChat) ContextWindowTokens() int {
+	return c.contextWindowTokens
 }
 
 // GetProvider 获取 provider 名称

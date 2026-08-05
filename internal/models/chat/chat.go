@@ -99,6 +99,20 @@ type Chat interface {
 	GetModelID() string
 }
 
+// ContextWindowProvider is an optional model capability. Keeping it separate
+// from Chat preserves compatibility with existing integrations and test doubles.
+type ContextWindowProvider interface {
+	ContextWindowTokens() int
+}
+
+func ResolveContextWindowTokens(model Chat) int {
+	provider, ok := model.(ContextWindowProvider)
+	if !ok || provider.ContextWindowTokens() <= 0 {
+		return types.DefaultModelContextWindowTokens
+	}
+	return provider.ContextWindowTokens()
+}
+
 type ChatConfig struct {
 	Source    types.ModelSource
 	BaseURL   string
@@ -108,8 +122,9 @@ type ChatConfig struct {
 	Provider  string
 	// MaxConcurrency caps concurrent background calls to this model; 0 falls
 	// back to the process-wide default (see limiter.GateN).
-	MaxConcurrency int
-	ExtraConfig    map[string]string
+	MaxConcurrency      int
+	ContextWindowTokens int
+	ExtraConfig         map[string]string
 	// CustomHeaders 允许在调用远程 OpenAI 兼容 API 时附加自定义 HTTP 请求头（类似 OpenAI Python SDK 的 extra_headers）。
 	CustomHeaders map[string]string
 	AppID         string
@@ -125,17 +140,18 @@ func ConfigFromModel(m *types.Model, appID, appSecret string) *ChatConfig {
 		return nil
 	}
 	return &ChatConfig{
-		ModelID:        m.ID,
-		APIKey:         m.Parameters.APIKey,
-		BaseURL:        m.Parameters.BaseURL,
-		ModelName:      m.Name,
-		Source:         m.Source,
-		Provider:       m.Parameters.Provider,
-		MaxConcurrency: m.Parameters.MaxConcurrency,
-		ExtraConfig:    m.Parameters.ExtraConfig,
-		CustomHeaders:  m.Parameters.CustomHeaders,
-		AppID:          appID,
-		AppSecret:      appSecret,
+		ModelID:             m.ID,
+		APIKey:              m.Parameters.APIKey,
+		BaseURL:             m.Parameters.BaseURL,
+		ModelName:           m.Name,
+		Source:              m.Source,
+		Provider:            m.Parameters.Provider,
+		MaxConcurrency:      m.Parameters.MaxConcurrency,
+		ContextWindowTokens: m.Parameters.EffectiveContextWindowTokens(),
+		ExtraConfig:         m.Parameters.ExtraConfig,
+		CustomHeaders:       m.Parameters.CustomHeaders,
+		AppID:               appID,
+		AppSecret:           appSecret,
 	}
 }
 

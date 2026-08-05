@@ -17,11 +17,12 @@ func TestModelResponse_OmitsSecrets(t *testing.T) {
 		Name:        "gpt-x",
 		DisplayName: "Support QA",
 		Parameters: types.ModelParameters{
-			APIKey:    "sk-real-api-key-do-not-leak",
-			AppSecret: "app-real-secret-do-not-leak",
-			AppID:     "appid-public-ok-to-show",
-			BaseURL:   "https://api.example.com",
-			Provider:  "openai",
+			APIKey:              "sk-real-api-key-do-not-leak",
+			AppSecret:           "app-real-secret-do-not-leak",
+			AppID:               "appid-public-ok-to-show",
+			BaseURL:             "https://api.example.com",
+			Provider:            "openai",
+			ContextWindowTokens: 32768,
 		},
 	}
 	body, err := json.Marshal(NewModelResponse(adminContext(), m))
@@ -43,6 +44,7 @@ func TestModelResponse_OmitsSecrets(t *testing.T) {
 	assert.Contains(t, s, "appid-public-ok-to-show")
 	assert.Contains(t, s, "api.example.com")
 	assert.Contains(t, s, `"display_name":"Support QA"`)
+	assert.Contains(t, s, `"context_window_tokens":32768`)
 }
 
 func TestModelResponse_BuiltinStripsTenantConfig(t *testing.T) {

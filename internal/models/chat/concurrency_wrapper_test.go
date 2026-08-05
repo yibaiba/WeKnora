@@ -35,6 +35,27 @@ func (f *fakeChat) ChatStream(ctx context.Context, _ []Message, _ *ChatOptions) 
 	return ch, nil
 }
 
+type contextWindowFakeChat struct {
+	*fakeChat
+	contextWindow int
+}
+
+func (f *contextWindowFakeChat) ContextWindowTokens() int { return f.contextWindow }
+
+func TestChatWrappersPreserveOptionalContextWindowCapability(t *testing.T) {
+	inner := &contextWindowFakeChat{fakeChat: &fakeChat{id: "model-capability"}, contextWindow: 65536}
+	debug := &debugChat{inner: inner}
+	langfuseWrapped := &langfuseChat{inner: debug}
+	wrapped := &concurrencyChat{inner: langfuseWrapped}
+
+	if got := ResolveContextWindowTokens(wrapped); got != 65536 {
+		t.Fatalf("ResolveContextWindowTokens(wrapped) = %d, want 65536", got)
+	}
+	if got := ResolveContextWindowTokens(&fakeChat{id: "legacy-stub"}); got != types.DefaultModelContextWindowTokens {
+		t.Fatalf("legacy Chat default = %d, want %d", got, types.DefaultModelContextWindowTokens)
+	}
+}
+
 // TestConcurrencyChatInteractiveNotGated verifies interactive calls bypass the
 // governor entirely even at limit 1.
 func TestConcurrencyChatInteractiveNotGated(t *testing.T) {

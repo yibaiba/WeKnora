@@ -33,6 +33,9 @@ type concurrencyChat struct {
 
 func (w *concurrencyChat) GetModelName() string { return w.inner.GetModelName() }
 func (w *concurrencyChat) GetModelID() string   { return w.inner.GetModelID() }
+func (w *concurrencyChat) ContextWindowTokens() int {
+	return ResolveContextWindowTokens(w.inner)
+}
 
 func (w *concurrencyChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
 	release := limiter.GateNamedN(ctx, w.inner.GetModelID(), w.inner.GetModelName(), w.limit)

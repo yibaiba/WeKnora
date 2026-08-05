@@ -1,13 +1,71 @@
 package handler
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type contextWindowModelServiceStub struct {
+	interfaces.ModelService
+	createCalls int
+	getCalls    int
+}
+
+func (s *contextWindowModelServiceStub) CreateModel(context.Context, *types.Model) error {
+	s.createCalls++
+	return nil
+}
+
+func (s *contextWindowModelServiceStub) GetModelByID(context.Context, string) (*types.Model, error) {
+	s.getCalls++
+	return &types.Model{ID: "model-1"}, nil
+}
+
+func newModelHandlerTestContext(method, path, body string) *gin.Context {
+	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = request
+	ctx.Set(types.TenantIDContextKey.String(), uint64(1))
+	return ctx
+}
+
+func TestModelHandlersRejectInvalidContextWindowBeforeServiceCall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	invalidParameters := `"parameters":{"context_window_tokens":4095}`
+
+	t.Run("create", func(t *testing.T) {
+		service := &contextWindowModelServiceStub{}
+		ctx := newModelHandlerTestContext(http.MethodPost, "/models",
+			`{"name":"chat","type":"KnowledgeQA","source":"remote",`+invalidParameters+`}`)
+		NewModelHandler(service).CreateModel(ctx)
+
+		require.NotEmpty(t, ctx.Errors)
+		assert.ErrorContains(t, ctx.Errors.Last().Err, "context_window_tokens")
+		assert.Zero(t, service.createCalls)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		service := &contextWindowModelServiceStub{}
+		ctx := newModelHandlerTestContext(http.MethodPut, "/models/model-1", `{`+invalidParameters+`}`)
+		ctx.Params = gin.Params{{Key: "id", Value: "model-1"}}
+		NewModelHandler(service).UpdateModel(ctx)
+
+		require.NotEmpty(t, ctx.Errors)
+		assert.ErrorContains(t, ctx.Errors.Last().Err, "context_window_tokens")
+		assert.Zero(t, service.getCalls)
+	})
+}
 
 func TestModelUpdateRequestDisplayNamePresence(t *testing.T) {
 	var omitted UpdateModelRequest

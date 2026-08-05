@@ -14,9 +14,10 @@ func TestConfigFromModel(t *testing.T) {
 		Name:   "gpt-4o-mini",
 		Source: types.ModelSourceRemote,
 		Parameters: types.ModelParameters{
-			BaseURL:  "https://api.example.com/v1",
-			APIKey:   "sk-xxx",
-			Provider: "openai",
+			BaseURL:             "https://api.example.com/v1",
+			APIKey:              "sk-xxx",
+			Provider:            "openai",
+			ContextWindowTokens: 32768,
 			ExtraConfig: map[string]string{
 				"deployment": "prod",
 			},
@@ -50,10 +51,20 @@ func TestConfigFromModel(t *testing.T) {
 	if cfg.AppID != "app-id" || cfg.AppSecret != "app-secret" {
 		t.Errorf("cloud credentials not propagated: %+v", cfg)
 	}
+	if cfg.ContextWindowTokens != 32768 {
+		t.Errorf("context window not propagated: %d", cfg.ContextWindowTokens)
+	}
 }
 
 func TestConfigFromModel_Nil(t *testing.T) {
 	if got := ConfigFromModel(nil, "", ""); got != nil {
 		t.Fatalf("expected nil for nil model, got %+v", got)
+	}
+}
+
+func TestConfigFromModel_DefaultContextWindow(t *testing.T) {
+	cfg := ConfigFromModel(&types.Model{}, "", "")
+	if cfg.ContextWindowTokens != types.DefaultModelContextWindowTokens {
+		t.Fatalf("ContextWindowTokens = %d, want %d", cfg.ContextWindowTokens, types.DefaultModelContextWindowTokens)
 	}
 }

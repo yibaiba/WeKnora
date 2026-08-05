@@ -15,6 +15,26 @@ func builtinModelContext(systemAdmin bool) context.Context {
 	return context.WithValue(ctx, types.SystemAdminContextKey, systemAdmin)
 }
 
+func TestModelServiceRejectsInvalidContextWindowBeforePersistence(t *testing.T) {
+	persisted := false
+	repo := &stubModelRepoForDelete{
+		create: func(*types.Model) error { persisted = true; return nil },
+		update: func(*types.Model) error { persisted = true; return nil },
+	}
+	svc := NewModelService(repo, nil, nil, nil, nil, nil)
+	invalid := types.ModelParameters{ContextWindowTokens: types.MinModelContextWindowTokens - 1}
+
+	err := svc.CreateModel(context.Background(), &types.Model{
+		Source: types.ModelSourceRemote, Parameters: invalid,
+	})
+	require.ErrorContains(t, err, "context_window_tokens")
+	assert.False(t, persisted)
+
+	err = svc.UpdateModel(builtinModelContext(true), &types.Model{ID: "model", Parameters: invalid})
+	require.ErrorContains(t, err, "context_window_tokens")
+	assert.False(t, persisted)
+}
+
 func TestUpdateBuiltinModel_RequiresSystemAdmin(t *testing.T) {
 	stored := &types.Model{
 		ID: "builtin-chat", TenantID: 10000, IsBuiltin: true,

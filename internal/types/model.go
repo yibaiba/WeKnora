@@ -3,6 +3,7 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -62,6 +63,12 @@ type EmbeddingParameters struct {
 	SupportsDimensionOverride bool `yaml:"supports_dimension_override" json:"supports_dimension_override"`
 }
 
+const (
+	DefaultModelContextWindowTokens = 8192
+	MinModelContextWindowTokens     = 4096
+	MaxModelContextWindowTokens     = 2000000
+)
+
 type ModelParameters struct {
 	BaseURL             string              `yaml:"base_url"             json:"base_url"`
 	APIKey              string              `yaml:"api_key"              json:"api_key"`
@@ -76,6 +83,9 @@ type ModelParameters struct {
 	// 保留字段（Authorization、api-key、Content-Type、Accept 等）会在运行期被忽略以避免破坏签名/鉴权流程。
 	CustomHeaders  map[string]string `yaml:"custom_headers,omitempty" json:"custom_headers,omitempty"`
 	SupportsVision bool              `yaml:"supports_vision"      json:"supports_vision"` // Whether the model accepts image/multimodal input
+	// ContextWindowTokens is the configured total context window for chat-style
+	// generation. Zero preserves existing rows and resolves to the default at runtime.
+	ContextWindowTokens int `yaml:"context_window_tokens,omitempty" json:"context_window_tokens,omitempty"`
 	// MaxConcurrency caps concurrent in-flight BACKGROUND (ingestion /
 	// enrichment) calls to THIS specific model, keyed by model ID and shared
 	// across all replicas. 0 (the default) means "fall back to the
@@ -85,6 +95,24 @@ type ModelParameters struct {
 	// WeKnoraCloud 厂商专用凭证
 	AppID     string `yaml:"app_id,omitempty"     json:"app_id,omitempty"`
 	AppSecret string `yaml:"app_secret,omitempty" json:"app_secret,omitempty"` // AES-256 加密存储，实际承载上游 API Key
+}
+
+func (c ModelParameters) EffectiveContextWindowTokens() int {
+	if c.ContextWindowTokens == 0 {
+		return DefaultModelContextWindowTokens
+	}
+	return c.ContextWindowTokens
+}
+
+func (c ModelParameters) ValidateContextWindowTokens() error {
+	value := c.ContextWindowTokens
+	if value == 0 || (value >= MinModelContextWindowTokens && value <= MaxModelContextWindowTokens) {
+		return nil
+	}
+	return fmt.Errorf(
+		"context_window_tokens must be 0 or between %d and %d",
+		MinModelContextWindowTokens, MaxModelContextWindowTokens,
+	)
 }
 
 // Per-response redaction for Model now lives in dto.NewModelResponse. The

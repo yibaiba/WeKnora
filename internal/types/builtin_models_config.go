@@ -277,6 +277,9 @@ func validateBuiltinModelEntry(e *BuiltinModelEntry, index int) error {
 				index, e.ID, e.Status)
 		}
 	}
+	if err := e.Parameters.ValidateContextWindowTokens(); err != nil {
+		return errBuiltinModel("entry %d (%s): %v", index, e.ID, err)
+	}
 	return nil
 }
 

@@ -18,11 +18,12 @@ import (
 const anthropicVersion = "2023-06-01"
 
 type AnthropicChat struct {
-	modelName     string
-	modelID       string
-	baseURL       string
-	apiKey        string
-	customHeaders map[string]string
+	modelName           string
+	modelID             string
+	contextWindowTokens int
+	baseURL             string
+	apiKey              string
+	customHeaders       map[string]string
 }
 
 type anthropicMessage struct {
@@ -114,11 +115,12 @@ func NewAnthropicChat(config *ChatConfig) (*AnthropicChat, error) {
 	}
 
 	return &AnthropicChat{
-		modelName:     config.ModelName,
-		modelID:       config.ModelID,
-		baseURL:       baseURL,
-		apiKey:        config.APIKey,
-		customHeaders: config.CustomHeaders,
+		modelName:           config.ModelName,
+		modelID:             config.ModelID,
+		contextWindowTokens: config.ContextWindowTokens,
+		baseURL:             baseURL,
+		apiKey:              config.APIKey,
+		customHeaders:       config.CustomHeaders,
 	}, nil
 }
 
@@ -227,6 +229,10 @@ func (c *AnthropicChat) GetModelName() string {
 
 func (c *AnthropicChat) GetModelID() string {
 	return c.modelID
+}
+
+func (c *AnthropicChat) ContextWindowTokens() int {
+	return c.contextWindowTokens
 }
 
 func (c *AnthropicChat) endpoint() string {

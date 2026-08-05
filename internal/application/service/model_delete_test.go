@@ -74,11 +74,17 @@ func (s *stubAgentRepoForModelDelete) CountByModelID(context.Context, uint64, st
 
 type stubModelRepoForDelete struct {
 	model  *types.Model
+	create func(model *types.Model) error
 	delete func(id string) error
 	update func(model *types.Model) error
 }
 
-func (s *stubModelRepoForDelete) Create(context.Context, *types.Model) error { return nil }
+func (s *stubModelRepoForDelete) Create(_ context.Context, model *types.Model) error {
+	if s.create != nil {
+		return s.create(model)
+	}
+	return nil
+}
 func (s *stubModelRepoForDelete) GetByID(_ context.Context, _ uint64, id string) (*types.Model, error) {
 	if s.model != nil && s.model.ID == id {
 		return s.model, nil

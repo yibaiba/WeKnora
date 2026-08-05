@@ -18,17 +18,19 @@ import (
 
 // OllamaChat 实现了基于 Ollama 的聊天
 type OllamaChat struct {
-	modelName     string
-	modelID       string
-	ollamaService *ollama.OllamaService
+	modelName           string
+	modelID             string
+	contextWindowTokens int
+	ollamaService       *ollama.OllamaService
 }
 
 // NewOllamaChat 创建 Ollama 聊天实例
 func NewOllamaChat(config *ChatConfig, ollamaService *ollama.OllamaService) (*OllamaChat, error) {
 	return &OllamaChat{
-		modelName:     config.ModelName,
-		modelID:       config.ModelID,
-		ollamaService: ollamaService,
+		modelName:           config.ModelName,
+		modelID:             config.ModelID,
+		contextWindowTokens: config.ContextWindowTokens,
+		ollamaService:       ollamaService,
 	}, nil
 }
 
@@ -301,6 +303,10 @@ func (c *OllamaChat) GetModelName() string {
 // GetModelID 获取模型ID
 func (c *OllamaChat) GetModelID() string {
 	return c.modelID
+}
+
+func (c *OllamaChat) ContextWindowTokens() int {
+	return c.contextWindowTokens
 }
 
 // toolFrom 将本模块的 Tool 转换为 Ollama 的 Tool

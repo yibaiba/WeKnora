@@ -74,6 +74,10 @@ func (h *ModelHandler) CreateModel(c *gin.Context) {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
+	if err := req.Parameters.ValidateContextWindowTokens(); err != nil {
+		c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
 	if tenantID == 0 {
 		logger.Error(ctx, "Tenant ID is empty")
@@ -560,6 +564,10 @@ func (h *ModelHandler) UpdateModel(c *gin.Context) {
 	var req UpdateModelRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to parse request parameters", err)
+		c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+	if err := req.Parameters.ValidateContextWindowTokens(); err != nil {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}

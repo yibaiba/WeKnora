@@ -332,6 +332,10 @@ func TestLoadBuiltinModelsConfig_RejectsInvalidEntries(t *testing.T) {
 			name: "unknown status",
 			yaml: "builtin_models:\n  - id: builtin-x\n    type: KnowledgeQA\n    status: enabled\n",
 		},
+		{
+			name: "invalid context window",
+			yaml: "builtin_models:\n  - id: builtin-x\n    type: KnowledgeQA\n    parameters:\n      context_window_tokens: 4095\n",
+		},
 	}
 
 	for _, c := range cases {
