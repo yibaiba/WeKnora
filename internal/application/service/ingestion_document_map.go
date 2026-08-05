@@ -40,15 +40,17 @@ type ingestionDocumentEvidence struct {
 }
 
 type ingestionDocumentMapRequest struct {
-	Model    chat.Chat
-	Units    []ingestionDocumentAnalysisUnit
-	Progress func(types.IngestionDocumentAnalysisProgress)
+	Model       chat.Chat
+	Units       []ingestionDocumentAnalysisUnit
+	Progress    func(types.IngestionDocumentAnalysisProgress)
+	RetryPolicy ingestionDocumentAnalysisRetryPolicy
 }
 
 type ingestionDocumentMapUnitRequest struct {
-	Model      chat.Chat
-	Unit       ingestionDocumentAnalysisUnit
-	TotalUnits int
+	Model       chat.Chat
+	Unit        ingestionDocumentAnalysisUnit
+	TotalUnits  int
+	RetryPolicy ingestionDocumentAnalysisRetryPolicy
 }
 
 var ingestionDocumentEvidenceSchema = json.RawMessage(`{
@@ -81,8 +83,9 @@ func mapIngestionDocument(
 	for index := range request.Units {
 		index := index
 		group.Go(func() error {
-			evidence, err := analyzeIngestionDocumentUnit(groupCtx, ingestionDocumentMapUnitRequest{
+			evidence, _, err := analyzeIngestionDocumentUnit(groupCtx, ingestionDocumentMapUnitRequest{
 				Model: request.Model, Unit: request.Units[index], TotalUnits: len(request.Units),
+				RetryPolicy: request.RetryPolicy,
 			})
 			if err != nil {
 				return err
@@ -124,24 +127,29 @@ func ingestionAnalysisUnitCoverage(units []ingestionDocumentAnalysisUnit) int {
 func analyzeIngestionDocumentUnit(
 	ctx context.Context,
 	request ingestionDocumentMapUnitRequest,
-) (ingestionDocumentEvidence, error) {
+) (ingestionDocumentEvidence, int, error) {
 	if request.Model == nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", request.Unit.Index, errors.New("模型未配置"))
+		return ingestionDocumentEvidence{}, 0,
+			documentAnalysisFailure("Map", request.Unit.Index, errors.New("模型未配置"))
 	}
 	messages := []chat.Message{
 		{Role: "system", Content: ingestionDocumentMapSystemPrompt},
 		{Role: "user", Content: buildIngestionDocumentMapPrompt(request.Unit, request.TotalUnits)},
 	}
 	callCtx := sensitiveIngestionLLMContext(ctx, "ingestion_document_map")
-	response, err := request.Model.Chat(callCtx, messages, ingestionDocumentAnalysisOptions())
+	call, err := callIngestionDocumentAnalysis(callCtx, ingestionDocumentAnalysisCall{
+		Model: request.Model, Messages: messages, Options: ingestionDocumentAnalysisOptions(),
+	}, request.RetryPolicy)
 	if err != nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure("Map", request.Unit.Index, err)
+		return ingestionDocumentEvidence{}, call.Attempts,
+			documentAnalysisFailure("Map", request.Unit.Index, err)
 	}
-	evidence, err := decodeIngestionDocumentEvidence(response)
+	evidence, err := decodeIngestionDocumentEvidence(call.Response)
 	if err != nil {
-		return ingestionDocumentEvidence{}, invalidDocumentAnalysisFailure("Map", request.Unit.Index)
+		return ingestionDocumentEvidence{}, call.Attempts,
+			invalidDocumentAnalysisFailure("Map", request.Unit.Index)
 	}
-	return evidence, nil
+	return evidence, call.Attempts, nil
 }
 
 func buildIngestionDocumentMapPrompt(unit ingestionDocumentAnalysisUnit, totalUnits int) string {

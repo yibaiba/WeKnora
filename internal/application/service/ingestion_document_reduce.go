@@ -28,6 +28,7 @@ type ingestionDocumentReduceRequest struct {
 	Evidence          []ingestionDocumentEvidence
 	CoveredCharacters int
 	Progress          func(types.IngestionDocumentAnalysisProgress)
+	RetryPolicy       ingestionDocumentAnalysisRetryPolicy
 }
 
 type ingestionDocumentReduceLevelRequest struct {
@@ -36,13 +37,15 @@ type ingestionDocumentReduceLevelRequest struct {
 	Level             int
 	CoveredCharacters int
 	Progress          func(types.IngestionDocumentAnalysisProgress)
+	RetryPolicy       ingestionDocumentAnalysisRetryPolicy
 }
 
 type ingestionDocumentReduceGroupRequest struct {
-	Model chat.Chat
-	Group ingestionDocumentReduceGroup
-	Level int
-	Index int
+	Model       chat.Chat
+	Group       ingestionDocumentReduceGroup
+	Level       int
+	Index       int
+	RetryPolicy ingestionDocumentAnalysisRetryPolicy
 }
 
 func reduceIngestionDocument(
@@ -68,6 +71,7 @@ func reduceIngestionDocument(
 		next, err := reduceIngestionDocumentLevel(ctx, ingestionDocumentReduceLevelRequest{
 			Model: request.Model, Groups: groups, Level: level,
 			CoveredCharacters: request.CoveredCharacters, Progress: request.Progress,
+			RetryPolicy: request.RetryPolicy,
 		})
 		if err != nil {
 			return ingestionDocumentEvidence{}, err
@@ -89,8 +93,9 @@ func reduceIngestionDocumentLevel(
 	})
 	results := make([]ingestionDocumentEvidence, 0, len(request.Groups))
 	for index, group := range request.Groups {
-		result, err := reduceIngestionDocumentGroup(ctx, ingestionDocumentReduceGroupRequest{
+		result, _, err := reduceIngestionDocumentGroup(ctx, ingestionDocumentReduceGroupRequest{
 			Model: request.Model, Group: group, Level: request.Level, Index: index,
+			RetryPolicy: request.RetryPolicy,
 		})
 		if err != nil {
 			failure := ingestionDocumentAnalysisFailureDetails(err)
@@ -117,29 +122,31 @@ func reduceIngestionDocumentLevel(
 func reduceIngestionDocumentGroup(
 	ctx context.Context,
 	request ingestionDocumentReduceGroupRequest,
-) (ingestionDocumentEvidence, error) {
+) (ingestionDocumentEvidence, int, error) {
 	if request.Model == nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure(
+		return ingestionDocumentEvidence{}, 0, documentAnalysisFailure(
 			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index, fmt.Errorf("模型未配置"),
 		)
 	}
 	callCtx := sensitiveIngestionLLMContext(ctx, "ingestion_document_reduce")
-	response, err := request.Model.Chat(callCtx, []chat.Message{
-		{Role: "system", Content: ingestionDocumentReduceSystemPrompt},
-		{Role: "user", Content: request.Group.Payload},
-	}, ingestionDocumentAnalysisOptions())
+	call, err := callIngestionDocumentAnalysis(callCtx, ingestionDocumentAnalysisCall{
+		Model: request.Model, Messages: []chat.Message{
+			{Role: "system", Content: ingestionDocumentReduceSystemPrompt},
+			{Role: "user", Content: request.Group.Payload},
+		}, Options: ingestionDocumentAnalysisOptions(),
+	}, request.RetryPolicy)
 	if err != nil {
-		return ingestionDocumentEvidence{}, documentAnalysisFailure(
+		return ingestionDocumentEvidence{}, call.Attempts, documentAnalysisFailure(
 			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index, err,
 		)
 	}
-	result, err := decodeIngestionDocumentEvidence(response)
+	result, err := decodeIngestionDocumentEvidence(call.Response)
 	if err != nil {
-		return ingestionDocumentEvidence{}, invalidDocumentAnalysisFailure(
+		return ingestionDocumentEvidence{}, call.Attempts, invalidDocumentAnalysisFailure(
 			fmt.Sprintf("Reduce 第 %d 层", request.Level), request.Index,
 		)
 	}
-	return result, nil
+	return result, call.Attempts, nil
 }
 
 func groupIngestionDocumentEvidence(
