@@ -23,6 +23,9 @@ func (d *debugChat) ContextWindowTokens() int {
 }
 
 func (d *debugChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
+	if types.LLMTracePayloadsRedacted(ctx) {
+		return d.inner.Chat(ctx, messages, opts)
+	}
 	callStart := time.Now()
 	resp, err := d.inner.Chat(ctx, messages, opts)
 	logLLMDebugCall(ctx, d.inner.GetModelName(), messages, opts, resp, err, time.Since(callStart))
@@ -30,6 +33,9 @@ func (d *debugChat) Chat(ctx context.Context, messages []Message, opts *ChatOpti
 }
 
 func (d *debugChat) ChatStream(ctx context.Context, messages []Message, opts *ChatOptions) (<-chan types.StreamResponse, error) {
+	if types.LLMTracePayloadsRedacted(ctx) {
+		return d.inner.ChatStream(ctx, messages, opts)
+	}
 	callStart := time.Now()
 	ch, err := d.inner.ChatStream(ctx, messages, opts)
 	if err != nil {
