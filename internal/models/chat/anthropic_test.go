@@ -163,6 +163,36 @@ func TestAnthropicChatCarriesSafeRetryAfterForRateLimit(t *testing.T) {
 	require.NotContains(t, err.Error(), "private request")
 }
 
+func TestAnthropicChatPreservesRetryAfterWhenErrorBodyInterrupted(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Length", "4096")
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`event: error\ndata: {"private":"provider response"}`))
+	}))
+	defer server.Close()
+	model, err := NewAnthropicChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL,
+		ModelName: "claude-sonnet-4-5", ModelID: "model-id", APIKey: "test-key",
+		Provider: string(provider.ProviderAnthropic),
+	})
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private request"}}, nil)
+
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureRateLimited, details.Kind)
+	require.Equal(t, http.StatusTooManyRequests, details.StatusCode)
+	require.NotNil(t, details.RetryAfter)
+	require.Equal(t, 5*time.Second, *details.RetryAfter)
+	require.NotContains(t, err.Error(), "provider response")
+	require.NotContains(t, err.Error(), "private request")
+}
+
 func TestAnthropicChatClassifiesInterruptedResponseBodyAsTransport(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

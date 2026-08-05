@@ -154,9 +154,15 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", providerCallError(ctx, err))
+	body, readErr := io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
+			StatusCode: resp.StatusCode, Body: body,
+			RetryAfterHeader: resp.Header.Get("Retry-After"),
+		})
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("read response: %w", providerCallError(ctx, readErr))
 	}
 
 	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
@@ -164,21 +170,8 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 		if err != nil {
 			return nil, err
 		}
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
-				StatusCode: resp.StatusCode, Body: body,
-				RetryAfterHeader: resp.Header.Get("Retry-After"),
-			})
-		}
 		logUsage(ctx, c.modelName, &chatResp.Usage)
 		return chatResp, nil
-	}
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, providerHTTPErrorForContext(ctx, providerHTTPFailure{
-			StatusCode: resp.StatusCode, Body: body,
-			RetryAfterHeader: resp.Header.Get("Retry-After"),
-		})
 	}
 
 	var chatResp anthropicResponse
