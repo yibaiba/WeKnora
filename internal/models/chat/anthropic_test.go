@@ -163,6 +163,30 @@ func TestAnthropicChatCarriesSafeRetryAfterForRateLimit(t *testing.T) {
 	require.NotContains(t, err.Error(), "private request")
 }
 
+func TestAnthropicChatClassifiesInterruptedResponseBodyAsTransport(t *testing.T) {
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"content":[`))
+	}))
+	defer server.Close()
+	model, err := NewAnthropicChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL,
+		ModelName: "claude-sonnet-4-5", ModelID: "model-id", APIKey: "test-key",
+		Provider: string(provider.ProviderAnthropic),
+	})
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private request"}}, nil)
+
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureTransport, details.Kind)
+}
+
 func TestAnthropicChat_CacheUsage(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

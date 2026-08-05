@@ -103,6 +103,50 @@ func TestRemoteMapRetryPreservesStrictRequestBody(t *testing.T) {
 	require.NotContains(t, logs.String(), privateProviderBody)
 }
 
+func TestRemoteMapRetriesInterruptedResponseBody(t *testing.T) {
+	secutils.ResetSSRFWhitelistForTest()
+	t.Cleanup(secutils.ResetSSRFWhitelistForTest)
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			w.Header().Set("Content-Length", "4096")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"message": map[string]any{
+					"role": "assistant", "content": validMapEvidenceJSON("mapped"),
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]any{},
+		})
+	}))
+	defer server.Close()
+	model, err := chat.NewRemoteAPIChat(&chat.ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
+		ModelName: "gpt-4o", ModelID: "model-id", APIKey: "test-key", Provider: "openai",
+	})
+	require.NoError(t, err)
+	unit := newTestAnalysisUnit(0, 0, 4, "正文内容")
+
+	_, attempts, err := analyzeIngestionDocumentUnit(context.Background(), ingestionDocumentMapUnitRequest{
+		Model: model, Unit: unit, TotalUnits: 1,
+		RetryPolicy: ingestionDocumentAnalysisRetryPolicy{
+			Wait: func(context.Context, time.Duration) error { return nil },
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+	require.Equal(t, 2, requests)
+}
+
 func TestModelIngestionAdvisorReduceFinalFailureDoesNotStartAgent(t *testing.T) {
 	retryAfter := time.Duration(0)
 	reduceErr := chat.NewProviderErrorWithDetails(chat.ProviderFailureDetails{

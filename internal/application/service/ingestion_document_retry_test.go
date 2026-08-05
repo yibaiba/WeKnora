@@ -141,6 +141,7 @@ func TestCallIngestionDocumentAnalysisDoesNotRetryPermanentFailures(t *testing.T
 		{name: "403", err: chat.NewProviderError(chat.ProviderFailureAuthentication, http.StatusForbidden, "")},
 		{name: "schema", err: chat.NewProviderError(chat.ProviderFailureRequestInvalid, http.StatusBadRequest, "response_format")},
 		{name: "provider timeout", err: chat.NewProviderError(chat.ProviderFailureTimeout, 0, "")},
+		{name: "provider unknown", err: chat.NewProviderError(chat.ProviderFailureUnknown, 0, "")},
 		{name: "untyped", err: errors.New("permanent private failure")},
 	}
 	for _, test := range tests {

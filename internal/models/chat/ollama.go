@@ -128,7 +128,7 @@ func (c *OllamaChat) buildChatRequest(messages []Message, opts *ChatOptions, isS
 func (c *OllamaChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
 	// 确保模型可用
 	if err := c.ensureModelAvailable(ctx); err != nil {
-		return nil, err
+		return nil, ollamaProviderError(ctx, err)
 	}
 
 	// 构建请求参数
@@ -159,7 +159,7 @@ func (c *OllamaChat) Chat(ctx context.Context, messages []Message, opts *ChatOpt
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("聊天请求失败: %w", err)
+		return nil, fmt.Errorf("聊天请求失败: %w", ollamaProviderError(ctx, err))
 	}
 
 	usage := types.TokenUsage{

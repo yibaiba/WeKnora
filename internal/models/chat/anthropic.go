@@ -156,7 +156,7 @@ func (c *AnthropicChat) Chat(ctx context.Context, messages []Message, opts *Chat
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, fmt.Errorf("read response: %w", providerCallError(ctx, err))
 	}
 
 	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
