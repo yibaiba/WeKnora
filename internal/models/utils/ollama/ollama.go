@@ -45,12 +45,12 @@ func GetOllamaService() (*OllamaService, error) {
 	// - Dial timeout prevents hanging when Ollama process is down or port unreachable
 	// - No overall Timeout so long-running streaming calls are controlled by context cancellation
 	ollamaHTTPClient := &http.Client{
-		Transport: &http.Transport{
+		Transport: &ollamaResponseObserverTransport{inner: &http.Transport{
 			DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 			TLSHandshakeTimeout: 10 * time.Second,
 			IdleConnTimeout:     90 * time.Second,
 			MaxIdleConns:        10,
-		},
+		}},
 	}
 	client := api.NewClient(parsedURL, ollamaHTTPClient)
 
@@ -334,8 +334,12 @@ func (s *OllamaService) Chat(ctx context.Context, req *api.ChatRequest, fn api.C
 		return err
 	}
 
-	// Use official client Chat method
-	return s.client.Chat(ctx, req, fn)
+	callCtx, observer := withOllamaResponseReadObserver(ctx)
+	callErr := s.client.Chat(callCtx, req, fn)
+	if readErr := observer.Err(); readErr != nil {
+		return fmt.Errorf("ollama response read failed: %w", readErr)
+	}
+	return callErr
 }
 
 // Embeddings gets text embedding vectors

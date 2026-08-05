@@ -44,7 +44,9 @@ func TestOllamaChatClassifiesNetworkFailureAsTransport(t *testing.T) {
 }
 
 func TestOllamaChatDoesNotClassifyInvalidJSONAsTransport(t *testing.T) {
-	server := newInvalidJSONOllamaServer(t)
+	server := newOllamaChatServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not-json\n"))
+	})
 	defer server.Close()
 	t.Setenv("OLLAMA_BASE_URL", server.URL)
 	t.Setenv("OLLAMA_OPTIONAL", "false")
@@ -63,7 +65,29 @@ func TestOllamaChatDoesNotClassifyInvalidJSONAsTransport(t *testing.T) {
 	require.Equal(t, ProviderFailureUnknown, details.Kind)
 }
 
-func newInvalidJSONOllamaServer(t *testing.T) *httptest.Server {
+func TestOllamaChatClassifiesInterruptedResponseBodyAsTransport(t *testing.T) {
+	server := newOllamaChatServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"partial`))
+	})
+	defer server.Close()
+	t.Setenv("OLLAMA_BASE_URL", server.URL)
+	t.Setenv("OLLAMA_OPTIONAL", "false")
+	service, err := modelollama.GetOllamaService()
+	require.NoError(t, err)
+	model, err := NewOllamaChat(&ChatConfig{ModelName: "test-model", ModelID: "test-model"}, service)
+	require.NoError(t, err)
+	ctx := types.WithRedactedLLMTracePayloads(context.Background())
+
+	_, err = model.Chat(ctx, []Message{{Role: "user", Content: "private request"}}, nil)
+
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureTransport, details.Kind)
+}
+
+func newOllamaChatServer(t *testing.T, chatHandler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -72,7 +96,7 @@ func newInvalidJSONOllamaServer(t *testing.T) *httptest.Server {
 		case "/api/tags":
 			_, _ = w.Write([]byte(`{"models":[{"name":"test-model:latest"}]}`))
 		case "/api/chat":
-			_, _ = w.Write([]byte("not-json\n"))
+			chatHandler(w, r)
 		default:
 			http.NotFound(w, r)
 		}
