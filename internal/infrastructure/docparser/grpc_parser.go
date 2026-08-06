@@ -237,7 +237,7 @@ func fromProtoStructureBlocks(blocks []*proto.StructureBlock) []types.DocumentSt
 			continue
 		}
 		result = append(result, types.DocumentStructureBlock{
-			Kind: block.GetKind(), Start: int(block.GetStart()), End: int(block.GetEnd()),
+			ID: block.GetId(), Kind: block.GetKind(), Start: int(block.GetStart()), End: int(block.GetEnd()),
 			ParentID: block.GetParentId(), SectionDepth: int(block.GetSectionDepth()),
 			TableID: block.GetTableId(), RecordID: block.GetRecordId(),
 			Atomic: block.GetAtomic(), Confidence: block.GetConfidence(),

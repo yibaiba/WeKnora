@@ -255,6 +255,7 @@ type StructureBlock struct {
 	Atomic        bool                   `protobuf:"varint,8,opt,name=atomic,proto3" json:"atomic,omitempty"`
 	Confidence    string                 `protobuf:"bytes,9,opt,name=confidence,proto3" json:"confidence,omitempty"`
 	ContextKinds  []string               `protobuf:"bytes,10,rep,name=context_kinds,json=contextKinds,proto3" json:"context_kinds,omitempty"`
+	Id            string                 `protobuf:"bytes,11,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -357,6 +358,13 @@ func (x *StructureBlock) GetContextKinds() []string {
 		return x.ContextKinds
 	}
 	return nil
+}
+
+func (x *StructureBlock) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
 }
 
 type ReadResponse struct {
@@ -804,7 +812,7 @@ const file_docreader_proto_rawDesc = "" +
 	"\vstorage_key\x18\x04 \x01(\tR\n" +
 	"storageKey\x12\x1d\n" +
 	"\n" +
-	"image_data\x18\x05 \x01(\fR\timageData\"\xa3\x02\n" +
+	"image_data\x18\x05 \x01(\fR\timageData\"\xb3\x02\n" +
 	"\x0eStructureBlock\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x14\n" +
 	"\x05start\x18\x02 \x01(\rR\x05start\x12\x10\n" +
@@ -818,7 +826,8 @@ const file_docreader_proto_rawDesc = "" +
 	"confidence\x18\t \x01(\tR\n" +
 	"confidence\x12#\n" +
 	"\rcontext_kinds\x18\n" +
-	" \x03(\tR\fcontextKinds\"\xef\x02\n" +
+	" \x03(\tR\fcontextKinds\x12\x0e\n" +
+	"\x02id\x18\v \x01(\tR\x02id\"\xef\x02\n" +
 	"\fReadResponse\x12)\n" +
 	"\x10markdown_content\x18\x01 \x01(\tR\x0fmarkdownContent\x122\n" +
 	"\n" +

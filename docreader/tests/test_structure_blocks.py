@@ -11,6 +11,7 @@ def test_structure_blocks_map_to_transport_message():
         content="# Heading\nBody",
         structure_blocks=[
             StructureBlock(
+                id="heading-1",
                 kind="heading",
                 start=0,
                 end=9,
@@ -26,5 +27,6 @@ def test_structure_blocks_map_to_transport_message():
 
     assert len(blocks) == 1
     assert blocks[0].kind == "heading"
+    assert blocks[0].id == "heading-1"
     assert blocks[0].section_depth == 1
     assert blocks[0].context_kinds == ["section"]

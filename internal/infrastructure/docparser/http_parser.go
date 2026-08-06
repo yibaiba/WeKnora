@@ -47,6 +47,7 @@ type httpImageRef struct {
 }
 
 type httpStructureBlock struct {
+	ID           string   `json:"id,omitempty"`
 	Kind         string   `json:"kind"`
 	Start        int      `json:"start"`
 	End          int      `json:"end"`
@@ -201,7 +202,7 @@ func fromHTTPStructureBlocks(blocks []httpStructureBlock) []types.DocumentStruct
 	result := make([]types.DocumentStructureBlock, 0, len(blocks))
 	for _, block := range blocks {
 		result = append(result, types.DocumentStructureBlock{
-			Kind: block.Kind, Start: block.Start, End: block.End,
+			ID: block.ID, Kind: block.Kind, Start: block.Start, End: block.End,
 			ParentID: block.ParentID, SectionDepth: block.SectionDepth,
 			TableID: block.TableID, RecordID: block.RecordID,
 			Atomic: block.Atomic, Confidence: block.Confidence,

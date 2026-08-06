@@ -55,6 +55,7 @@ message StructureBlock {
   bool atomic = 8;
   string confidence = 9;
   repeated string context_kinds = 10;
+  string id = 11;
 }
 
 message ReadResponse {

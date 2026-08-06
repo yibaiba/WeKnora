@@ -54,7 +54,7 @@ class ImageRef(_message.Message):
     def __init__(self, filename: _Optional[str] = ..., original_ref: _Optional[str] = ..., mime_type: _Optional[str] = ..., storage_key: _Optional[str] = ..., image_data: _Optional[bytes] = ...) -> None: ...
 
 class StructureBlock(_message.Message):
-    __slots__ = ("kind", "start", "end", "parent_id", "section_depth", "table_id", "record_id", "atomic", "confidence", "context_kinds")
+    __slots__ = ("kind", "start", "end", "parent_id", "section_depth", "table_id", "record_id", "atomic", "confidence", "context_kinds", "id")
     KIND_FIELD_NUMBER: _ClassVar[int]
     START_FIELD_NUMBER: _ClassVar[int]
     END_FIELD_NUMBER: _ClassVar[int]
@@ -65,6 +65,7 @@ class StructureBlock(_message.Message):
     ATOMIC_FIELD_NUMBER: _ClassVar[int]
     CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_KINDS_FIELD_NUMBER: _ClassVar[int]
+    ID_FIELD_NUMBER: _ClassVar[int]
     kind: str
     start: int
     end: int
@@ -75,7 +76,8 @@ class StructureBlock(_message.Message):
     atomic: bool
     confidence: str
     context_kinds: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, kind: _Optional[str] = ..., start: _Optional[int] = ..., end: _Optional[int] = ..., parent_id: _Optional[str] = ..., section_depth: _Optional[int] = ..., table_id: _Optional[str] = ..., record_id: _Optional[str] = ..., atomic: bool = ..., confidence: _Optional[str] = ..., context_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
+    id: str
+    def __init__(self, kind: _Optional[str] = ..., start: _Optional[int] = ..., end: _Optional[int] = ..., parent_id: _Optional[str] = ..., section_depth: _Optional[int] = ..., table_id: _Optional[str] = ..., record_id: _Optional[str] = ..., atomic: bool = ..., confidence: _Optional[str] = ..., context_kinds: _Optional[_Iterable[str]] = ..., id: _Optional[str] = ...) -> None: ...
 
 class ReadResponse(_message.Message):
     __slots__ = ("markdown_content", "image_refs", "image_dir_path", "metadata", "error", "structure_blocks")

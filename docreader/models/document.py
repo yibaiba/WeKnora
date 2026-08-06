@@ -62,6 +62,7 @@ class Chunk(BaseModel):
 class StructureBlock(BaseModel):
     """Optional structural hint positioned in the returned Markdown text."""
 
+    id: str = ""
     kind: str
     start: int
     end: int

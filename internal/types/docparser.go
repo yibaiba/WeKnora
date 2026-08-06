@@ -31,6 +31,7 @@ type ReadResult struct {
 // the MarkdownContent returned in the same ReadResult. The ingestion pipeline
 // validates and relocates hints before using them; Content remains authoritative.
 type DocumentStructureBlock struct {
+	ID           string
 	Kind         string
 	Start        int
 	End          int
