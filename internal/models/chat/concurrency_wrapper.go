@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/Tencent/WeKnora/internal/models/limiter"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -35,6 +36,9 @@ func (w *concurrencyChat) GetModelName() string { return w.inner.GetModelName() 
 func (w *concurrencyChat) GetModelID() string   { return w.inner.GetModelID() }
 func (w *concurrencyChat) ContextWindowTokens() int {
 	return ResolveContextWindowTokens(w.inner)
+}
+func (w *concurrencyChat) StructuredOutputPrompt(schema json.RawMessage) (string, error) {
+	return ResolveStructuredOutputPrompt(w.inner, schema)
 }
 
 func (w *concurrencyChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {

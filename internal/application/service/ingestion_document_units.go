@@ -31,9 +31,21 @@ func calculateIngestionDocumentAnalysisTokenBudget(
 	contextWindowTokens int,
 	content string,
 ) (ingestionDocumentAnalysisTokenBudget, error) {
+	return calculateIngestionDocumentAnalysisTokenBudgetWithPrompt(
+		contextWindowTokens, content, "",
+	)
+}
+
+func calculateIngestionDocumentAnalysisTokenBudgetWithPrompt(
+	contextWindowTokens int,
+	content string,
+	structuredOutputPrompt string,
+) (ingestionDocumentAnalysisTokenBudget, error) {
 	documentRuneCount := utf8.RuneCountInString(content)
 	safetyTokens := max(ingestionDocumentAnalysisMinimumSafetyTokens, (contextWindowTokens+9)/10)
-	promptSchemaTokens := ingestionDocumentMapPromptSchemaTokens(documentRuneCount)
+	promptSchemaTokens := ingestionDocumentMapPromptSchemaTokensWithPrompt(
+		documentRuneCount, structuredOutputPrompt,
+	)
 	budget := ingestionDocumentAnalysisTokenBudget{
 		ContextWindowTokens:   contextWindowTokens,
 		CompletionTokens:      ingestionDocumentAnalysisCompletionTokens,
@@ -52,13 +64,24 @@ func calculateIngestionDocumentAnalysisTokenBudget(
 }
 
 func ingestionDocumentMapPromptSchemaTokens(documentRuneCount int) int {
+	return ingestionDocumentMapPromptSchemaTokensWithPrompt(documentRuneCount, "")
+}
+
+func ingestionDocumentMapPromptSchemaTokensWithPrompt(
+	documentRuneCount int,
+	structuredOutputPrompt string,
+) int {
 	maximumIndex := max(documentRuneCount-1, 0)
 	maximumUnits := max(documentRuneCount, 1)
 	wrapper := buildIngestionDocumentMapPrompt(ingestionDocumentAnalysisUnit{
 		Index: maximumIndex, Start: documentRuneCount, End: documentRuneCount,
 	}, maximumUnits)
+	formatPrompt := string(ingestionDocumentEvidenceSchema)
+	if structuredOutputPrompt != "" {
+		formatPrompt = structuredOutputPrompt
+	}
 	return estimateIngestionDocumentTokens(ingestionDocumentMapSystemPrompt) +
-		estimateIngestionDocumentTokens(string(ingestionDocumentEvidenceSchema)) +
+		estimateIngestionDocumentTokens(formatPrompt) +
 		estimateIngestionDocumentTokens(wrapper)
 }
 

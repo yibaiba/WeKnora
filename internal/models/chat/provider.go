@@ -37,6 +37,9 @@ type providerAdapter interface {
 	// ShapeRequest applies in-place parameter quirks to the standard request
 	// (stripping unsupported fields, pinning temperature, …). Default: noop.
 	ShapeRequest(req *openai.ChatCompletionRequest, opts *ChatOptions, isStream bool)
+	// ApplyStructuredOutput converts the canonical Format contract into the
+	// provider's wire protocol. Default: keep OpenAI response_format as built.
+	ApplyStructuredOutput(req *openai.ChatCompletionRequest, opts *ChatOptions) error
 	// TransformMessages rewrites the converted messages (e.g. downgrading
 	// multi-content to plain text). Default: identity.
 	TransformMessages(msgs []openai.ChatCompletionMessage) []openai.ChatCompletionMessage
@@ -68,6 +71,9 @@ func (baseProvider) Name() provider.ProviderName                                
 func (baseProvider) Matches(string) bool                                            { return true }
 func (baseProvider) Thinking() ThinkingStrategy                                     { return noThinking{} }
 func (baseProvider) ShapeRequest(*openai.ChatCompletionRequest, *ChatOptions, bool) {}
+func (baseProvider) ApplyStructuredOutput(*openai.ChatCompletionRequest, *ChatOptions) error {
+	return nil
+}
 func (baseProvider) TransformMessages(msgs []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
 	return msgs
 }
@@ -165,6 +171,21 @@ func (deepseekProvider) ShapeRequest(req *openai.ChatCompletionRequest, opts *Ch
 type ollamaCloudProvider struct{ baseProvider }
 
 func (ollamaCloudProvider) Name() provider.ProviderName { return provider.ProviderOllamaCloud }
+func (ollamaCloudProvider) ApplyStructuredOutput(
+	req *openai.ChatCompletionRequest,
+	opts *ChatOptions,
+) error {
+	if opts == nil || len(opts.Format) == 0 {
+		return nil
+	}
+	messages, err := withStructuredOutputPrompt(req.Messages, opts.Format)
+	if err != nil {
+		return NewProviderError(ProviderFailureRequestInvalid, 0, "response_format")
+	}
+	req.Messages = messages
+	req.ResponseFormat = nil
+	return nil
+}
 
 // --- Generic (vLLM) / NVIDIA: thinking via chat_template_kwargs ---
 

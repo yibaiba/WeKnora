@@ -105,12 +105,26 @@ type ContextWindowProvider interface {
 	ContextWindowTokens() int
 }
 
+// StructuredOutputPromptProvider exposes provider-added prompt text so callers
+// that enforce context budgets can account for the actual wire prompt.
+type StructuredOutputPromptProvider interface {
+	StructuredOutputPrompt(schema json.RawMessage) (string, error)
+}
+
 func ResolveContextWindowTokens(model Chat) int {
 	provider, ok := model.(ContextWindowProvider)
 	if !ok || provider.ContextWindowTokens() <= 0 {
 		return types.DefaultModelContextWindowTokens
 	}
 	return provider.ContextWindowTokens()
+}
+
+func ResolveStructuredOutputPrompt(model Chat, schema json.RawMessage) (string, error) {
+	provider, ok := model.(StructuredOutputPromptProvider)
+	if !ok {
+		return "", nil
+	}
+	return provider.StructuredOutputPrompt(schema)
 }
 
 type ChatConfig struct {

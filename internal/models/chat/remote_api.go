@@ -128,13 +128,20 @@ func (c *RemoteAPIChat) authCreds() authCreds {
 	return authCreds{APIKey: c.apiKey, AppID: c.appID, AppSecret: c.appSecret}
 }
 
-// shapedRequest builds the standard request and applies the adapter's message
-// transform and parameter shaping (but not thinking, which may wrap the body).
-func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isStream bool) openai.ChatCompletionRequest {
+// shapedRequest builds the standard request and applies the adapter's message,
+// parameter, and structured-output shaping. Thinking may still wrap the body.
+func (c *RemoteAPIChat) shapedRequest(
+	messages []Message,
+	opts *ChatOptions,
+	isStream bool,
+) (openai.ChatCompletionRequest, error) {
 	req := c.BuildChatCompletionRequest(messages, opts, isStream)
 	req.Messages = c.adapter.TransformMessages(req.Messages)
 	c.adapter.ShapeRequest(&req, opts, isStream)
-	return req
+	if err := c.adapter.ApplyStructuredOutput(&req, opts); err != nil {
+		return openai.ChatCompletionRequest{}, err
+	}
+	return req, nil
 }
 
 // buildOutbound assembles the final outbound request: the body to send, the
@@ -144,7 +151,10 @@ func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isS
 func (c *RemoteAPIChat) buildOutbound(
 	messages []Message, opts *ChatOptions, isStream bool,
 ) (body any, endpoint string, useRawHTTP bool, err error) {
-	req := c.shapedRequest(messages, opts, isStream)
+	req, err := c.shapedRequest(messages, opts, isStream)
+	if err != nil {
+		return nil, "", false, err
+	}
 
 	thinking := c.thinkingOverride
 	if thinking == nil {
@@ -217,7 +227,10 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Request] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
-			req = c.shapedRequest(cleaned, opts, false)
+			req, err = c.shapedRequest(cleaned, opts, false)
+			if err != nil {
+				return nil, err
+			}
 			resp, err = c.client.CreateChatCompletion(timeoutCtx, req)
 		}
 		if err != nil {
@@ -337,7 +350,12 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Stream] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
-			req = c.shapedRequest(cleaned, opts, true)
+			req, err = c.shapedRequest(cleaned, opts, true)
+			if err != nil {
+				cancel()
+				close(streamChan)
+				return nil, err
+			}
 			stream, err = c.client.CreateChatCompletionStream(timeoutCtx, req)
 		}
 		if err != nil {
@@ -450,6 +468,13 @@ func (c *RemoteAPIChat) GetModelID() string {
 
 func (c *RemoteAPIChat) ContextWindowTokens() int {
 	return c.contextWindowTokens
+}
+
+func (c *RemoteAPIChat) StructuredOutputPrompt(schema json.RawMessage) (string, error) {
+	if c.adapter.Name() != provider.ProviderOllamaCloud {
+		return "", nil
+	}
+	return buildStructuredOutputPrompt(schema)
 }
 
 // GetProvider 获取 provider 名称

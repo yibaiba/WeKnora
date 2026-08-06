@@ -52,8 +52,16 @@ func analyzeFullIngestionDocument(
 	model chat.Chat,
 	request types.IngestionAdvisorRequest,
 ) (ingestionDocumentEvidence, error) {
-	budget, err := calculateIngestionDocumentAnalysisTokenBudget(
-		chat.ResolveContextWindowTokens(model), request.Content,
+	structuredOutputPrompt, err := chat.ResolveStructuredOutputPrompt(
+		model, ingestionDocumentEvidenceSchema,
+	)
+	if err != nil {
+		return ingestionDocumentEvidence{}, newIngestionAdvisorRunError(
+			ingestionAdvisorErrorDocumentAnalysis, "文档全文 Map 分析准备失败：结构化输出 Schema 无效",
+		)
+	}
+	budget, err := calculateIngestionDocumentAnalysisTokenBudgetWithPrompt(
+		chat.ResolveContextWindowTokens(model), request.Content, structuredOutputPrompt,
 	)
 	if err != nil {
 		return ingestionDocumentEvidence{}, newIngestionAdvisorRunError(

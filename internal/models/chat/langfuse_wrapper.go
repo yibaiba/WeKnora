@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 	"unicode/utf8"
 
@@ -21,6 +22,9 @@ func (l *langfuseChat) GetModelName() string { return l.inner.GetModelName() }
 func (l *langfuseChat) GetModelID() string   { return l.inner.GetModelID() }
 func (l *langfuseChat) ContextWindowTokens() int {
 	return ResolveContextWindowTokens(l.inner)
+}
+func (l *langfuseChat) StructuredOutputPrompt(schema json.RawMessage) (string, error) {
+	return ResolveStructuredOutputPrompt(l.inner, schema)
 }
 
 func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {

@@ -22,6 +22,25 @@ func TestCalculateIngestionDocumentAnalysisTokenBudgetUsesRequiredReserves(t *te
 	require.Equal(t, contextWindow-budget.CompletionTokens-budget.PromptSchemaTokens-budget.SafetyTokens, budget.ContentTokens)
 }
 
+func TestCalculateIngestionDocumentAnalysisTokenBudgetCountsStructuredPrompt(t *testing.T) {
+	const contextWindow = 8192
+	content := strings.Repeat("文", 15032)
+	base, err := calculateIngestionDocumentAnalysisTokenBudget(contextWindow, content)
+	require.NoError(t, err)
+	prompt := strings.Repeat("schema prompt example ", 80)
+	withPrompt, err := calculateIngestionDocumentAnalysisTokenBudgetWithPrompt(
+		contextWindow, content, prompt,
+	)
+
+	require.NoError(t, err)
+	require.Greater(t, withPrompt.PromptSchemaTokens, base.PromptSchemaTokens)
+	require.Less(t, withPrompt.ContentTokens, base.ContentTokens)
+	require.Equal(t,
+		contextWindow-withPrompt.CompletionTokens-withPrompt.PromptSchemaTokens-withPrompt.SafetyTokens,
+		withPrompt.ContentTokens,
+	)
+}
+
 func TestCalculateIngestionDocumentAnalysisTokenBudgetRejectsInsufficientWindow(t *testing.T) {
 	budget, err := calculateIngestionDocumentAnalysisTokenBudget(1024, strings.Repeat("文", 15032))
 

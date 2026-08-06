@@ -379,7 +379,8 @@ func TestBuildChatCompletionRequest_GPT5MaxCompletionTokens(t *testing.T) {
 				FrequencyPenalty: 0.1,
 				PresencePenalty:  0.2,
 			}
-			req := c.shapedRequest(messages, opts, false)
+			req, err := c.shapedRequest(messages, opts, false)
+			require.NoError(t, err)
 
 			if tc.shouldRewriteMaxT {
 				assert.Equal(t, 0, req.MaxTokens, "MaxTokens must NOT be sent for GPT-5/o-series")
@@ -402,7 +403,8 @@ func TestBuildChatCompletionRequest_GPT5MaxCompletionTokens(t *testing.T) {
 			MaxTokens:           128,
 			MaxCompletionTokens: 2048,
 		}
-		req := c.shapedRequest(messages, opts, false)
+		req, err := c.shapedRequest(messages, opts, false)
+		require.NoError(t, err)
 		assert.Equal(t, 0, req.MaxTokens)
 		assert.Equal(t, 2048, req.MaxCompletionTokens)
 	})

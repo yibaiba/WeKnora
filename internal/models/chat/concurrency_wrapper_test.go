@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -53,6 +54,30 @@ func TestChatWrappersPreserveOptionalContextWindowCapability(t *testing.T) {
 	}
 	if got := ResolveContextWindowTokens(&fakeChat{id: "legacy-stub"}); got != types.DefaultModelContextWindowTokens {
 		t.Fatalf("legacy Chat default = %d, want %d", got, types.DefaultModelContextWindowTokens)
+	}
+}
+
+type structuredPromptFakeChat struct{ *fakeChat }
+
+func (f *structuredPromptFakeChat) StructuredOutputPrompt(schema json.RawMessage) (string, error) {
+	return "prompt:" + string(schema), nil
+}
+
+func TestChatWrappersPreserveOptionalStructuredOutputPromptCapability(t *testing.T) {
+	inner := &structuredPromptFakeChat{fakeChat: &fakeChat{id: "prompt-capability"}}
+	wrapper := &concurrencyChat{inner: &langfuseChat{inner: &debugChat{inner: inner}}}
+	schema := json.RawMessage(`{"type":"object"}`)
+
+	prompt, err := ResolveStructuredOutputPrompt(wrapper, schema)
+	if err != nil {
+		t.Fatalf("ResolveStructuredOutputPrompt(wrapped): %v", err)
+	}
+	if prompt != `prompt:{"type":"object"}` {
+		t.Fatalf("prompt = %q", prompt)
+	}
+	legacyPrompt, err := ResolveStructuredOutputPrompt(&fakeChat{id: "legacy"}, schema)
+	if err != nil || legacyPrompt != "" {
+		t.Fatalf("legacy prompt = %q, err = %v", legacyPrompt, err)
 	}
 }
 
