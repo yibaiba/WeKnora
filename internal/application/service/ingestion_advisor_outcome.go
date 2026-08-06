@@ -12,6 +12,11 @@ func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAg
 	}
 	analysis := session.decisionSnapshot()
 	if ingestionTerminationMatchesDecision(state.TerminatedByTool, analysis) {
+		if ingestionAppliedMode(analysis) == types.IngestionAppliedModeFallback {
+			if failure := firstIngestionCoreToolFailure(state); failure != nil {
+				return ingestionCoreToolFailure(*failure)
+			}
+		}
 		return validateIngestionAnalysisWithConstraints(analysis, session.constraints)
 	}
 	if err := unresolvedIngestionCoreToolFailure(state); err != nil {
@@ -65,6 +70,21 @@ func unresolvedIngestionCoreToolFailure(state *types.AgentState) error {
 	}
 	if failures.preview != nil {
 		return ingestionCoreToolFailure(*failures.preview)
+	}
+	return nil
+}
+
+func firstIngestionCoreToolFailure(state *types.AgentState) *types.ToolCall {
+	if state == nil {
+		return nil
+	}
+	for _, step := range state.RoundSteps {
+		for index := range step.ToolCalls {
+			call := &step.ToolCalls[index]
+			if isIngestionCoreTool(call.Name) && (call.Result == nil || !call.Result.Success) {
+				return call
+			}
+		}
 	}
 	return nil
 }

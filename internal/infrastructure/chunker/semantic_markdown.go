@@ -8,9 +8,12 @@ import (
 )
 
 var (
-	semanticListPattern = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+\S`)
-	semanticKeyValue    = regexp.MustCompile(`^\s*[^:：|]{1,80}[:：]\s*\S.*$`)
-	semanticHTMLHeading = regexp.MustCompile(`(?i)^\s*<h([1-6])\b[^>]*>.*</h[1-6]>\s*$`)
+	semanticListPattern  = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+\S`)
+	semanticKeyValue     = regexp.MustCompile(`^\s*[^:：|]{1,80}[:：]\s*\S.*$`)
+	semanticHTMLHeading  = regexp.MustCompile(`(?i)^\s*<h([1-6])\b[^>]*>.*</h[1-6]>\s*$`)
+	semanticImageCaption = regexp.MustCompile(
+		`(?i)^\s*(?:fig(?:ure)?\.?|caption|图(?:片)?|插图)\s*(?:\d+(?:[.-]\d+)*)?\s*(?:[.:：、-]\s*)?\S`,
+	)
 )
 
 type semanticLine struct {

@@ -375,7 +375,7 @@ func TestIngestionCandidateHardValidationRejectsInvalidPositions(t *testing.T) {
 	require.ErrorContains(t, validateIngestionChunkOrder([]chunker.Chunk{
 		{Content: "正文", Start: 0, End: 2},
 		{Content: "文", Start: 1, End: 2},
-	}), "结束位置未递增")
+	}), "位置未递增")
 
 	children := []chunker.Chunk{{Content: "正文", Start: 0, End: 2}}
 	parents := []chunker.Chunk{{Content: "正", Start: 0, End: 1}}

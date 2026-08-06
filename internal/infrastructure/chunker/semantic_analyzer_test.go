@@ -75,6 +75,96 @@ func TestAnalyzeSemanticDocumentRelocatesAndCompletesPartialHints(t *testing.T) 
 	require.NotEmpty(t, body.ParentID)
 }
 
+func TestAnalyzeSemanticDocumentReconcilesPartialTableHintRelations(t *testing.T) {
+	content := "| Case | Result |\n| --- | --- |\n| A | Pass |\n| B | Pass |\n"
+	rowStart := utf8.RuneCountInString("| Case | Result |\n| --- | --- |\n")
+	rowEnd := rowStart + utf8.RuneCountInString("| A | Pass |\n")
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{
+		Hints: []SemanticBlockHint{{
+			ID: "parser-row", Kind: SemanticKindTableRow, Start: rowStart, End: rowEnd,
+			TableID: "parser-table", Atomic: true, Confidence: SemanticConfidenceHigh,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, document.Diagnostics.HintsAccepted)
+	header := firstSemanticKind(document.Blocks, SemanticKindTableHeader)
+	for _, block := range document.Blocks {
+		if block.Kind == SemanticKindTableRow {
+			require.Equal(t, header.TableID, block.TableID)
+		}
+	}
+}
+
+func TestAnalyzeSemanticDocumentRejectsHintThatConflictsWithLocalAtom(t *testing.T) {
+	content := "| Case | Result |\n| --- | --- |\n| A | Pass |\n"
+	rowStart := utf8.RuneCountInString("| Case | Result |\n| --- | --- |\n")
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{
+		Hints: []SemanticBlockHint{{
+			Kind: SemanticKindParagraph, Start: rowStart, End: len([]rune(content)),
+			Atomic: true, Confidence: SemanticConfidenceHigh,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, document.Diagnostics.HintsAccepted)
+	require.Equal(t, 1, document.Diagnostics.HintsRejected)
+	require.Contains(t, document.Diagnostics.ReasonCodes, "hint_atomic_conflict")
+	row := firstSemanticKind(document.Blocks, SemanticKindTableRow)
+	require.NotEmpty(t, row.TableID)
+}
+
+func TestAnalyzeSemanticDocumentRejectsHintInsideHighConfidenceAtomicBlock(t *testing.T) {
+	content := "| Case | Result |\n| --- | --- |\n| A | Pass |\n"
+	headerLineEnd := utf8.RuneCountInString("| Case | Result |\n")
+	fullHeaderEnd := utf8.RuneCountInString("| Case | Result |\n| --- | --- |\n")
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{
+		Hints: []SemanticBlockHint{{
+			Kind: SemanticKindTableHeader, Start: 0, End: headerLineEnd,
+			TableID: "parser-table", Atomic: true, Confidence: SemanticConfidenceHigh,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 0, document.Diagnostics.HintsAccepted)
+	require.Equal(t, 1, document.Diagnostics.HintsRejected)
+	require.Contains(t, document.Diagnostics.ReasonCodes, "hint_unaligned")
+	header := firstSemanticKind(document.Blocks, SemanticKindTableHeader)
+	require.Equal(t, fullHeaderEnd, header.End)
+	require.Equal(t, 1, countSemanticKind(document.Blocks, SemanticKindTableHeader))
+}
+
+func TestAnalyzeSemanticDocumentDoesNotTreatPlainTextAfterImageAsCaption(t *testing.T) {
+	content := "![chart](chart.png)\nVerified result.\n"
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+
+	require.NoError(t, err)
+	image := firstSemanticKind(document.Blocks, SemanticKindImage)
+	require.Equal(t, []string{"image"}, image.ContextKinds)
+	require.Contains(t, semanticKinds(document.Blocks), SemanticKindParagraph)
+}
+
+func TestAnalyzeSemanticDocumentAllowsHintToEnrichParagraph(t *testing.T) {
+	content := "Identifier ITEM 42\nOwner Operations\n"
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{
+		Hints: []SemanticBlockHint{{
+			Kind: SemanticKindRecord, Start: 0, End: len([]rune(content)),
+			RecordID: "parser-record", Atomic: true, Confidence: SemanticConfidenceHigh,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, document.Diagnostics.HintsAccepted)
+	record := firstSemanticKind(document.Blocks, SemanticKindRecord)
+	require.Equal(t, "parser-record", record.RecordID)
+	require.Equal(t, SemanticConfidenceHigh, record.Confidence)
+}
+
 func TestAnalyzeSemanticDocumentRejectsInvalidHintsWithoutContentDiagnostics(t *testing.T) {
 	secret := "customer-secret-value"
 	document, err := AnalyzeSemanticDocument(secret, SemanticAnalysisOptions{

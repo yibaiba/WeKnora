@@ -38,15 +38,23 @@
           "confidence": "high"
         },
         {
+          "id": "pdf-table-row",
+          "kind": "table_row",
+          "needle": "| TC-LOGIN | Authentication | Pass |\n",
+          "table_id": "docreader-table-7",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
           "id": "pdf-damaged",
           "kind": "unsupported_kind",
-          "needle": "| TC-LOGIN | Authentication | Pass |\n",
+          "needle": "| TC-EXPORT | Data Export | Pass |\n",
           "atomic": true,
           "confidence": "high"
         }
       ],
       "expected_kinds": ["heading", "list_item", "page_region", "paragraph", "table_header", "table_row", "record"],
-      "expected_hints_accepted": 1,
+      "expected_hints_accepted": 2,
       "expected_hints_rejected": 1
     },
     {

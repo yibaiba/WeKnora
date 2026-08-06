@@ -119,6 +119,9 @@ func (validator *ingestionStructureValidator) validateTableContinuations() {
 		header, ok := validator.index.tableHeaders[block.TableID]
 		if !ok {
 			validator.result.quality.OrphanTableRows++
+			if block.Confidence == chunker.SemanticConfidenceHigh {
+				validator.violations.add(ingestionViolationTableHeaderInvalid)
+			}
 			continue
 		}
 		validateTableRowChunks(tableRowValidationRequest{

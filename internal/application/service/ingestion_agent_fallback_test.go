@@ -175,6 +175,34 @@ func TestModelIngestionAdvisorTerminatesWithFallbackAfterThreeInvalidCandidates(
 	require.NoError(t, ValidateIngestionAdvisorResult(result))
 }
 
+func TestValidateIngestionAgentOutcomeRejectsFallbackAfterCoreToolFailure(t *testing.T) {
+	session := newFallbackTestSession(
+		ingestionInvalidCandidate("cand_1", ingestionViolationAtomicSplit),
+		ingestionInvalidCandidate("cand_2", ingestionViolationTableHeaderMissing),
+		ingestionInvalidCandidate("cand_3", ingestionViolationTokenLimit),
+	)
+	_, err := session.submitFallback(validIngestionFallbackInput())
+	require.NoError(t, err)
+	state := &types.AgentState{
+		TerminatedByTool: submitIngestionFallbackTool,
+		RoundSteps: []types.AgentStep{{ToolCalls: []types.ToolCall{
+			{
+				Name: previewIngestionChunkingTool,
+				Result: &types.ToolResult{Success: false, Failure: &types.ToolFailure{
+					Code: ingestionFailureArgumentsInvalid, Constraint: "json_schema",
+				}},
+			},
+			{Name: submitIngestionFallbackTool, Result: &types.ToolResult{Success: true}},
+		}}},
+	}
+
+	err = validateIngestionAgentOutcome(state, session)
+
+	require.Error(t, err)
+	require.Equal(t, ingestionAdvisorErrorCandidate, ingestionAdvisorRunErrorCode(err))
+	require.Contains(t, err.Error(), ingestionFailureArgumentsInvalid)
+}
+
 func newFallbackTestSession(
 	candidates ...types.IngestionChunkingCandidate,
 ) *ingestionAgentSession {

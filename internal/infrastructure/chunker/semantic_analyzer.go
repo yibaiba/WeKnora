@@ -52,6 +52,11 @@ func mergeSemanticHints(
 			rejectSemanticHint(diagnostics, "hint_unaligned")
 			continue
 		}
+		if semanticHintConflictsWithLocalAtom(hint, blocks[start:end]) {
+			rejectSemanticHint(diagnostics, "hint_atomic_conflict")
+			continue
+		}
+		hint = alignSemanticHintRelations(hint, blocks[start:end])
 		blocks = append(blocks[:start], append([]SemanticBlock{hint}, blocks[end:]...)...)
 		diagnostics.HintsAccepted++
 		lastEnd = hint.End
@@ -59,10 +64,50 @@ func mergeSemanticHints(
 	return blocks
 }
 
+func semanticHintConflictsWithLocalAtom(hint SemanticBlock, covered []SemanticBlock) bool {
+	protectedCount := 0
+	for _, block := range covered {
+		if !isProtectedSemanticAtom(block) {
+			continue
+		}
+		protectedCount++
+		if block.Kind != hint.Kind {
+			return true
+		}
+	}
+	if protectedCount == 0 {
+		return false
+	}
+	if hint.Kind == SemanticKindImage {
+		return protectedCount != 1
+	}
+	return len(covered) != 1
+}
+
+func alignSemanticHintRelations(hint SemanticBlock, covered []SemanticBlock) SemanticBlock {
+	if hint.Kind != SemanticKindTableHeader && hint.Kind != SemanticKindTableRow &&
+		hint.Kind != SemanticKindRecord {
+		return hint
+	}
+	for _, block := range covered {
+		if (hint.Kind == SemanticKindTableHeader || hint.Kind == SemanticKindTableRow) &&
+			block.TableID != "" {
+			hint.TableID = block.TableID
+		}
+		if hint.Kind == SemanticKindRecord && block.RecordID != "" {
+			hint.RecordID = block.RecordID
+		}
+	}
+	return hint
+}
+
 func splitSemanticBlocksAt(blocks []SemanticBlock, position int) []SemanticBlock {
 	for index, block := range blocks {
 		if position <= block.Start || position >= block.End {
 			continue
+		}
+		if isProtectedSemanticAtom(block) {
+			return blocks
 		}
 		left, right := block, block
 		left.End = position
@@ -73,6 +118,13 @@ func splitSemanticBlocksAt(blocks []SemanticBlock, position int) []SemanticBlock
 		return append(result, blocks[index+1:]...)
 	}
 	return blocks
+}
+
+func isProtectedSemanticAtom(block SemanticBlock) bool {
+	if !block.Atomic || block.Confidence != SemanticConfidenceHigh {
+		return false
+	}
+	return block.Kind != SemanticKindParagraph && block.Kind != SemanticKindPreamble
 }
 
 func alignedSemanticBlockRange(blocks []SemanticBlock, start, end int) (int, int) {

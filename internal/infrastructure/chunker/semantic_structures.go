@@ -84,7 +84,9 @@ func (scanner *semanticScanner) consumeImage(index int) (int, SemanticBlock, boo
 	next := index + 1
 	contexts := []string{"image"}
 	if next < len(scanner.lines) && scanner.lines[next].trimmed != "" &&
-		len([]rune(scanner.lines[next].trimmed)) <= 160 && !scanner.isHardStructuralStart(next) {
+		len([]rune(scanner.lines[next].trimmed)) <= 160 &&
+		semanticImageCaption.MatchString(scanner.lines[next].trimmed) &&
+		!scanner.isHardStructuralStart(next) {
 		end = scanner.lines[next].end
 		next++
 		contexts = append(contexts, "caption")

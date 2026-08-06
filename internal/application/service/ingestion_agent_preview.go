@@ -151,11 +151,12 @@ func validateIngestionChunkPositions(content string, chunks []chunker.Chunk) err
 }
 
 func validateIngestionChunkOrder(chunks []chunker.Chunk) error {
-	lastEnd := 0
+	lastStart, lastEnd := -1, 0
 	for index, current := range chunks {
-		if index > 0 && current.End <= lastEnd {
-			return fmt.Errorf("块 %d 的结束位置未递增", index)
+		if index > 0 && (current.Start <= lastStart || current.End <= lastEnd) {
+			return fmt.Errorf("块 %d 的位置未递增", index)
 		}
+		lastStart = current.Start
 		lastEnd = current.End
 	}
 	return nil

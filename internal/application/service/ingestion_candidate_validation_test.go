@@ -67,6 +67,20 @@ func TestIngestionCandidateValidationChecksCoverageAndTokenLimit(t *testing.T) {
 	require.Contains(t, overlapResult.violations, ingestionViolationOverlap)
 }
 
+func TestIngestionCandidateValidationRejectsReversedSourceOrder(t *testing.T) {
+	content := "abcdefghijklmnop"
+	document := analyzeIngestionTestDocument(t, content)
+	request := ingestionValidationTestRequest(content, document, []chunker.Chunk{
+		{Content: content[4:8], Start: 4, End: 8},
+		{Content: content[:12], Start: 0, End: 12},
+		{Content: content[12:], Start: 12, End: 16},
+	})
+
+	result := validateIngestionCandidate(request)
+
+	require.Contains(t, result.violations, ingestionViolationSourceOrder)
+}
+
 func TestIngestionPreviewSurfacesInvalidSemanticDocumentAsExecutionError(t *testing.T) {
 	content := "abcdef"
 	document := chunker.SemanticDocument{
@@ -121,6 +135,22 @@ func TestIngestionCandidateValidationKeepsSoftStructureAsScoringSignals(t *testi
 	require.Empty(t, result.violations)
 	require.Equal(t, 1, result.quality.OrphanTableRows)
 	require.Equal(t, 1, result.quality.MixedSections)
+}
+
+func TestIngestionCandidateValidationRejectsHighConfidenceOrphanTableRow(t *testing.T) {
+	content := "| orphan | row |\n"
+	document := analyzeIngestionTestDocument(t, content)
+	document.Blocks[0].Atomic = true
+	document.Blocks[0].Confidence = chunker.SemanticConfidenceHigh
+	length := len([]rune(content))
+	request := ingestionValidationTestRequest(content, document, []chunker.Chunk{{
+		Content: content, Start: 0, End: length,
+	}})
+
+	result := validateIngestionCandidate(request)
+
+	require.Contains(t, result.violations, ingestionViolationTableHeaderInvalid)
+	require.Equal(t, 1, result.quality.OrphanTableRows)
 }
 
 func TestIngestionCandidateValidationReportsOversizeAtomicWithoutHardFailure(t *testing.T) {
