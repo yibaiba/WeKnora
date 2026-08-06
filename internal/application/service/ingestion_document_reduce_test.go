@@ -26,7 +26,7 @@ func TestReduceIngestionDocumentSkipsModelForSingleEvidence(t *testing.T) {
 }
 
 func TestReduceIngestionDocumentRecursesWithinBudgetAndPreservesOrder(t *testing.T) {
-	input := make([]ingestionDocumentEvidence, 7)
+	input := make([]ingestionDocumentEvidence, 24)
 	for index := range input {
 		input[index] = largeIngestionDocumentEvidence(index)
 		require.NoError(t, validateIngestionDocumentEvidence(input[index]))
@@ -148,19 +148,17 @@ func validIngestionDocumentEvidence(summary string) ingestionDocumentEvidence {
 		Summary:                summary,
 		DocumentKindCandidates: []string{types.IngestionDocumentKindReport},
 		ContentModeCandidates:  []string{types.IngestionContentModeDocument},
-		StructureSignals:       []string{"sectioned"},
-		ChunkingSignals:        []string{"prefer headings"},
+		DominantStructures:     []string{"section_body"},
+		BoundaryPriorities:     []string{"section", "paragraph"},
+		RiskSignals:            []string{},
 	}
 }
 
 func largeIngestionDocumentEvidence(index int) ingestionDocumentEvidence {
 	evidence := validIngestionDocumentEvidence(fmt.Sprintf("source-%02d-%s", index, strings.Repeat("概", 950)))
-	evidence.StructureSignals = make([]string, ingestionDocumentSignalLimit)
-	evidence.ChunkingSignals = make([]string, ingestionDocumentSignalLimit)
-	for signal := 0; signal < ingestionDocumentSignalLimit; signal++ {
-		evidence.StructureSignals[signal] = fmt.Sprintf("structure-%d-%s", signal, strings.Repeat("构", 245))
-		evidence.ChunkingSignals[signal] = fmt.Sprintf("chunking-%d-%s", signal, strings.Repeat("切", 245))
-	}
+	evidence.DominantStructures = []string{"section_body", "mixed"}
+	evidence.BoundaryPriorities = []string{"section", "paragraph", "record"}
+	evidence.RiskSignals = []string{"mixed_layout"}
 	return evidence
 }
 

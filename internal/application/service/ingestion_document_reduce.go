@@ -250,4 +250,4 @@ func emitReduceProgress(
 }
 
 const ingestionDocumentReduceSystemPrompt = `你是文档全文分析器的 Reduce 阶段。按输入顺序归并全部证据，输出与 Map 相同的严格 JSON，不得输出 Markdown 或额外字段。
-保留跨单元的主旨、文档类型和内容模式候选、结构规律、切分边界与冲突信号；不得丢弃尾部证据，不得补充输入之外的事实。`
+保留跨单元的主旨、文档类型和内容模式候选，并从 Schema 枚举归并主导结构、边界优先级与风险；不得输出源位置或最终边界，不得丢弃尾部证据或补充输入之外的事实。`

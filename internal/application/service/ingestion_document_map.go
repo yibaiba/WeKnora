@@ -23,9 +23,7 @@ const (
 	ingestionDocumentAnalysisCompletionTokens = 1024
 	ingestionDocumentEvidenceMaxRunes         = 7500
 	ingestionDocumentSummaryMaxRunes          = 1200
-	ingestionDocumentSignalMaxRunes           = 400
 	ingestionDocumentCandidateLimit           = 3
-	ingestionDocumentSignalLimit              = 8
 	ingestionAnalysisProgressRunning          = "running"
 	ingestionAnalysisProgressSucceeded        = "succeeded"
 	ingestionAnalysisProgressFailed           = "failed"
@@ -35,8 +33,24 @@ type ingestionDocumentEvidence struct {
 	Summary                string   `json:"summary"`
 	DocumentKindCandidates []string `json:"document_kind_candidates"`
 	ContentModeCandidates  []string `json:"content_mode_candidates"`
-	StructureSignals       []string `json:"structure_signals"`
-	ChunkingSignals        []string `json:"chunking_signals"`
+	DominantStructures     []string `json:"dominant_structures"`
+	BoundaryPriorities     []string `json:"boundary_priorities"`
+	RiskSignals            []string `json:"risk_signals"`
+}
+
+var allowedIngestionDominantStructures = map[string]struct{}{
+	"section_body": {}, "table": {}, "repeated_records": {}, "faq": {},
+	"list": {}, "code": {}, "image_text": {}, "mixed": {},
+}
+
+var allowedIngestionBoundaryPriorities = map[string]struct{}{
+	"section": {}, "paragraph": {}, "record": {}, "table_row": {},
+	"list_item": {}, "faq_pair": {}, "code_block": {},
+}
+
+var allowedIngestionRiskSignals = map[string]struct{}{
+	"flat_table": {}, "unreliable_headings": {}, "ocr_noise": {},
+	"repeated_headers_footers": {}, "oversize_atomic": {}, "mixed_layout": {},
 }
 
 type ingestionDocumentMapRequest struct {
@@ -60,10 +74,11 @@ var ingestionDocumentEvidenceSchema = json.RawMessage(`{
     "summary":{"type":"string","minLength":1,"maxLength":1200},
     "document_kind_candidates":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["policy_manual","faq","tabular_data","report","meeting_notes","presentation","short_article","mixed_document"]}},
     "content_mode_candidates":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string","enum":["document","faq_candidate","wiki_candidate"]}},
-    "structure_signals":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":400}},
-    "chunking_signals":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":400}}
+    "dominant_structures":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","enum":["section_body","table","repeated_records","faq","list","code","image_text","mixed"]}},
+    "boundary_priorities":{"type":"array","minItems":1,"maxItems":7,"items":{"type":"string","enum":["section","paragraph","record","table_row","list_item","faq_pair","code_block"]}},
+    "risk_signals":{"type":"array","minItems":0,"maxItems":6,"items":{"type":"string","enum":["flat_table","unreliable_headings","ocr_noise","repeated_headers_footers","oversize_atomic","mixed_layout"]}}
   },
-  "required":["summary","document_kind_candidates","content_mode_candidates","structure_signals","chunking_signals"],
+  "required":["summary","document_kind_candidates","content_mode_candidates","dominant_structures","boundary_priorities","risk_signals"],
   "additionalProperties":false
 }`)
 
@@ -213,10 +228,19 @@ func validateIngestionDocumentEvidence(evidence ingestionDocumentEvidence) error
 	if err := validateEvidenceCandidates(evidence.ContentModeCandidates, allowedContentModes, "content_mode_candidates"); err != nil {
 		return err
 	}
-	if err := validateEvidenceSignals(evidence.StructureSignals, "structure_signals"); err != nil {
+	if err := validateEvidenceEnumSet(evidence.DominantStructures, evidenceEnumSpec{
+		field: "dominant_structures", minimum: 1, maximum: 8, allowed: allowedIngestionDominantStructures,
+	}); err != nil {
 		return err
 	}
-	if err := validateEvidenceSignals(evidence.ChunkingSignals, "chunking_signals"); err != nil {
+	if err := validateEvidenceEnumSet(evidence.BoundaryPriorities, evidenceEnumSpec{
+		field: "boundary_priorities", minimum: 1, maximum: 7, allowed: allowedIngestionBoundaryPriorities,
+	}); err != nil {
+		return err
+	}
+	if err := validateEvidenceEnumSet(evidence.RiskSignals, evidenceEnumSpec{
+		field: "risk_signals", maximum: 6, allowed: allowedIngestionRiskSignals,
+	}); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(evidence)
@@ -253,14 +277,26 @@ func validateEvidenceCandidates(values []string, allowed map[string]struct{}, fi
 	return nil
 }
 
-func validateEvidenceSignals(values []string, field string) error {
-	if len(values) == 0 || len(values) > ingestionDocumentSignalLimit {
-		return fmt.Errorf("%s 数量必须在 1 到 %d 之间", field, ingestionDocumentSignalLimit)
+type evidenceEnumSpec struct {
+	field   string
+	minimum int
+	maximum int
+	allowed map[string]struct{}
+}
+
+func validateEvidenceEnumSet(values []string, spec evidenceEnumSpec) error {
+	if len(values) < spec.minimum || len(values) > spec.maximum {
+		return fmt.Errorf("%s 数量必须在 %d 到 %d 之间", spec.field, spec.minimum, spec.maximum)
 	}
+	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		if err := validateEvidenceText(value, ingestionDocumentSignalMaxRunes, field); err != nil {
-			return err
+		if _, ok := spec.allowed[value]; !ok {
+			return fmt.Errorf("%s 包含不支持的枚举", spec.field)
 		}
+		if _, duplicate := seen[value]; duplicate {
+			return fmt.Errorf("%s 包含重复枚举", spec.field)
+		}
+		seen[value] = struct{}{}
 	}
 	return nil
 }
@@ -288,4 +324,4 @@ func ingestionAnalysisProgressWithBudget(
 }
 
 const ingestionDocumentMapSystemPrompt = `你是文档全文分析器的 Map 阶段。分析一个连续原文单元，输出严格 JSON，不得输出 Markdown 或额外字段。
-输出必须概括该单元，列出文档类型候选、内容模式候选、结构信号和切分信号。候选值必须来自给定 JSON Schema。信号必须是可供后续归并和切分决策使用的具体证据，不得引用外部知识。`
+输出必须概括该单元，并从 Schema 枚举中选择文档类型、内容模式、主导结构、边界优先级和风险信号。不得输出源位置、最终分块边界、标题正文或 Schema 之外的自由文本结构信号。`

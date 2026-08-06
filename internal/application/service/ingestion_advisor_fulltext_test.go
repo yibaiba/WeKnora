@@ -288,8 +288,8 @@ func evidenceAwareMapResponse(marker string) func([]chat.Message) *types.ChatRes
 		return ingestionEvidenceResponse(ingestionDocumentEvidence{
 			Summary: marker, DocumentKindCandidates: []string{types.IngestionDocumentKindFAQ},
 			ContentModeCandidates: []string{types.IngestionContentModeFAQCandidate},
-			StructureSignals:      []string{"question and answer pairs"},
-			ChunkingSignals:       []string{"preserve question-answer boundaries"},
+			DominantStructures:    []string{"faq"}, BoundaryPriorities: []string{"faq_pair"},
+			RiskSignals: []string{},
 		})
 	}
 }

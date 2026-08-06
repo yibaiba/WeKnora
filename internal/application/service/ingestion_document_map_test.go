@@ -218,14 +218,18 @@ func TestInvalidDocumentAnalysisFailureUsesTypedClassification(t *testing.T) {
 
 func TestDecodeIngestionDocumentEvidenceRejectsInvalidStructures(t *testing.T) {
 	tests := []string{
-		`{"summary":"","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
-		`{"summary":"ok","document_kind_candidates":[],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
-		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"],"extra":true}`,
-		`{"summary":"ok","document_kind_candidates":["unknown"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
-		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"structure_signals":[],"chunking_signals":["headings"]}`,
+		`{"summary":"","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section"],"risk_signals":[]}`,
+		`{"summary":"ok","document_kind_candidates":[],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section"],"risk_signals":[]}`,
+		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section"],"risk_signals":[],"extra":true}`,
+		`{"summary":"ok","document_kind_candidates":["unknown"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section"],"risk_signals":[]}`,
+		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":[],"boundary_priorities":["section"],"risk_signals":[]}`,
+		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":["unknown"],"boundary_priorities":["section"],"risk_signals":[]}`,
+		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["unknown"],"risk_signals":[]}`,
+		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section"],"risk_signals":["unknown"]}`,
+		`{"summary":"ok","document_kind_candidates":["report"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section","section"],"risk_signals":[]}`,
 		"```json\n" + validMapEvidenceJSON("ok") + "\n```",
 		validMapEvidenceJSON(strings.Repeat("a", ingestionDocumentSummaryMaxRunes+1)),
-		`{"summary":"ok","document_kind_candidates":["report","report"],"content_mode_candidates":["document"],"structure_signals":["sections"],"chunking_signals":["headings"]}`,
+		`{"summary":"ok","document_kind_candidates":["report","report"],"content_mode_candidates":["document"],"dominant_structures":["section_body"],"boundary_priorities":["section"],"risk_signals":[]}`,
 	}
 	for _, raw := range tests {
 		_, err := decodeIngestionDocumentEvidence(&types.ChatResponse{Content: raw})
@@ -241,6 +245,10 @@ func TestIngestionDocumentEvidenceSchemaUsesSupportedStrictKeywords(t *testing.T
 	require.Contains(t, string(ingestionDocumentEvidenceSchema), "maxLength")
 	require.Contains(t, string(ingestionDocumentEvidenceSchema), "minItems")
 	require.Contains(t, string(ingestionDocumentEvidenceSchema), "maxItems")
+	require.NotContains(t, string(ingestionDocumentEvidenceSchema), "structure_signals")
+	require.NotContains(t, string(ingestionDocumentEvidenceSchema), "chunking_signals")
+	require.NotContains(t, string(ingestionDocumentEvidenceSchema), `"start"`)
+	require.NotContains(t, string(ingestionDocumentEvidenceSchema), `"end"`)
 }
 
 func ingestionMapTestUnits(count int) []ingestionDocumentAnalysisUnit {
@@ -264,7 +272,8 @@ func validMapEvidenceJSON(summary string) string {
 	payload, err := json.Marshal(ingestionDocumentEvidence{
 		Summary: summary, DocumentKindCandidates: []string{types.IngestionDocumentKindReport},
 		ContentModeCandidates: []string{types.IngestionContentModeDocument},
-		StructureSignals:      []string{"sectioned"}, ChunkingSignals: []string{"prefer headings"},
+		DominantStructures:    []string{"section_body"}, BoundaryPriorities: []string{"section", "paragraph"},
+		RiskSignals: []string{},
 	})
 	if err != nil {
 		panic(err)
