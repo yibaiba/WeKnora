@@ -211,6 +211,34 @@ func TestSplitParentChild_LegacyStrategy(t *testing.T) {
 	}
 }
 
+func TestSplitParentChild_LongTablePreservesContextAndSourcePositions(t *testing.T) {
+	tableHeader := "| 用例 | 结果 |\n| --- | --- |"
+	text := tableHeader + "\n" + strings.Repeat("| TC-001 | 通过 |\n", 80)
+	res := SplitParentChild(
+		text,
+		SplitterConfig{ChunkSize: 512, ChunkOverlap: 40, Strategy: StrategyLegacy},
+		SplitterConfig{ChunkSize: 120, ChunkOverlap: 20, Strategy: StrategyLegacy},
+	)
+	runes := []rune(text)
+	parentContextFound := false
+	for _, parent := range res.Parents {
+		if got := string(runes[parent.Start:parent.End]); got != parent.Content {
+			t.Fatalf("parent %d source mismatch", parent.Seq)
+		}
+		parentContextFound = parentContextFound || strings.Contains(parent.ContextHeader, tableHeader)
+	}
+	childContextFound := false
+	for _, child := range res.Children {
+		if got := string(runes[child.Start:child.End]); got != child.Content {
+			t.Fatalf("child %d source mismatch", child.Seq)
+		}
+		childContextFound = childContextFound || strings.Contains(child.ContextHeader, tableHeader)
+	}
+	if !parentContextFound || !childContextFound {
+		t.Fatalf("table context missing: parent=%t child=%t", parentContextFound, childContextFound)
+	}
+}
+
 func TestEnsureDefaults(t *testing.T) {
 	cfg := ensureDefaults(SplitterConfig{})
 	if cfg.ChunkSize != DefaultChunkSize {

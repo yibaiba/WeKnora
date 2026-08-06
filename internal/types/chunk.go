@@ -172,7 +172,7 @@ type Chunk struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	// Soft delete marker, supports data recovery
 	DeletedAt gorm.DeletedAt `json:"deleted_at"               gorm:"index"`
-	// ContextHeader is a Markdown heading breadcrumb prepended when indexing.
+	// ContextHeader is heading or table context prepended when indexing.
 	// It is persisted so a later content edit can rebuild the same index input.
 	ContextHeader string `json:"-" gorm:"type:text"`
 }

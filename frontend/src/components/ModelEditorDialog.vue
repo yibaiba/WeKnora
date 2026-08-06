@@ -367,13 +367,14 @@
             :aria-invalid="Boolean(contextWindowError)"
             :aria-describedby="contextWindowError ? 'model-context-window-error' : 'model-context-window-help'"
             inputmode="numeric"
+            @input="contextWindowManual = true"
             @blur="contextWindowTouched = true"
           >
           <p v-if="contextWindowError" id="model-context-window-error" class="form-error" role="alert">
             {{ contextWindowError }}
           </p>
           <p v-else id="model-context-window-help" class="form-desc">
-            {{ $t('model.editor.contextWindowTokensDesc') }}
+            {{ contextWindowDescription }}
           </p>
         </div>
 
@@ -445,6 +446,7 @@ import { shouldShowOllamaUnavailableTip } from '@/components/modelEditorSourceSt
 import {
   MAX_CONTEXT_WINDOW_TOKENS,
   isValidContextWindowTokens,
+  suggestedContextWindowTokens,
 } from '@/utils/modelContextWindow'
 
 interface CustomHeaderItem {
@@ -967,6 +969,21 @@ const rules = computed(() => ({
 }))
 
 const contextWindowTouched = ref(false)
+const contextWindowManual = ref(false)
+const suggestedContextWindow = computed(() => suggestedContextWindowTokens({
+  modelName: formData.value.modelName,
+  provider: formData.value.provider,
+  source: formData.value.source,
+}))
+const contextWindowDescription = computed(() => {
+  const suggestion = suggestedContextWindow.value
+  if (!contextWindowManual.value && suggestion === Number(formData.value.contextWindowTokens)) {
+    return t('model.editor.contextWindowTokensDetected', {
+      value: new Intl.NumberFormat().format(suggestion),
+    })
+  }
+  return t('model.editor.contextWindowTokensDesc')
+})
 const contextWindowError = computed(() => {
   if (!showsContextWindow.value || !contextWindowTouched.value
     || isValidContextWindowTokens(formData.value.contextWindowTokens)) {
@@ -974,6 +991,12 @@ const contextWindowError = computed(() => {
   }
   return t('model.editor.validation.contextWindowTokensInvalid')
 })
+
+const applySuggestedContextWindow = () => {
+  if (!showsContextWindow.value || contextWindowManual.value) return
+  formData.value.contextWindowTokens = suggestedContextWindow.value ?? 0
+  contextWindowTouched.value = false
+}
 
 // 获取弹窗描述文字
 const getModalDescription = () => {
@@ -1123,6 +1146,8 @@ watch(() => props.visible, (val) => {
             ? props.modelData.customHeaders.map(h => ({ key: h.key, value: h.value }))
             : [],
         }
+        contextWindowManual.value = Number(props.modelData.contextWindowTokens) > 0
+        applySuggestedContextWindow()
         applyThinkingControlFromModelData()
       } else if (lastOpenedModelId.value !== null || !formData.value.id) {
         // 上次是编辑某个模型，或第一次新增 → 重置成空白
@@ -1157,6 +1182,7 @@ watch(() => props.visible, (val) => {
 // 重置表单
 const resetForm = () => {
   thinkingControlManual.value = false
+  contextWindowManual.value = false
   formData.value = {
     id: generateId(),
     name: '', // 保留字段但不使用，保存时用 modelName
@@ -1643,6 +1669,17 @@ watch(() => formData.value.modelName, async (newValue, oldValue) => {
     MessagePlugin.info(t('model.editor.dimensionHint'))
   }
 })
+
+watch(
+  () => [activeModelType.value, formData.value.source, formData.value.provider, formData.value.modelName] as const,
+  ([modelType, source, provider, modelName], [previousModelType, previousSource, previousProvider, previousModelName]) => {
+    if (hydratingForm.value) return
+    if (modelType === previousModelType && source === previousSource
+      && provider === previousProvider && modelName === previousModelName) return
+    contextWindowManual.value = false
+    applySuggestedContextWindow()
+  },
+)
 
 // 开始下载模型
 const startDownload = async (modelName: string) => {

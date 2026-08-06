@@ -150,6 +150,33 @@ content of C here.`
 	}
 }
 
+func TestSplitByHeadings_PreservesTableContextAndSourcePositions(t *testing.T) {
+	tableHeader := "| 用例 | 结果 |\n| --- | --- |"
+	doc := "# 第一章\n\n" + tableHeader + "\n" +
+		strings.Repeat("| TC-001 | 通过 |\n", 40) +
+		"\n# 第二章\n\n结束"
+	chunks := Split(doc, SplitterConfig{
+		Strategy: StrategyHeading, ChunkSize: 120, ChunkOverlap: 10,
+		Separators: []string{"\n\n", "\n"},
+	})
+	docRunes := []rune(doc)
+	contextFound := false
+	for _, current := range chunks {
+		if got := string(docRunes[current.Start:current.End]); got != current.Content {
+			t.Fatalf("chunk %d source mismatch: got %q, want %q", current.Seq, current.Content, got)
+		}
+		if strings.Contains(current.ContextHeader, tableHeader) {
+			contextFound = true
+			if !strings.Contains(current.ContextHeader, "# 第一章") {
+				t.Fatalf("table context lost heading breadcrumb: %q", current.ContextHeader)
+			}
+		}
+	}
+	if !contextFound {
+		t.Fatal("expected a continuation chunk with table context")
+	}
+}
+
 // TestSplitByHeadings_CoalescesTinyAdjacentSections covers the FAQ /
 // install-log case where a parent heading hosts many short sub-sections.
 // Without merging, each `##` becomes its own <50-char chunk and the

@@ -394,8 +394,8 @@ func buildUnitsWithProtection(text string, protected []span, separators []string
 
 // mergeUnits combines split units into chunks with overlap tracking.
 // Enforces an absolute maximum chunk size to prevent exceeding downstream limits (e.g., embedding APIs).
-// Active contextual headers (e.g., Markdown table headers) are prepended to new
-// chunks so that every chunk carries its own header context.
+// Active contextual headers (e.g., Markdown table headers) are attached through
+// ContextHeader so Content remains an exact source slice.
 func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 	if len(units) == 0 {
 		return nil
@@ -408,6 +408,7 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 	var chunks []Chunk
 	var current []splitUnit
 	curLen := 0
+	currentContextHeader := ""
 
 	for _, u := range units {
 		uLen := runeLen(u.text)
@@ -416,9 +417,10 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 		if uLen > absoluteMaxSize {
 			// Flush current chunk if any
 			if len(current) > 0 {
-				chunks = append(chunks, buildChunk(current, len(chunks)))
+				chunks = append(chunks, buildChunk(current, len(chunks), currentContextHeader))
 				current = nil
 				curLen = 0
+				currentContextHeader = ""
 			}
 
 			// Update header state even for oversized units
@@ -454,12 +456,13 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 
 		// Update header tracking
 		ht.update(u.text)
-		// Flush at table boundary so the next table is not merged into a chunk
-		// that still carries the previous table's prepended header context.
+		// Flush at table boundary so the next table does not inherit the previous
+		// table's ContextHeader.
 		if ht.headerEndedThisUnit && len(current) > 0 {
-			chunks = append(chunks, buildChunk(current, len(chunks)))
+			chunks = append(chunks, buildChunk(current, len(chunks), currentContextHeader))
 			current = nil
 			curLen = 0
+			currentContextHeader = ""
 		}
 		headers := ht.getHeaders()
 		headersLen := runeLen(headers)
@@ -471,10 +474,11 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 		// If adding this unit (plus reserving space for headers in a potential
 		// next chunk) would exceed chunk size, flush the current chunk.
 		if curLen+uLen+headersLen > chunkSize && len(current) > 0 {
-			chunks = append(chunks, buildChunk(current, len(chunks)))
+			chunks = append(chunks, buildChunk(current, len(chunks), currentContextHeader))
 
 			// Keep overlap from the end of current
 			current, curLen = computeOverlap(current, chunkOverlap, chunkSize, uLen)
+			currentContextHeader = ""
 
 			// Shrink overlap further if needed to fit headers + next unit
 			if headers != "" && headersLen+uLen <= chunkSize {
@@ -483,18 +487,13 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 					current = current[1:]
 				}
 
-				// Prepend headers if the column-name context is not already present
-				// in the overlap or the next unit being added.
+				// Attach the table header when it is absent from both the overlap and
+				// the next source unit.
 				overlapText := unitsText(current)
 				if !headerAlreadyPresent(headers, overlapText, u.text) &&
 					!headerColumnMismatch(headers, u.text) {
-					startPos := u.start
-					if len(current) > 0 {
-						startPos = current[0].start
-					}
-					hUnit := splitUnit{text: headers, start: startPos, end: startPos}
-					current = append([]splitUnit{hUnit}, current...)
-					curLen += headersLen
+					currentContextHeader = strings.TrimSpace(headers)
+					curLen += runeLen(currentContextHeader)
 				}
 			}
 		}
@@ -502,9 +501,10 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 		// Check if adding this unit would exceed absolute max
 		if curLen+uLen > absoluteMaxSize {
 			if len(current) > 0 {
-				chunks = append(chunks, buildChunk(current, len(chunks)))
+				chunks = append(chunks, buildChunk(current, len(chunks), currentContextHeader))
 				current = nil
 				curLen = 0
+				currentContextHeader = ""
 			}
 		}
 
@@ -514,7 +514,7 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 
 	// Flush remaining
 	if len(current) > 0 {
-		chunks = append(chunks, buildChunk(current, len(chunks)))
+		chunks = append(chunks, buildChunk(current, len(chunks), currentContextHeader))
 	}
 
 	return chunks
@@ -571,16 +571,17 @@ func headerColumnRow(header string) string {
 	return ""
 }
 
-func buildChunk(units []splitUnit, seq int) Chunk {
+func buildChunk(units []splitUnit, seq int, contextHeader string) Chunk {
 	var sb strings.Builder
 	for _, u := range units {
 		sb.WriteString(u.text)
 	}
 	return Chunk{
-		Content: sb.String(),
-		Seq:     seq,
-		Start:   units[0].start,
-		End:     units[len(units)-1].end,
+		Content:       sb.String(),
+		ContextHeader: contextHeader,
+		Seq:           seq,
+		Start:         units[0].start,
+		End:           units[len(units)-1].end,
 	}
 }
 

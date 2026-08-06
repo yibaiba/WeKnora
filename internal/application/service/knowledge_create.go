@@ -1223,7 +1223,10 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 		}
 		parentChunks := make([]types.ParsedParentChunk, len(pcResult.Parents))
 		for i, p := range pcResult.Parents {
-			parentChunks[i] = types.ParsedParentChunk{Content: p.Content, Seq: p.Seq, Start: p.Start, End: p.End}
+			parentChunks[i] = types.ParsedParentChunk{
+				Content: p.Content, ContextHeader: p.ContextHeader,
+				Seq: p.Seq, Start: p.Start, End: p.End,
+			}
 		}
 		opts.ParentChunks = parentChunks
 	} else {

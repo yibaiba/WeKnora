@@ -2253,6 +2253,7 @@ export default {
       contextWindowTokensLabel: '컨텍스트 창(Token)',
       contextWindowTokensPlaceholder: '0이면 기본값 8192 사용',
       contextWindowTokensDesc: '스마트 전체 텍스트 분석에 사용하는 모델의 전체 컨텍스트 창입니다. 0 또는 빈 값은 기본값 8192를 사용하며 범위는 4096~2000000입니다.',
+      contextWindowTokensDetected: '공급자와 모델 이름에 따라 {value}토큰으로 자동 설정했습니다. 실제 배포 제한에 맞게 직접 변경할 수 있습니다.',
       maxConcurrencyLabel: '백그라운드 동시 실행 상한',
       maxConcurrencyPlaceholder: '0이면 전역 기본값 사용',
       maxConcurrencyDesc: '문서 인덱싱/보강 등 백그라운드 작업이 이 모델을 호출하는 동시 실행 수를 제한합니다(모델별로 모든 복제본이 공유). 0 또는 비워 두면 전역 기본값을 사용하며, 대화형 채팅에는 영향을 주지 않습니다.',

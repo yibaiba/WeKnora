@@ -106,9 +106,10 @@ func splitByHeadingsImpl(text string, cfg SplitterConfig, profile *DocProfile) [
 		subBreadcrumbs := sectionBreadcrumbs(sectionRunes, primaryLevel, sectionStart)
 		subChunks := SplitText(sectionContent, cfg)
 		for _, sub := range subChunks {
+			breadcrumb := breadcrumbAtOffset(subBreadcrumbs, sub.Start, breadcrumb)
 			out = append(out, Chunk{
 				Content:       sub.Content,
-				ContextHeader: breadcrumbAtOffset(subBreadcrumbs, sub.Start, breadcrumb),
+				ContextHeader: mergeBreadcrumbs(breadcrumb, sub.ContextHeader),
 				Seq:           seq,
 				Start:         b.runeStart + sub.Start,
 				End:           b.runeStart + sub.End,

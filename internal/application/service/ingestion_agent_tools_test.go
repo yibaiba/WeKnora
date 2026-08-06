@@ -320,6 +320,37 @@ func TestParentChildPreviewMatchesFormalConstrainedConfigs(t *testing.T) {
 	require.Equal(t, ingestionLengthDistribution(children), candidate.Lengths)
 }
 
+func TestIngestionPreviewAcceptsLongTableSourcePositions(t *testing.T) {
+	content := "# 测试报告\n\n| 用例 | 模块 | 结果 |\n| --- | --- | --- |\n" +
+		strings.Repeat("| TC-001 | 客户端 | 通过 |\n", 80)
+	tests := []struct {
+		name        string
+		strategy    string
+		parentChild bool
+	}{
+		{name: "legacy", strategy: chunker.StrategyLegacy},
+		{name: "auto", strategy: chunker.StrategyAuto},
+		{name: "legacy parent child", strategy: chunker.StrategyLegacy, parentChild: true},
+		{name: "auto parent child", strategy: chunker.StrategyAuto, parentChild: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := ingestionTestConfig(120)
+			config.Strategy = test.strategy
+			config.ChunkOverlap = 10
+			config.EnableParentChild = test.parentChild
+			config.ParentChunkSize = 512
+			config.ChildChunkSize = 120
+
+			candidate, err := newTestIngestionAgentSession(content).preview(config)
+
+			require.NoError(t, err)
+			require.True(t, candidate.HardValid)
+			require.Greater(t, candidate.ChunkCount, 1)
+		})
+	}
+}
+
 func TestIngestionPreviewValidatesProductionParentChildMapping(t *testing.T) {
 	session := newTestIngestionAgentSession(ingestionTestContent())
 	config := ingestionTestConfig(300)

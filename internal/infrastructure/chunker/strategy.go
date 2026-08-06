@@ -167,11 +167,9 @@ func SplitParentChild(text string, parentCfg, childCfg SplitterConfig) ParentChi
 	return ParentChildResult{Parents: newParents, Children: children}
 }
 
-// mergeBreadcrumbs combines the parent and child heading breadcrumbs into a
-// single ContextHeader. When the child re-runs heading detection on parent
-// content, its first breadcrumb line typically duplicates the parent's last
-// line (the parent's leading heading sits at the top of the child's input);
-// drop that duplicate so the embedding context isn't redundant.
+// mergeBreadcrumbs combines parent and child context into one ContextHeader.
+// Child context can include a repeated table header from the legacy splitter.
+// Matching heading boundary lines are de-duplicated.
 func mergeBreadcrumbs(parent, child string) string {
 	if parent == "" {
 		return child

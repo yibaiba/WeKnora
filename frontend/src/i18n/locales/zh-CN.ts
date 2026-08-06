@@ -2253,6 +2253,7 @@ export default {
       contextWindowTokensLabel: '上下文窗口（Token）',
       contextWindowTokensPlaceholder: '0 表示使用默认值 8192',
       contextWindowTokensDesc: '用于智能全文分析的模型总上下文窗口。0 或留空使用默认值 8192；可配置范围为 4096～2000000。',
+      contextWindowTokensDetected: '已根据供应商和模型名称自动设置为 {value} Token；可按实际部署限制手动覆盖。',
       maxConcurrencyLabel: '后台并发上限',
       maxConcurrencyPlaceholder: '0 表示使用全局默认',
       maxConcurrencyDesc: '限制文档入库/富化等后台任务对该模型的并发调用数（按模型全副本共享）。0 或留空表示沿用全局默认；不影响交互式对话。',

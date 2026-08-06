@@ -658,12 +658,12 @@ func TestSplitText_LargeChineseDocument(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Table header prepending tests
+// Table header context tests
 // ---------------------------------------------------------------------------
 
-func TestSplitText_TableHeaderPrependedToChunks(t *testing.T) {
+func TestSplitText_TableHeaderStoredAsContext(t *testing.T) {
 	// A markdown table large enough to span multiple chunks.
-	// Each chunk after the first should have the header row + separator prepended.
+	// Each continuation chunk should carry the header separately from source content.
 	text := "" +
 		"前面的文字\n\n" +
 		"| 姓名 | 年龄 | 城市 |\n" +
@@ -676,7 +676,7 @@ func TestSplitText_TableHeaderPrependedToChunks(t *testing.T) {
 		"| 周八 | 40 | 成都 |\n" +
 		"\n后面的文字"
 
-	tableHeader := "| 姓名 | 年龄 | 城市 |\n| --- | --- | --- |\n"
+	tableHeader := "| 姓名 | 年龄 | 城市 |\n| --- | --- | --- |"
 
 	cfg := SplitterConfig{ChunkSize: 60, ChunkOverlap: 5, Separators: []string{"\n\n", "\n"}}
 	chunks := SplitText(text, cfg)
@@ -685,30 +685,32 @@ func TestSplitText_TableHeaderPrependedToChunks(t *testing.T) {
 		t.Fatalf("expected at least 3 chunks, got %d", len(chunks))
 	}
 
-	// Find chunks that contain table row data but not the original header position.
-	// These should have the header prepended.
-	headerPrependCount := 0
+	textRunes := []rune(text)
+	headerContextCount := 0
 	for _, c := range chunks {
+		if got := string(textRunes[c.Start:c.End]); got != c.Content {
+			t.Fatalf("chunk %d source mismatch: got %q, want %q", c.Seq, c.Content, got)
+		}
 		if strings.Contains(c.Content, "| 李四") || strings.Contains(c.Content, "| 王五") ||
 			strings.Contains(c.Content, "| 赵六") || strings.Contains(c.Content, "| 孙七") ||
 			strings.Contains(c.Content, "| 周八") {
 			if !strings.Contains(c.Content, "| 张三") {
-				// This is a chunk with table rows but not the first row;
-				// it should have the header prepended.
-				if !strings.HasPrefix(c.Content, tableHeader) {
-					t.Errorf("chunk (seq=%d) has table rows but is missing prepended header:\n%s",
-						c.Seq, c.Content)
-				} else {
-					headerPrependCount++
+				if c.ContextHeader != tableHeader {
+					t.Errorf("chunk %d context = %q, want table header %q", c.Seq, c.ContextHeader, tableHeader)
 				}
+				if !strings.HasPrefix(c.EmbeddingContent(), tableHeader) {
+					t.Errorf("chunk %d embedding content is missing table context", c.Seq)
+				}
+				headerContextCount++
 			}
 		}
 	}
 
-	if headerPrependCount == 0 {
-		t.Error("expected at least one chunk to have prepended table header, found none")
+	if headerContextCount == 0 {
+		t.Error("expected at least one continuation chunk with table context")
 		for i, c := range chunks {
-			t.Logf("chunk[%d] (seq=%d, start=%d, end=%d):\n%s", i, c.Seq, c.Start, c.End, c.Content)
+			t.Logf("chunk[%d] (seq=%d, start=%d, end=%d, context=%q):\n%s",
+				i, c.Seq, c.Start, c.End, c.ContextHeader, c.Content)
 		}
 	}
 }
@@ -751,9 +753,8 @@ func TestSplitText_TableHeaderEndedByEmptyLine(t *testing.T) {
 		hasTableRow := strings.Contains(c.Content, "| A | B |") || strings.Contains(c.Content, "|")
 		hasPlainText := strings.Contains(c.Content, "这是表格之后") || strings.Contains(c.Content, "更多的普通")
 		if hasPlainText && !hasTableRow {
-			// This chunk is purely post-table text; should NOT have table header
-			if strings.Contains(c.Content, "| --- |") {
-				t.Errorf("post-table chunk should not contain table header:\n%s", c.Content)
+			if strings.Contains(c.ContextHeader, "| --- |") {
+				t.Errorf("post-table chunk should not carry table context:\n%s", c.ContextHeader)
 			}
 		}
 	}
@@ -883,7 +884,8 @@ func TestSplitText_EmptyHeaderRowPrepend(t *testing.T) {
 
 	t.Logf("total chunks: %d", len(chunks))
 	for i, c := range chunks {
-		t.Logf("chunk[%d] seq=%d start=%d end=%d:\n%s", i, c.Seq, c.Start, c.End, c.Content)
+		t.Logf("chunk[%d] seq=%d start=%d end=%d context=%q:\n%s",
+			i, c.Seq, c.Start, c.End, c.ContextHeader, c.Content)
 	}
 
 	for _, c := range chunks {
@@ -891,12 +893,10 @@ func TestSplitText_EmptyHeaderRowPrepend(t *testing.T) {
 			strings.Contains(c.Content, "TC-003") ||
 			strings.Contains(c.Content, "TC-004")
 		if hasLaterRow && !strings.Contains(c.Content, "TC-001") {
-			// Should have column names prepended
-			if !strings.Contains(c.Content, "用例ID") {
-				t.Errorf("chunk with data rows should have real column names prepended:\n%s", c.Content)
+			if !strings.Contains(c.ContextHeader, "用例ID") {
+				t.Errorf("chunk with data rows should carry real column names as context:\n%s", c.ContextHeader)
 			}
-			// Should NOT have the empty || row
-			lines := strings.Split(c.Content, "\n")
+			lines := strings.Split(c.ContextHeader, "\n")
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
 				isOnlyPipes := trimmed != "" && func() bool {
@@ -908,14 +908,14 @@ func TestSplitText_EmptyHeaderRowPrepend(t *testing.T) {
 					return true
 				}()
 				if isOnlyPipes {
-					t.Errorf("chunk should NOT contain empty pipe row %q:\n%s", trimmed, c.Content)
+					t.Errorf("chunk context should NOT contain empty pipe row %q:\n%s", trimmed, c.ContextHeader)
 					break
 				}
 			}
 		}
 
-		// No line should appear as a duplicate in any chunk
-		lines := strings.Split(strings.TrimRight(c.Content, "\n"), "\n")
+		// No line should appear twice in the embedding input.
+		lines := strings.Split(strings.TrimRight(c.EmbeddingContent(), "\n"), "\n")
 		seen := make(map[string]int)
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
@@ -989,8 +989,8 @@ func TestSplitText_EnTablesNoCrossTableHeader(t *testing.T) {
 		hasSinple := strings.Contains(c.Content, "| Sinple | Table |")
 		hasSimple := strings.Contains(c.Content, "| Simple  Multiparagraph |")
 		if hasSinple || hasSimple {
-			if strings.Contains(c.Content, "| Name | Game | Fame | Blame |") {
-				t.Errorf("chunk[%d] must not carry table-1 header into later tables:\n%s", i, c.Content)
+			if strings.Contains(c.ContextHeader, "| Name | Game | Fame | Blame |") {
+				t.Errorf("chunk[%d] must not carry table-1 context into later tables:\n%s", i, c.ContextHeader)
 			}
 		}
 	}
@@ -1020,24 +1020,22 @@ func TestSplitText_MultipleTablesInDocument(t *testing.T) {
 	// Verify that if a chunk has rows from table 2, it has table 2's header, not table 1's.
 	for _, c := range chunks {
 		if strings.Contains(c.Content, "| Y |") && !strings.Contains(c.Content, "| X |") {
-			if !strings.Contains(c.Content, "| 项目 | 状态 |") {
-				t.Errorf("chunk with table-2 rows should have table-2 header:\n%s", c.Content)
+			if !strings.Contains(c.ContextHeader, "| 项目 | 状态 |") {
+				t.Errorf("chunk with table-2 rows should carry table-2 context:\n%s", c.ContextHeader)
 			}
-			if strings.Contains(c.Content, "| 名称 | 值 |") {
-				t.Errorf("chunk with table-2 rows should NOT have table-1 header:\n%s", c.Content)
+			if strings.Contains(c.ContextHeader, "| 名称 | 值 |") {
+				t.Errorf("chunk with table-2 rows should NOT carry table-1 context:\n%s", c.ContextHeader)
 			}
 		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Start/End restoration tests — verify original text can be reconstructed
+// Start/End restoration tests verify source-aligned Content reconstruction.
 // ---------------------------------------------------------------------------
 
-// restoreTextFromChunks reconstructs the original text using only chunk
-// Start/End positions. For chunks with prepended headers, the header is a
-// "virtual" prefix whose length = runeLen(Content) - (End - Start).
-// The original text portion is the last (End-Start) runes of Content.
+// restoreTextFromChunks reconstructs the original text using chunk positions.
+// ContextHeader is intentionally excluded because it is embedding-only context.
 func restoreTextFromChunks(chunks []Chunk) string {
 	if len(chunks) == 0 {
 		return ""
@@ -1065,14 +1063,7 @@ func restoreTextFromChunks(chunks []Chunk) string {
 			continue // fully contained in a previously processed chunk
 		}
 
-		contentRunes := []rune(c.Content)
-		spanLen := c.End - c.Start
-		headerLen := len(contentRunes) - spanLen
-		if headerLen < 0 {
-			headerLen = 0
-		}
-		// originalPortion is the text[Start:End] part, excluding any prepended header
-		originalPortion := contentRunes[headerLen:]
+		originalPortion := []rune(c.Content)
 
 		// Only take the portion after lastEnd (skip overlap)
 		newStart := 0

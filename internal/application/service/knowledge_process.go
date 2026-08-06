@@ -408,6 +408,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				KnowledgeID:     knowledge.ID,
 				KnowledgeBaseID: knowledge.KnowledgeBaseID,
 				Content:         pc.Content,
+				ContextHeader:   pc.ContextHeader,
 				ChunkIndex:      pc.Seq,
 				IsEnabled:       true,
 				CreatedAt:       time.Now(),
@@ -3437,7 +3438,10 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		}
 		parentChunks := make([]types.ParsedParentChunk, len(pcResult.Parents))
 		for i, p := range pcResult.Parents {
-			parentChunks[i] = types.ParsedParentChunk{Content: p.Content, Seq: p.Seq, Start: p.Start, End: p.End}
+			parentChunks[i] = types.ParsedParentChunk{
+				Content: p.Content, ContextHeader: p.ContextHeader,
+				Seq: p.Seq, Start: p.Start, End: p.End,
+			}
 		}
 		processOpts.ParentChunks = parentChunks
 		logger.Infof(ctx, "Split document into %d parent + %d child chunks for knowledge %s",
