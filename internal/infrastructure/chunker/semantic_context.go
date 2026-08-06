@@ -52,7 +52,7 @@ func (index semanticContextIndex) headingAncestors(parentID string) []string {
 		if !ok {
 			break
 		}
-		if parent.Kind == SemanticKindHeading {
+		if parent.Kind == SemanticKindHeading && parent.Confidence == SemanticConfidenceHigh {
 			reversed = append(reversed, index.blockText(parent))
 		}
 		parentID = parent.ParentID

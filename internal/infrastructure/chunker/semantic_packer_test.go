@@ -100,6 +100,23 @@ func TestSemanticPackingHonorsTokenLimitIncludingContext(t *testing.T) {
 	requireChunksRestoreSource(t, content, chunks)
 }
 
+func TestSemanticPackingDoesNotRepeatSoftHeadingAsContext(t *testing.T) {
+	content := "Potential heading\n\nBody text remains searchable without inferred context.\n"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	heading := firstSemanticKind(document.Blocks, SemanticKindHeading)
+	require.Equal(t, SemanticConfidenceSoft, heading.Confidence)
+
+	chunks, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 40, ChunkOverlap: 0, AllowZeroOverlap: true,
+	}, document)
+
+	require.NoError(t, err)
+	for _, current := range chunks {
+		require.NotContains(t, current.ContextHeader, "Potential heading")
+	}
+}
+
 func TestSemanticParentChildReusesRanges(t *testing.T) {
 	content := "# Alpha\n\n" + strings.Repeat("Alpha sentence. ", 18) +
 		"\n\n# Beta\n\n" + strings.Repeat("Beta sentence. ", 18)

@@ -165,6 +165,16 @@ func TestAnalyzeSemanticDocumentAllowsHintToEnrichParagraph(t *testing.T) {
 	require.Equal(t, SemanticConfidenceHigh, record.Confidence)
 }
 
+func TestAnalyzeSemanticDocumentKeepsSentenceBeforeBlankAsParagraph(t *testing.T) {
+	content := "# Guide\nThe calibration interval remains thirty days.\n\nNext paragraph.\n"
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+
+	require.NoError(t, err)
+	calibration := semanticBlockContaining(document.Blocks, "calibration interval", content)
+	require.Equal(t, SemanticKindParagraph, calibration.Kind)
+}
+
 func TestAnalyzeSemanticDocumentRejectsInvalidHintsWithoutContentDiagnostics(t *testing.T) {
 	secret := "customer-secret-value"
 	document, err := AnalyzeSemanticDocument(secret, SemanticAnalysisOptions{

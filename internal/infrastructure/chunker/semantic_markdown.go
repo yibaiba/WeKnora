@@ -202,7 +202,7 @@ func semanticHeading(value string, lines []semanticLine, index int) (int, string
 		AllCapsHeadingPattern.MatchString(value) {
 		return 1, SemanticConfidenceSoft, true
 	}
-	if utf8.RuneCountInString(value) > 80 || strings.ContainsAny(value, "。！？!?；;") {
+	if utf8.RuneCountInString(value) > 80 || strings.ContainsAny(value, ".。！？!?；;") {
 		return 0, "", false
 	}
 	if index+2 < len(lines) && lines[index+1].trimmed == "" && lines[index+2].trimmed != "" {

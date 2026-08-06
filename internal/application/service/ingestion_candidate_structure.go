@@ -78,7 +78,8 @@ func (index ingestionSemanticIndex) headingAncestors(parentID string) []string {
 		if !ok {
 			break
 		}
-		if parent.Kind == chunker.SemanticKindHeading {
+		if parent.Kind == chunker.SemanticKindHeading &&
+			parent.Confidence == chunker.SemanticConfidenceHigh {
 			reversed = append(reversed, index.blockText(parent))
 		}
 		parentID = parent.ParentID
