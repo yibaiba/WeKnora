@@ -23,28 +23,40 @@ func (scanner *semanticScanner) consumeHTMLTable(index int) (int, []SemanticBloc
 		return 0, nil, false
 	}
 	scanner.tableSeq++
-	return index, semanticHTMLTableBlocks(scanner.lines, start, end, semanticTableID(scanner.tableSeq)), true
+	return index, semanticHTMLTableBlocks(semanticHTMLTableRequest{
+		lines: scanner.lines, start: start, end: end, tableID: semanticTableID(scanner.tableSeq),
+	}), true
 }
 
-func semanticHTMLTableBlocks(lines []semanticLine, start, end int, tableID string) []SemanticBlock {
-	content := semanticLineRangeText(lines, start, end)
+type semanticHTMLTableRequest struct {
+	lines   []semanticLine
+	start   int
+	end     int
+	tableID string
+}
+
+func semanticHTMLTableBlocks(request semanticHTMLTableRequest) []SemanticBlock {
+	content := semanticLineRangeText(request.lines, request.start, request.end)
 	rows := semanticHTMLRow.FindAllStringIndex(content, -1)
 	if len(rows) == 0 {
-		block := newSemanticBlock(SemanticKindTableRow, start, end, SemanticConfidenceHigh, true, 0)
-		block.TableID = tableID
+		block := newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindTableRow, start: request.start, end: request.end,
+			confidence: SemanticConfidenceHigh, atomic: true,
+		})
+		block.TableID = request.tableID
 		return []SemanticBlock{block}
 	}
 	starts := make([]int, len(rows))
 	for index, row := range rows {
-		starts[index] = start + utf8.RuneCountInString(content[:row[0]])
+		starts[index] = request.start + utf8.RuneCountInString(content[:row[0]])
 	}
 	result := make([]SemanticBlock, 0, len(rows))
 	for index, row := range rows {
 		blockStart := starts[index]
 		if index == 0 {
-			blockStart = start
+			blockStart = request.start
 		}
-		blockEnd := end
+		blockEnd := request.end
 		if index+1 < len(rows) {
 			blockEnd = starts[index+1]
 		}
@@ -52,8 +64,11 @@ func semanticHTMLTableBlocks(lines []semanticLine, start, end int, tableID strin
 		if strings.Contains(strings.ToLower(content[row[0]:row[1]]), "<th") {
 			kind = SemanticKindTableHeader
 		}
-		block := newSemanticBlock(kind, blockStart, blockEnd, SemanticConfidenceHigh, true, 0)
-		block.TableID = tableID
+		block := newSemanticBlock(semanticBlockSpec{
+			kind: kind, start: blockStart, end: blockEnd,
+			confidence: SemanticConfidenceHigh, atomic: true,
+		})
+		block.TableID = request.tableID
 		result = append(result, block)
 	}
 	return result

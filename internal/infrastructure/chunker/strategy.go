@@ -138,6 +138,21 @@ func SplitParentChild(text string, parentCfg, childCfg SplitterConfig) ParentChi
 	}
 	parentCfg = ensureDefaults(parentCfg)
 	childCfg = ensureDefaults(childCfg)
+	if parentCfg.Strategy == StrategyAuto || childCfg.Strategy == StrategyAuto {
+		document, err := AnalyzeSemanticDocument(text, SemanticAnalysisOptions{})
+		if err != nil {
+			logger.Errorf(context.Background(), "chunker: semantic parent-child analysis failed: %v", err)
+			return ParentChildResult{}
+		}
+		result, splitErr := SplitParentChildSemanticDocument(SemanticParentChildRequest{
+			Content: text, ParentConfig: parentCfg, ChildConfig: childCfg, Document: document,
+		})
+		if splitErr != nil {
+			logger.Errorf(context.Background(), "chunker: semantic parent-child packing failed: %v", splitErr)
+			return ParentChildResult{}
+		}
+		return result
+	}
 
 	parents := Split(text, parentCfg)
 	if len(parents) == 0 {
@@ -211,7 +226,8 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 		fallthrough
 	default:
 		profile := ProfileDocument(text)
-		return SelectStrategy(profile), profile
+		chain := append([]StrategyTier{TierSemantic}, SelectStrategy(profile)...)
+		return chain, profile
 	}
 }
 
@@ -226,6 +242,16 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 // profile compute one on demand.
 func runTier(tier StrategyTier, text string, cfg SplitterConfig, profile *DocProfile) []Chunk {
 	switch tier {
+	case TierSemantic:
+		document, err := AnalyzeSemanticDocument(text, SemanticAnalysisOptions{})
+		if err != nil {
+			return nil
+		}
+		chunks, err := SplitSemanticDocument(text, cfg, document)
+		if err != nil {
+			return nil
+		}
+		return chunks
 	case TierHeading:
 		return splitByHeadings(text, cfg, profile)
 	case TierHeuristic:

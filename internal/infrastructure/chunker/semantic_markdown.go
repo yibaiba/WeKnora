@@ -86,7 +86,9 @@ func (scanner *semanticScanner) consumeSpecial(index int) (int, SemanticBlock, b
 		return scanner.consumeFence(index)
 	}
 	if strings.Contains(line.text, "\f") || PageFooterPattern.MatchString(line.trimmed) {
-		return index + 1, newSemanticBlock(SemanticKindPageRegion, line.start, line.end, SemanticConfidenceSoft, false, 0), true
+		return index + 1, newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindPageRegion, start: line.start, end: line.end, confidence: SemanticConfidenceSoft,
+		}), true
 	}
 	if next, block, ok := scanner.consumeFAQ(index); ok {
 		return next, block, true
@@ -101,11 +103,16 @@ func (scanner *semanticScanner) consumeSpecial(index int) (int, SemanticBlock, b
 		return next, block, true
 	}
 	if depth, confidence, ok := semanticHeading(line.trimmed, scanner.lines, index); ok {
-		return index + 1, newSemanticBlock(SemanticKindHeading, line.start, line.end, confidence, true, depth), true
+		return index + 1, newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindHeading, start: line.start, end: line.end,
+			confidence: confidence, atomic: true, depth: depth,
+		}), true
 	}
 	if tableRowPattern.MatchString(line.trimmed) {
 		scanner.tableSeq++
-		block := newSemanticBlock(SemanticKindTableRow, line.start, line.end, SemanticConfidenceSoft, false, 0)
+		block := newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindTableRow, start: line.start, end: line.end, confidence: SemanticConfidenceSoft,
+		})
 		block.TableID = semanticTableID(scanner.tableSeq)
 		return index + 1, block, true
 	}
@@ -119,7 +126,9 @@ func (scanner *semanticScanner) addBlank(index int) int {
 		end = scanner.lines[index].end
 	}
 	scanner.blocks = append(scanner.blocks,
-		newSemanticBlock(SemanticKindParagraph, start, end, SemanticConfidenceSoft, false, 0))
+		newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindParagraph, start: start, end: end, confidence: SemanticConfidenceSoft,
+		}))
 	return index
 }
 
@@ -132,7 +141,10 @@ func (scanner *semanticScanner) addParagraph(index int) int {
 		index++
 	}
 	scanner.blocks = append(scanner.blocks,
-		newSemanticBlock(SemanticKindParagraph, start, end, SemanticConfidenceHigh, true, 0))
+		newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindParagraph, start: start, end: end,
+			confidence: SemanticConfidenceHigh, atomic: true,
+		}))
 	return index
 }
 
@@ -160,10 +172,15 @@ func (scanner *semanticScanner) consumeFence(index int) (int, SemanticBlock, boo
 	for index++; index < len(scanner.lines); index++ {
 		end = scanner.lines[index].end
 		if strings.HasPrefix(scanner.lines[index].trimmed, marker) {
-			return index + 1, newSemanticBlock(SemanticKindCodeBlock, start, end, SemanticConfidenceHigh, true, 0), true
+			return index + 1, newSemanticBlock(semanticBlockSpec{
+				kind: SemanticKindCodeBlock, start: start, end: end,
+				confidence: SemanticConfidenceHigh, atomic: true,
+			}), true
 		}
 	}
-	return index, newSemanticBlock(SemanticKindCodeBlock, start, end, SemanticConfidenceSoft, false, 0), true
+	return index, newSemanticBlock(semanticBlockSpec{
+		kind: SemanticKindCodeBlock, start: start, end: end, confidence: SemanticConfidenceSoft,
+	}), true
 }
 
 func isFenceStart(value string) bool {
@@ -191,10 +208,19 @@ func semanticHeading(value string, lines []semanticLine, index int) (int, string
 	return 0, "", false
 }
 
-func newSemanticBlock(kind string, start, end int, confidence string, atomic bool, depth int) SemanticBlock {
+type semanticBlockSpec struct {
+	kind       string
+	start      int
+	end        int
+	confidence string
+	atomic     bool
+	depth      int
+}
+
+func newSemanticBlock(spec semanticBlockSpec) SemanticBlock {
 	return SemanticBlock{
-		Kind: kind, Start: start, End: end, Confidence: confidence,
-		Atomic: atomic, SectionDepth: depth,
+		Kind: spec.kind, Start: spec.start, End: spec.end, Confidence: spec.confidence,
+		Atomic: spec.atomic, SectionDepth: spec.depth,
 	}
 }
 

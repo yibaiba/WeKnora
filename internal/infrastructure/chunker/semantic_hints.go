@@ -24,7 +24,9 @@ func relocateSemanticHints(
 	cursor := 0
 	result := make([]SemanticBlock, 0, len(ordered))
 	for _, hint := range ordered {
-		block, next, code := relocateSemanticHint(sourceRunes, finalRunes, cursor, hint)
+		block, next, code := relocateSemanticHint(semanticHintRelocationRequest{
+			source: sourceRunes, final: finalRunes, cursor: cursor, hint: hint,
+		})
 		if code != "" {
 			rejectSemanticHint(diagnostics, code)
 			continue
@@ -36,25 +38,30 @@ func relocateSemanticHints(
 	return result
 }
 
-func relocateSemanticHint(
-	source []rune,
-	final []rune,
-	cursor int,
-	hint SemanticBlockHint,
-) (SemanticBlock, int, string) {
+type semanticHintRelocationRequest struct {
+	source []rune
+	final  []rune
+	cursor int
+	hint   SemanticBlockHint
+}
+
+func relocateSemanticHint(request semanticHintRelocationRequest) (SemanticBlock, int, string) {
+	hint := request.hint
 	if !semanticKindAllowed(hint.Kind) {
-		return SemanticBlock{}, cursor, "hint_kind_invalid"
+		return SemanticBlock{}, request.cursor, "hint_kind_invalid"
 	}
-	if hint.Start < 0 || hint.End <= hint.Start || hint.End > len(source) {
-		return SemanticBlock{}, cursor, "hint_source_range_invalid"
+	if hint.Start < 0 || hint.End <= hint.Start || hint.End > len(request.source) {
+		return SemanticBlock{}, request.cursor, "hint_source_range_invalid"
 	}
-	fragment := string(source[hint.Start:hint.End])
+	fragment := string(request.source[hint.Start:hint.End])
 	if strings.TrimSpace(fragment) == "" {
-		return SemanticBlock{}, cursor, "hint_source_empty"
+		return SemanticBlock{}, request.cursor, "hint_source_empty"
 	}
-	start := findSemanticFragment(final, fragment, cursor, hint.Start)
+	start := findSemanticFragment(request.final, semanticFragmentRequest{
+		fragment: fragment, cursor: request.cursor, preferred: hint.Start,
+	})
 	if start < 0 {
-		return SemanticBlock{}, cursor, "hint_source_unmatched"
+		return SemanticBlock{}, request.cursor, "hint_source_unmatched"
 	}
 	end := start + utf8.RuneCountInString(fragment)
 	confidence := hint.Confidence
@@ -70,21 +77,27 @@ func relocateSemanticHint(
 	}, end, ""
 }
 
-func findSemanticFragment(final []rune, fragment string, cursor, preferred int) int {
-	fragmentRunes := []rune(fragment)
-	if preferred >= cursor && preferred+len(fragmentRunes) <= len(final) &&
-		string(final[preferred:preferred+len(fragmentRunes)]) == fragment {
-		return preferred
+type semanticFragmentRequest struct {
+	fragment  string
+	cursor    int
+	preferred int
+}
+
+func findSemanticFragment(final []rune, request semanticFragmentRequest) int {
+	fragmentRunes := []rune(request.fragment)
+	if request.preferred >= request.cursor && request.preferred+len(fragmentRunes) <= len(final) &&
+		string(final[request.preferred:request.preferred+len(fragmentRunes)]) == request.fragment {
+		return request.preferred
 	}
-	if cursor > len(final) {
+	if request.cursor > len(final) {
 		return -1
 	}
-	remainder := string(final[cursor:])
-	byteOffset := strings.Index(remainder, fragment)
+	remainder := string(final[request.cursor:])
+	byteOffset := strings.Index(remainder, request.fragment)
 	if byteOffset < 0 {
 		return -1
 	}
-	return cursor + utf8.RuneCountInString(remainder[:byteOffset])
+	return request.cursor + utf8.RuneCountInString(remainder[:byteOffset])
 }
 
 func clearMissingSemanticParents(blocks []SemanticBlock, diagnostics *SemanticDiagnostics) {

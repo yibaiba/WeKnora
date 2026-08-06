@@ -9,18 +9,18 @@ func (scanner *semanticScanner) consumeMarkdownTable(index int) (int, bool) {
 	}
 	scanner.tableSeq++
 	tableID := semanticTableID(scanner.tableSeq)
-	header := newSemanticBlock(
-		SemanticKindTableHeader, scanner.lines[index].start, scanner.lines[index+1].end,
-		SemanticConfidenceHigh, true, 0,
-	)
+	header := newSemanticBlock(semanticBlockSpec{
+		kind: SemanticKindTableHeader, start: scanner.lines[index].start, end: scanner.lines[index+1].end,
+		confidence: SemanticConfidenceHigh, atomic: true,
+	})
 	header.TableID = tableID
 	scanner.blocks = append(scanner.blocks, header)
 	index += 2
 	for index < len(scanner.lines) && tableRowPattern.MatchString(scanner.lines[index].trimmed) {
-		row := newSemanticBlock(
-			SemanticKindTableRow, scanner.lines[index].start, scanner.lines[index].end,
-			SemanticConfidenceHigh, true, 0,
-		)
+		row := newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindTableRow, start: scanner.lines[index].start, end: scanner.lines[index].end,
+			confidence: SemanticConfidenceHigh, atomic: true,
+		})
 		row.TableID = tableID
 		scanner.blocks = append(scanner.blocks, row)
 		index++
@@ -57,7 +57,9 @@ func (scanner *semanticScanner) consumeFAQ(index int) (int, SemanticBlock, bool)
 		end = scanner.lines[index].end
 		index++
 	}
-	block := newSemanticBlock(SemanticKindFAQ, start, end, SemanticConfidenceHigh, true, 0)
+	block := newSemanticBlock(semanticBlockSpec{
+		kind: SemanticKindFAQ, start: start, end: end, confidence: SemanticConfidenceHigh, atomic: true,
+	})
 	block.ContextKinds = []string{"question", "answer"}
 	return index, block, true
 }
@@ -87,7 +89,9 @@ func (scanner *semanticScanner) consumeImage(index int) (int, SemanticBlock, boo
 		next++
 		contexts = append(contexts, "caption")
 	}
-	block := newSemanticBlock(SemanticKindImage, start, end, SemanticConfidenceHigh, true, 0)
+	block := newSemanticBlock(semanticBlockSpec{
+		kind: SemanticKindImage, start: start, end: end, confidence: SemanticConfidenceHigh, atomic: true,
+	})
 	block.ContextKinds = contexts
 	return next, block, true
 }
@@ -114,7 +118,9 @@ func (scanner *semanticScanner) consumeListItem(index int) (int, SemanticBlock, 
 		end = scanner.lines[index].end
 		index++
 	}
-	return index, newSemanticBlock(SemanticKindListItem, start, end, SemanticConfidenceHigh, true, 0), true
+	return index, newSemanticBlock(semanticBlockSpec{
+		kind: SemanticKindListItem, start: start, end: end, confidence: SemanticConfidenceHigh, atomic: true,
+	}), true
 }
 
 func (scanner *semanticScanner) consumeRecord(index int) (int, SemanticBlock, bool) {
@@ -134,7 +140,9 @@ func (scanner *semanticScanner) consumeRecord(index int) (int, SemanticBlock, bo
 		return 0, SemanticBlock{}, false
 	}
 	scanner.recordSeq++
-	block := newSemanticBlock(SemanticKindRecord, start, end, SemanticConfidenceSoft, false, 0)
+	block := newSemanticBlock(semanticBlockSpec{
+		kind: SemanticKindRecord, start: start, end: end, confidence: SemanticConfidenceSoft,
+	})
 	block.RecordID = semanticRecordID(scanner.recordSeq)
 	block.ContextKinds = []string{"record"}
 	return index, block, true
