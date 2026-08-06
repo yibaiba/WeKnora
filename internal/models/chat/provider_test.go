@@ -6,6 +6,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -175,6 +176,33 @@ func TestBuildOutbound_ShapeRequest(t *testing.T) {
 		requestJSON := mustJSON(t, body)
 		assert.NotContains(t, requestJSON, `"temperature"`)
 	})
+}
+
+func TestResolveProvider_OllamaCloud(t *testing.T) {
+	adapter := resolveProvider(provider.ProviderOllamaCloud, "deepseek-v4-flash:cloud")
+
+	assert.Equal(t, provider.ProviderOllamaCloud, adapter.Name())
+	_, ok := adapter.(ollamaCloudProvider)
+	assert.True(t, ok)
+}
+
+func TestNewRemoteAPIChat_OllamaCloudBaseURL(t *testing.T) {
+	secutils.ResetSSRFWhitelistForTest()
+	t.Cleanup(secutils.ResetSSRFWhitelistForTest)
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+
+	defaultChat, err := NewRemoteAPIChat(&ChatConfig{
+		ModelName: "gpt-oss:120b", Provider: string(provider.ProviderOllamaCloud),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, provider.OllamaCloudBaseURL, defaultChat.baseURL)
+
+	customChat, err := NewRemoteAPIChat(&ChatConfig{
+		BaseURL: "http://127.0.0.1:11434/v1", ModelName: "gpt-oss:120b",
+		Provider: string(provider.ProviderOllamaCloud),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:11434/v1", customChat.baseURL)
 }
 
 func TestBuildOutbound_GeminiProviderMetadata(t *testing.T) {

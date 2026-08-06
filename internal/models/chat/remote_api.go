@@ -70,8 +70,13 @@ func NewRemoteAPIChat(chatConfig *ChatConfig) (*RemoteAPIChat, error) {
 		config = openai.DefaultConfig(apiKey)
 		if baseURL := chatConfig.BaseURL; baseURL != "" {
 			config.BaseURL = baseURL
-		} else if providerName == provider.ProviderDeepSeek {
-			config.BaseURL = provider.DeepSeekBaseURL
+		} else {
+			switch providerName {
+			case provider.ProviderDeepSeek:
+				config.BaseURL = provider.DeepSeekBaseURL
+			case provider.ProviderOllamaCloud:
+				config.BaseURL = provider.OllamaCloudBaseURL
+			}
 		}
 	}
 

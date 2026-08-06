@@ -160,6 +160,12 @@ func (deepseekProvider) ShapeRequest(req *openai.ChatCompletionRequest, opts *Ch
 	}
 }
 
+// --- Ollama Cloud: remote OpenAI compatibility with prompt-shaped structured output ---
+
+type ollamaCloudProvider struct{ baseProvider }
+
+func (ollamaCloudProvider) Name() provider.ProviderName { return provider.ProviderOllamaCloud }
+
 // --- Generic (vLLM) / NVIDIA: thinking via chat_template_kwargs ---
 
 type genericProvider struct{ baseProvider }
@@ -283,6 +289,7 @@ var providerRegistry = []providerAdapter{
 	qwenThinkingProvider{},
 	lkeapProvider{},
 	deepseekProvider{},
+	ollamaCloudProvider{},
 	genericProvider{},
 	geminiProvider{},
 	volcengineProvider{},

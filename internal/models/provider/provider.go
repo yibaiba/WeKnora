@@ -33,6 +33,8 @@ const (
 	ProviderGeneric ProviderName = "generic"
 	// DeepSeek
 	ProviderDeepSeek ProviderName = "deepseek"
+	// Ollama Cloud
+	ProviderOllamaCloud ProviderName = "ollama_cloud"
 	// Google Gemini
 	ProviderGemini ProviderName = "gemini"
 	// 火山引擎 Ark
@@ -76,6 +78,7 @@ func AllProviders() []ProviderName {
 		ProviderHunyuan,
 		ProviderSiliconFlow,
 		ProviderDeepSeek,
+		ProviderOllamaCloud,
 		ProviderMiniMax,
 		ProviderMoonshot,
 		ProviderModelScope,
@@ -241,6 +244,8 @@ func DetectProvider(baseURL string) ProviderName {
 		return ProviderAnthropic
 	case containsAny(baseURL, "api.deepseek.com"):
 		return ProviderDeepSeek
+	case containsAny(baseURL, "ollama.com"):
+		return ProviderOllamaCloud
 	case containsAny(baseURL, "generativelanguage.googleapis.com"):
 		return ProviderGemini
 	case containsAny(baseURL, "volces.com", "volcengine"):

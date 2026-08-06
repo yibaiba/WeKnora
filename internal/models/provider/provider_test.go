@@ -15,7 +15,9 @@ func TestProviderRegistry(t *testing.T) {
 		assert.NotEmpty(t, providers, "should have registered providers")
 
 		// Check specific providers exist
-		for _, name := range []ProviderName{ProviderOpenAI, ProviderAliyun, ProviderZhipu, ProviderGeneric} {
+		for _, name := range []ProviderName{
+			ProviderOpenAI, ProviderAliyun, ProviderZhipu, ProviderGeneric, ProviderOllamaCloud,
+		} {
 			p, ok := Get(name)
 			assert.True(t, ok, "provider %s should be registered", name)
 			assert.NotNil(t, p, "provider %s should not be nil", name)
@@ -42,6 +44,8 @@ func TestDetectProvider(t *testing.T) {
 		{"https://dashscope.aliyuncs.com/compatible-mode/v1", ProviderAliyun},
 		{"https://open.bigmodel.cn/api/paas/v4", ProviderZhipu},
 		{"https://api.deepseek.com/v1", ProviderDeepSeek},
+		{"https://ollama.com/v1", ProviderOllamaCloud},
+		{"https://ollama.com/api", ProviderOllamaCloud},
 		{"https://generativelanguage.googleapis.com/v1beta/openai", ProviderGemini},
 		{"https://ark.cn-beijing.volces.com/api/v3", ProviderVolcengine},
 		{"https://api.hunyuan.cloud.tencent.com/v1", ProviderHunyuan},
@@ -60,6 +64,23 @@ func TestDetectProvider(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestOllamaCloudProvider(t *testing.T) {
+	p := &OllamaCloudProvider{}
+	info := p.Info()
+
+	assert.Equal(t, ProviderOllamaCloud, info.Name)
+	assert.Equal(t, "Ollama Cloud", info.DisplayName)
+	assert.Equal(t, OllamaCloudBaseURL, info.GetDefaultURL(types.ModelTypeKnowledgeQA))
+	assert.Equal(t, OllamaCloudBaseURL, info.GetDefaultURL(types.ModelTypeVLLM))
+	assert.ElementsMatch(t, []types.ModelType{
+		types.ModelTypeKnowledgeQA, types.ModelTypeVLLM,
+	}, info.ModelTypes)
+	assert.True(t, info.RequiresAuth)
+	assert.Error(t, p.ValidateConfig(&Config{ModelName: "gpt-oss:120b"}))
+	assert.Error(t, p.ValidateConfig(&Config{APIKey: "test-key"}))
+	assert.NoError(t, p.ValidateConfig(&Config{APIKey: "test-key", ModelName: "gpt-oss:120b"}))
 }
 
 func TestAnthropicProviderValidation(t *testing.T) {
