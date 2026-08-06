@@ -66,6 +66,21 @@ func TestIngestionFallbackRejectsUnavailableOriginalConfiguration(t *testing.T) 
 	require.Nil(t, session.decisionSnapshot())
 }
 
+func TestIngestionFallbackAcceptsLegacyCustomSeparators(t *testing.T) {
+	fallback := ingestionTestConfig(5000)
+	fallback.Separators = []string{"<record-boundary>"}
+	session := newFallbackTestSessionWithConfig(fallback,
+		ingestionInvalidCandidate("cand_1", "atomic_block_split"),
+		ingestionInvalidCandidate("cand_2", "source_coverage_gap"),
+		ingestionInvalidCandidate("cand_3", "token_limit_exceeded"),
+	)
+
+	analysis, err := session.submitFallback(validIngestionFallbackInput())
+
+	require.NoError(t, err)
+	require.Equal(t, fallback, analysis.RecommendedChunking)
+}
+
 func TestIngestionFallbackAndSmartSubmissionAreAtomic(t *testing.T) {
 	valid := types.IngestionChunkingCandidate{
 		ID: "cand_valid", Config: ingestionTestConfig(300), HardValid: true,

@@ -109,8 +109,6 @@ func splitSemanticIngestionPreview(
 		}, err
 	}
 	parentConfig, childConfig := buildParentChildConfigs(request.config, request.base)
-	childConfig.TokenLimit = request.base.TokenLimit
-	childConfig.Languages = append([]string(nil), request.base.Languages...)
 	childConfig = chunker.NormalizeConfig(childConfig)
 	result, err := chunker.SplitParentChildSemanticDocument(chunker.SemanticParentChildRequest{
 		Content: request.content, ParentConfig: parentConfig, ChildConfig: childConfig,

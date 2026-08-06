@@ -70,9 +70,7 @@ func (a *modelIngestionAdvisor) analyze(
 		)
 	}
 
-	session := newIngestionAgentSessionWithFallback(
-		request.Content, request.ChunkingConstraints, request.FallbackChunking,
-	)
+	session := newIngestionAgentSessionFromRequest(request)
 	preparation, err := prepareIngestionAgent(ctx, ingestionAgentPreparationRequest{
 		Model: chatModel, Request: request, Session: session,
 	})

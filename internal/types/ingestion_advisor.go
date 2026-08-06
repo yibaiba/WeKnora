@@ -54,6 +54,7 @@ type IngestionAdvisorRequest struct {
 	AllowReadOnlyMCP    bool
 	ChunkingConstraints IngestionChunkingConstraints
 	FallbackChunking    IngestionChunkingRecommendation
+	SemanticDocument    *SemanticDocument
 	ProgressFn          func(IngestionAgentStep)
 	AnalysisProgressFn  func(IngestionDocumentAnalysisProgress)
 	Timeout             time.Duration
@@ -124,6 +125,7 @@ type IngestionAdvisorResult struct {
 	SelectedCandidateID  string
 	SelectionReasonCodes []string
 	AgentRun             IngestionAgentRun
+	SemanticDocument     *SemanticDocument
 }
 
 // IngestionChunkingRecommendation contains only fields the advisor may own.

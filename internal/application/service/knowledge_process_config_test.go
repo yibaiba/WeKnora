@@ -505,6 +505,8 @@ func TestBuildParentChildConfigs_PropagatesStrategy(t *testing.T) {
 		ChunkOverlap: 100,
 		Separators:   []string{"\n\n", "\n"},
 		Strategy:     chunker.StrategyAuto,
+		TokenLimit:   1024,
+		Languages:    []string{"zh"},
 	}
 	cc := types.ChunkingConfig{
 		EnableParentChild: true,
@@ -524,4 +526,6 @@ func TestBuildParentChildConfigs_PropagatesStrategy(t *testing.T) {
 	require.Equal(t, 512/5, child.ChunkOverlap)
 	require.Equal(t, base.Separators, parent.Separators)
 	require.Equal(t, base.Separators, child.Separators)
+	require.Equal(t, base.TokenLimit, child.TokenLimit)
+	require.Equal(t, base.Languages, child.Languages)
 }

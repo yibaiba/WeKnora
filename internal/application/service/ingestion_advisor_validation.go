@@ -99,6 +99,9 @@ func validateIngestionAnalysisWithConstraints(
 			return fmt.Errorf("reason_codes 不能包含空值")
 		}
 	}
+	if mode == types.IngestionAppliedModeFallback {
+		return validateOrdinaryChunkingRecommendation(analysis.RecommendedChunking)
+	}
 	return validateIngestionChunkingRecommendation(analysis.RecommendedChunking, constraints)
 }
 

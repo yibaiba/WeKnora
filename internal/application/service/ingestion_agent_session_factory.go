@@ -25,6 +25,25 @@ func newIngestionAgentSessionWithFallback(
 	})
 }
 
+func newIngestionAgentSessionFromRequest(
+	request types.IngestionAdvisorRequest,
+) *ingestionAgentSession {
+	if request.SemanticDocument == nil {
+		return newIngestionAgentSessionWithFallback(
+			request.Content, request.ChunkingConstraints, request.FallbackChunking,
+		)
+	}
+	document := chunker.CloneSemanticDocument(*request.SemanticDocument)
+	return newIngestionAgentSessionWithDocument(
+		request.Content,
+		request.ChunkingConstraints,
+		ingestionSessionDocument{
+			document: document, err: chunker.ValidateSemanticDocument(document),
+			fallback: request.FallbackChunking,
+		},
+	)
+}
+
 type ingestionSessionDocument struct {
 	document chunker.SemanticDocument
 	err      error

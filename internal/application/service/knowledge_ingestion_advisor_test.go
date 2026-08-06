@@ -9,6 +9,7 @@ import (
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	appconfig "github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -17,6 +18,7 @@ import (
 
 type ingestionAdvisorStub struct {
 	responses        []*types.IngestionAnalysis
+	results          []*types.IngestionAdvisorResult
 	errors           []error
 	requests         []types.IngestionAdvisorRequest
 	runtimes         []interfaces.IngestionAdvisorRuntime
@@ -38,6 +40,9 @@ func (s *ingestionAdvisorStub) Analyze(
 	}
 	if call < len(s.errors) && s.errors[call] != nil {
 		return nil, s.errors[call]
+	}
+	if call < len(s.results) && s.results[call] != nil {
+		return s.results[call], nil
 	}
 	if call >= len(s.responses) {
 		return nil, errors.New("no stub response")
@@ -377,6 +382,8 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Equal(t, 1024, advisor.requests[0].ChunkingConstraints.TokenLimit)
 	require.Equal(t, []string{"de"}, advisor.requests[0].ChunkingConstraints.Languages)
 	require.Equal(t, appconfig.DefaultIngestionAdvisorTimeout, advisor.requests[0].Timeout)
+	require.Equal(t, types.IngestionAppliedModeSmart, effective.IngestionAppliedMode)
+	require.Equal(t, types.IngestionAppliedModeSmart, persistedAppliedMode(t, run.Knowledge))
 
 	persisted, err := run.Knowledge.IngestionAnalysis()
 	require.NoError(t, err)
@@ -433,6 +440,67 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.NoError(t, marshalProgressErr)
 	require.NotContains(t, string(progressJSON), run.Content)
 	require.NotContains(t, string(progressJSON), "aggregated_evidence")
+}
+
+func TestApplyIngestionAdvisorFallbackPreservesOriginalChunking(t *testing.T) {
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "fallback-doc"))
+	run.Effective.ChunkingConfig = types.ChunkingConfig{
+		Strategy: chunker.StrategyLegacy, ChunkSize: 640, ChunkOverlap: 64,
+		Separators: []string{"\n\n", "\n"}, TokenLimit: 1024, Languages: []string{"zh"},
+	}
+	document, err := chunker.AnalyzeSemanticDocument(run.Content, chunker.SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	run.Document = document
+	fallback := ordinaryChunkingRecommendation(run.Effective.ChunkingConfig)
+	advisor := &ingestionAdvisorStub{results: []*types.IngestionAdvisorResult{
+		fallbackAdvisorResultForTest(fallback),
+	}}
+	service := &knowledgeService{repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor}
+	original := run.Effective.ChunkingConfig
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, original, effective.ChunkingConfig)
+	require.False(t, effective.IngestionAdvisorApplied)
+	require.Equal(t, types.IngestionAppliedModeFallback, effective.IngestionAppliedMode)
+	require.Equal(t, fallback, advisor.requests[0].FallbackChunking)
+	require.NotNil(t, advisor.requests[0].SemanticDocument)
+	require.Equal(t, document, *advisor.requests[0].SemanticDocument)
+	persisted, parseErr := run.Knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Equal(t, types.IngestionAppliedModeFallback, persisted.AppliedMode)
+	require.Equal(t, fallback, persisted.RecommendedChunking)
+	require.Equal(t, fallback, persisted.AppliedChunking)
+	require.Equal(t, []string{
+		"all_candidates_structurally_invalid", "atomic_block_split", "source_coverage_gap",
+	}, persisted.FallbackReasonCodes)
+}
+
+func fallbackAdvisorResultForTest(
+	fallback types.IngestionChunkingRecommendation,
+) *types.IngestionAdvisorResult {
+	candidates := []types.IngestionChunkingCandidate{
+		{ID: "cand_1", Violations: []string{"atomic_block_split"}},
+		{ID: "cand_2", Violations: []string{"source_coverage_gap"}},
+		{ID: "cand_3", Violations: []string{"atomic_block_split", "source_coverage_gap"}},
+	}
+	reasons := ingestionFallbackReasonCodes(candidates)
+	analysis := validIngestionAnalysis()
+	analysis.AppliedMode = types.IngestionAppliedModeFallback
+	analysis.FallbackReasonCodes = append([]string(nil), reasons...)
+	analysis.RecommendedChunking = cloneChunkingRecommendation(fallback)
+	return &types.IngestionAdvisorResult{
+		Analysis: analysis, Candidates: candidates,
+		SelectionReasonCodes: append([]string(nil), reasons...),
+	}
+}
+
+func persistedAppliedMode(t *testing.T, knowledge *types.Knowledge) string {
+	t.Helper()
+	analysis, err := knowledge.IngestionAnalysis()
+	require.NoError(t, err)
+	return analysis.AppliedMode
 }
 
 func TestApplyIngestionAdvisorUsesConfiguredTotalTimeout(t *testing.T) {

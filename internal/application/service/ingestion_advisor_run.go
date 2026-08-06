@@ -142,6 +142,7 @@ func buildIngestionAdvisorResult(
 		Analysis: analysis, Candidates: session.candidateSnapshot(),
 		SelectedCandidateID:  session.selectedCandidateID(),
 		SelectionReasonCodes: reasons, AgentRun: run,
+		SemanticDocument: session.semanticDocumentSnapshot(),
 	}
 }
 

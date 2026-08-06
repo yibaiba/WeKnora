@@ -88,6 +88,13 @@ func (s *ingestionAgentSession) selectedCandidateID() string {
 	return s.selectedID
 }
 
+func (s *ingestionAgentSession) semanticDocumentSnapshot() *types.SemanticDocument {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	document := chunker.CloneSemanticDocument(s.document)
+	return &document
+}
+
 func (s *ingestionAgentSession) candidate(id string) (types.IngestionChunkingCandidate, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

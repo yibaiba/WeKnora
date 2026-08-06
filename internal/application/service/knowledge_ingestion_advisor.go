@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appconfig "github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -15,6 +16,7 @@ type ingestionAdvisorRun struct {
 	KB        *types.KnowledgeBase
 	Content   string
 	Effective types.EffectiveProcessConfig
+	Document  chunker.SemanticDocument
 }
 
 func (s *knowledgeService) applyIngestionAdvisor(
@@ -53,12 +55,8 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	}
 	analysis := ingestionAnalysisFromAdvisorResult(advisorResult)
 
-	run.Effective.ChunkingConfig = applyAdvisorChunking(run.Effective.ChunkingConfig, analysis.RecommendedChunking)
-	run.Effective.IngestionAdvisorApplied = true
-	normalized := buildSplitterConfigFromEffective(run.Effective)
-	run.Effective.ChunkingConfig.ChunkSize = normalized.ChunkSize
-	run.Effective.ChunkingConfig.ChunkOverlap = normalized.ChunkOverlap
-	analysis.AppliedChunking = chunkingRecommendationFromConfig(run.Effective.ChunkingConfig)
+	run.Effective = applyIngestionAnalysis(run.Effective, analysis)
+	analysis.AppliedChunking = appliedChunkingRecommendation(run.Effective)
 	analysis.ModelID = run.KB.SummaryModelID
 	if err := run.Knowledge.SetIngestionAnalysis(analysis); err != nil {
 		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, fmt.Errorf("保存文档分析结果失败: %w", err))
@@ -88,6 +86,7 @@ func (s *knowledgeService) analyzeIngestionContent(
 	}
 	run := request.Run
 	constraints := ingestionChunkingConstraintsFromConfig(run.Effective.ChunkingConfig)
+	document := chunker.CloneSemanticDocument(run.Document)
 	result, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
 		Content:             run.Content,
 		KnowledgeID:         run.Knowledge.ID,
@@ -103,6 +102,8 @@ func (s *knowledgeService) analyzeIngestionContent(
 		AllowWebAccess:      request.Config.AllowWebAccess,
 		AllowReadOnlyMCP:    request.Config.AllowReadOnlyMCP,
 		ChunkingConstraints: constraints,
+		FallbackChunking:    ordinaryChunkingRecommendation(run.Effective.ChunkingConfig),
+		SemanticDocument:    &document,
 		ProgressFn:          request.AgentProgress,
 		AnalysisProgressFn:  request.AnalysisProgress,
 		Timeout:             appconfig.IngestionAdvisorTimeout(s.config),
@@ -114,6 +115,59 @@ func (s *knowledgeService) analyzeIngestionContent(
 		return nil, err
 	}
 	return result, nil
+}
+
+func applyIngestionAnalysis(
+	effective types.EffectiveProcessConfig,
+	analysis *types.IngestionAnalysis,
+) types.EffectiveProcessConfig {
+	mode := ingestionAppliedMode(analysis)
+	effective.IngestionAppliedMode = mode
+	effective.IngestionAdvisorApplied = mode == types.IngestionAppliedModeSmart
+	analysis.AppliedMode = mode
+	if mode == types.IngestionAppliedModeFallback {
+		return effective
+	}
+	effective.ChunkingConfig = applyAdvisorChunking(
+		effective.ChunkingConfig, analysis.RecommendedChunking,
+	)
+	normalized := buildSplitterConfigFromEffective(effective)
+	effective.ChunkingConfig.ChunkSize = normalized.ChunkSize
+	effective.ChunkingConfig.ChunkOverlap = normalized.ChunkOverlap
+	return effective
+}
+
+func appliedChunkingRecommendation(
+	effective types.EffectiveProcessConfig,
+) types.IngestionChunkingRecommendation {
+	if effective.IngestionAppliedMode == types.IngestionAppliedModeFallback {
+		return ordinaryChunkingRecommendation(effective.ChunkingConfig)
+	}
+	return chunkingRecommendationFromConfig(effective.ChunkingConfig)
+}
+
+func ordinaryChunkingRecommendation(
+	config types.ChunkingConfig,
+) types.IngestionChunkingRecommendation {
+	normalized := normalizeSplitterConfig(config, false)
+	strategy := config.Strategy
+	if strategy == "" {
+		strategy = chunker.StrategyLegacy
+	}
+	parentSize, childSize := config.ParentChunkSize, config.ChildChunkSize
+	if parentSize <= 0 {
+		parentSize = 4096
+	}
+	if childSize <= 0 {
+		childSize = 384
+	}
+	return types.IngestionChunkingRecommendation{
+		Strategy: strategy, ChunkSize: normalized.ChunkSize,
+		ChunkOverlap:      normalized.ChunkOverlap,
+		EnableParentChild: config.EnableParentChild,
+		ParentChunkSize:   parentSize, ChildChunkSize: childSize,
+		Separators: append([]string(nil), normalized.Separators...),
+	}
 }
 
 func ingestionChunkingConstraintsFromConfig(

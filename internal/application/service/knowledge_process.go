@@ -261,10 +261,13 @@ func buildParentChildConfigs(cc types.ChunkingConfig, base chunker.SplitterConfi
 		AllowZeroOverlap: base.AllowZeroOverlap,
 	}
 	child = chunker.SplitterConfig{
-		ChunkSize:    childSize,
-		ChunkOverlap: childSize / 5, // ~20% overlap for child chunks
-		Separators:   base.Separators,
-		Strategy:     base.Strategy,
+		ChunkSize:        childSize,
+		ChunkOverlap:     childSize / 5, // ~20% overlap for child chunks
+		Separators:       base.Separators,
+		Strategy:         base.Strategy,
+		TokenLimit:       base.TokenLimit,
+		Languages:        append([]string(nil), base.Languages...),
+		AllowZeroOverlap: base.AllowZeroOverlap,
 	}
 	return
 }
@@ -3311,6 +3314,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 			return nil
 		}
 	}
+	parserMarkdown := convertResult.MarkdownContent
 
 	// Step 1.5: ASR transcription for audio files
 	if convertResult != nil && convertResult.IsAudio && len(convertResult.AudioData) > 0 {
@@ -3394,6 +3398,13 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 
 		logger.Infof(ctx, "Resolved %d total images for knowledge %s", len(storedImages), knowledge.ID)
 	}
+	semanticDocument, err := analyzeFinalSemanticDocument(finalSemanticDocumentRequest{
+		finalMarkdown: convertResult.MarkdownContent, parserMarkdown: parserMarkdown,
+		structure: convertResult.StructureBlocks,
+	})
+	if err != nil {
+		return err
+	}
 
 	// Step 2.5: Smart document analysis owns only the chunking fields it
 	// recommends. Parser, VLM, ASR, enrichment and language/token settings
@@ -3403,14 +3414,13 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		KB:        kb,
 		Content:   convertResult.MarkdownContent,
 		Effective: eff,
+		Document:  semanticDocument,
 	})
 	if err != nil {
 		return nil
 	}
 
-	// Step 3: Split into chunks using Go chunker
-	chunkCfg := buildSplitterConfigFromEffective(eff)
-
+	// Step 3: Split into chunks using the final Markdown semantic document.
 	processOpts := ProcessChunksOptions{
 		EnableQuestionGeneration: payload.EnableQuestionGeneration,
 		QuestionCount:            payload.QuestionCount,
@@ -3422,42 +3432,18 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		processOpts.Metadata = convertResult.Metadata
 	}
 
-	if eff.ChunkingConfig.EnableParentChild {
-		parentCfg, childCfg := buildParentChildConfigs(eff.ChunkingConfig, chunkCfg)
-		pcResult := chunker.SplitParentChild(convertResult.MarkdownContent, parentCfg, childCfg)
-		chunks = make([]types.ParsedChunk, len(pcResult.Children))
-		for i, c := range pcResult.Children {
-			chunks[i] = types.ParsedChunk{
-				Content:       c.Content,
-				ContextHeader: c.ContextHeader,
-				Seq:           c.Seq,
-				Start:         c.Start,
-				End:           c.End,
-				ParentIndex:   c.ParentIndex,
-			}
-		}
-		parentChunks := make([]types.ParsedParentChunk, len(pcResult.Parents))
-		for i, p := range pcResult.Parents {
-			parentChunks[i] = types.ParsedParentChunk{
-				Content: p.Content, ContextHeader: p.ContextHeader,
-				Seq: p.Seq, Start: p.Start, End: p.End,
-			}
-		}
-		processOpts.ParentChunks = parentChunks
+	splitResult, err := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
+		content: convertResult.MarkdownContent, effective: eff, document: semanticDocument,
+	})
+	if err != nil {
+		return err
+	}
+	chunks = splitResult.chunks
+	processOpts.ParentChunks = splitResult.parents
+	if len(splitResult.parents) > 0 {
 		logger.Infof(ctx, "Split document into %d parent + %d child chunks for knowledge %s",
-			len(pcResult.Parents), len(pcResult.Children), knowledge.ID)
+			len(splitResult.parents), len(chunks), knowledge.ID)
 	} else {
-		splitChunks := chunker.Split(convertResult.MarkdownContent, chunkCfg)
-		chunks = make([]types.ParsedChunk, len(splitChunks))
-		for i, c := range splitChunks {
-			chunks[i] = types.ParsedChunk{
-				Content:       c.Content,
-				ContextHeader: c.ContextHeader,
-				Seq:           c.Seq,
-				Start:         c.Start,
-				End:           c.End,
-			}
-		}
 		logger.Infof(ctx, "Split document into %d chunks for knowledge %s", len(chunks), knowledge.ID)
 	}
 

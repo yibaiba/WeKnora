@@ -1,6 +1,10 @@
 package chunker
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 const (
 	SemanticKindPreamble    = "preamble"
@@ -21,53 +25,14 @@ const (
 	SemanticConfidenceSoft = "soft"
 )
 
-// SemanticBlock is a source-positioned structural unit. Blocks in a
-// SemanticDocument are non-overlapping and continuously cover the source.
-type SemanticBlock struct {
-	ID           string
-	Kind         string
-	Start        int
-	End          int
-	ParentID     string
-	SectionDepth int
-	TableID      string
-	RecordID     string
-	Atomic       bool
-	Confidence   string
-	ContextKinds []string
-}
-
-type SemanticBlockHint struct {
-	ID           string
-	Kind         string
-	Start        int
-	End          int
-	ParentID     string
-	SectionDepth int
-	TableID      string
-	RecordID     string
-	Atomic       bool
-	Confidence   string
-	ContextKinds []string
-}
+type SemanticBlock = types.SemanticBlock
+type SemanticBlockHint = types.SemanticBlockHint
+type SemanticDiagnostics = types.SemanticDiagnostics
+type SemanticDocument = types.SemanticDocument
 
 type SemanticAnalysisOptions struct {
 	HintSource string
 	Hints      []SemanticBlockHint
-}
-
-// SemanticDiagnostics is intentionally content-free.
-type SemanticDiagnostics struct {
-	HintsProvided int      `json:"hints_provided"`
-	HintsAccepted int      `json:"hints_accepted"`
-	HintsRejected int      `json:"hints_rejected"`
-	ReasonCodes   []string `json:"reason_codes"`
-}
-
-type SemanticDocument struct {
-	ContentLength int
-	Blocks        []SemanticBlock
-	Diagnostics   SemanticDiagnostics
 }
 
 func ValidateSemanticDocument(document SemanticDocument) error {
@@ -88,6 +53,20 @@ func ValidateSemanticDocument(document SemanticDocument) error {
 		return fmt.Errorf("semantic document coverage ends at %d, want %d", expected, document.ContentLength)
 	}
 	return nil
+}
+
+func CloneSemanticDocument(document SemanticDocument) SemanticDocument {
+	cloned := document
+	cloned.Blocks = append([]SemanticBlock(nil), document.Blocks...)
+	for index := range cloned.Blocks {
+		cloned.Blocks[index].ContextKinds = append(
+			[]string(nil), document.Blocks[index].ContextKinds...,
+		)
+	}
+	cloned.Diagnostics.ReasonCodes = append(
+		[]string(nil), document.Diagnostics.ReasonCodes...,
+	)
+	return cloned
 }
 
 func semanticKindAllowed(kind string) bool {

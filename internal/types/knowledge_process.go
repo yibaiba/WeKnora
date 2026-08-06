@@ -21,6 +21,7 @@ type KnowledgeProcessOverrides struct {
 type EffectiveProcessConfig struct {
 	ChunkingConfig           ChunkingConfig
 	IngestionAdvisorApplied  bool
+	IngestionAppliedMode     string
 	EnableMultimodel         bool
 	VLMConfig                VLMConfig
 	ASRConfig                ASRConfig
