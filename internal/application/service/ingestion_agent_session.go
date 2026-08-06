@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -21,6 +22,8 @@ type ingestionAgentSession struct {
 	content     string
 	statistics  types.DocumentStructureStats
 	constraints types.IngestionChunkingConstraints
+	document    chunker.SemanticDocument
+	documentErr error
 
 	mu             sync.RWMutex
 	candidates     map[string]types.IngestionChunkingCandidate
@@ -47,6 +50,22 @@ func newIngestionAgentSession(
 	content string,
 	constraints types.IngestionChunkingConstraints,
 ) *ingestionAgentSession {
+	document, err := chunker.AnalyzeSemanticDocument(content, chunker.SemanticAnalysisOptions{})
+	return newIngestionAgentSessionWithDocument(content, constraints, ingestionSessionDocument{
+		document: document, err: err,
+	})
+}
+
+type ingestionSessionDocument struct {
+	document chunker.SemanticDocument
+	err      error
+}
+
+func newIngestionAgentSessionWithDocument(
+	content string,
+	constraints types.IngestionChunkingConstraints,
+	analysis ingestionSessionDocument,
+) *ingestionAgentSession {
 	return &ingestionAgentSession{
 		content:    content,
 		statistics: BuildIngestionDocumentStatistics(content),
@@ -54,6 +73,8 @@ func newIngestionAgentSession(
 			TokenLimit: constraints.TokenLimit,
 			Languages:  append([]string(nil), constraints.Languages...),
 		},
+		document:       analysis.document,
+		documentErr:    analysis.err,
 		candidates:     make(map[string]types.IngestionChunkingCandidate),
 		inFlight:       make(map[string]*ingestionCandidateFlight),
 		buildCandidate: buildIngestionCandidate,
@@ -133,6 +154,7 @@ func (s *ingestionAgentSession) preview(
 	}
 	candidate, err = s.buildCandidate(ingestionCandidateBuildRequest{
 		content: s.content, config: normalized, constraints: s.constraints, id: id,
+		document: s.document, documentErr: s.documentErr,
 	})
 	s.completePreview(id, flight, ingestionCandidateBuildResult{candidate: candidate, err: err})
 	return cloneIngestionCandidate(candidate), err
@@ -253,6 +275,14 @@ func ingestionCandidateID(value types.IngestionChunkingRecommendation) (string, 
 func cloneIngestionCandidate(value types.IngestionChunkingCandidate) types.IngestionChunkingCandidate {
 	value.Config = cloneChunkingRecommendation(value.Config)
 	value.Structure.PresentTypes = append([]string(nil), value.Structure.PresentTypes...)
+	value.BlockDescriptions = append(
+		[]types.IngestionChunkStructureDescription(nil), value.BlockDescriptions...,
+	)
+	for index := range value.BlockDescriptions {
+		value.BlockDescriptions[index].Kinds = append(
+			[]string(nil), value.BlockDescriptions[index].Kinds...,
+		)
+	}
 	value.Diagnostics.TierChain = append([]string(nil), value.Diagnostics.TierChain...)
 	value.Diagnostics.Rejected = append([]types.IngestionTierRejection(nil), value.Diagnostics.Rejected...)
 	value.Violations = append([]string(nil), value.Violations...)

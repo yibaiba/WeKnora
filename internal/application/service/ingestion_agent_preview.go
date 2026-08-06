@@ -14,80 +14,126 @@ type ingestionCandidateBuildRequest struct {
 	config      types.IngestionChunkingRecommendation
 	constraints types.IngestionChunkingConstraints
 	id          string
+	document    chunker.SemanticDocument
+	documentErr error
 }
 
 func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
-	config := ingestionChunkingConfig(request.config, request.constraints)
-	base := normalizeSplitterConfig(config, true)
-	chunks, parents, parentIndexes, diagnostics, scoreConfig := splitIngestionPreview(request.content, config, base)
-	if err := validateIngestionChunkPositions(request.content, chunks); err != nil {
+	if request.documentErr != nil {
 		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
-			err, ingestionFailureChunkPosition, "", "source_rune_positions", "子块位置校验失败",
+			request.documentErr, ingestionFailureCandidatePreview, "", "semantic_document", "文档结构分析失败",
 		)
 	}
-	if !request.config.EnableParentChild {
-		if err := validateIngestionChunkOrder(chunks); err != nil {
-			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
-				err, ingestionFailureChunkOrder, "", "strictly_increasing_end_positions", "子块顺序校验失败",
-			)
-		}
+	if err := chunker.ValidateSemanticDocument(request.document); err != nil {
+		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+			err, ingestionFailureCandidatePreview, "", "semantic_document", "文档结构校验失败",
+		)
 	}
-	if len(parents) > 0 {
-		if err := validateIngestionChunkPositions(request.content, parents); err != nil {
-			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
-				err, ingestionFailureChunkPosition, "", "source_rune_positions", "父块位置校验失败",
-			)
-		}
-		if err := validateIngestionChunkOrder(parents); err != nil {
-			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
-				err, ingestionFailureChunkOrder, "", "strictly_increasing_end_positions", "父块顺序校验失败",
-			)
-		}
+	config := ingestionChunkingConfig(request.config, request.constraints)
+	base := normalizeSplitterConfig(config, true)
+	split, err := splitIngestionPreview(ingestionPreviewSplitRequest{
+		content: request.content, config: config, base: base, document: request.document,
+	})
+	if err != nil {
+		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+			err, ingestionFailureCandidatePreview, "", "semantic_chunking", "语义候选生成失败",
+		)
 	}
-	if request.config.EnableParentChild {
-		if err := validateParentChildPreview(chunks, parents, parentIndexes); err != nil {
-			return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
-				err, ingestionFailureParentChildMapping, "", "valid_parent_child_mapping", "父子块映射校验失败",
-			)
-		}
-	}
-
-	metrics := ingestionPreviewMetrics(
-		request.content, chunks, parents, parentIndexes, request.config, scoreConfig,
-	)
+	validation := validateIngestionCandidate(ingestionCandidateValidationRequest{
+		content: request.content, document: request.document, chunks: split.chunks,
+		parents: split.parents, parentIndexes: split.parentIndexes,
+		config: request.config, scoreConfig: split.scoreConfig, constraints: request.constraints,
+	})
+	metrics := ingestionPreviewMetrics(ingestionCandidateMetricsRequest{
+		content: request.content, document: request.document, chunks: split.chunks,
+		parents: split.parents, parentIndexes: split.parentIndexes,
+		config: request.config, scoreConfig: split.scoreConfig, validation: validation,
+	})
 	return types.IngestionChunkingCandidate{
-		ID:               request.id,
-		Config:           cloneChunkingRecommendation(request.config),
-		ChunkCount:       len(chunks),
-		ParentChunkCount: len(parents),
-		Lengths:          metrics.lengths,
-		Structure:        metrics.structure,
-		Diagnostics:      convertIngestionDiagnostics(diagnostics),
-		Score:            metrics.score,
-		HardValid:        true,
-		Violations:       []string{},
+		ID:                request.id,
+		Config:            cloneChunkingRecommendation(request.config),
+		ChunkCount:        len(split.chunks),
+		ParentChunkCount:  len(split.parents),
+		Lengths:           metrics.lengths,
+		Structure:         metrics.structure,
+		StructureQuality:  validation.quality,
+		BlockDescriptions: validation.descriptions,
+		Diagnostics:       convertIngestionDiagnostics(split.diagnostics),
+		Score:             metrics.score,
+		HardValid:         len(validation.violations) == 0,
+		Violations:        validation.violations,
 	}, nil
 }
 
-func splitIngestionPreview(
-	content string,
-	config types.ChunkingConfig,
-	base chunker.SplitterConfig,
-) ([]chunker.Chunk, []chunker.Chunk, []int, *chunker.Diagnostics, chunker.SplitterConfig) {
-	if !config.EnableParentChild {
-		chunks, diagnostics := chunker.SplitWithDiagnostics(content, base)
-		return chunks, nil, nil, diagnostics, base
+type ingestionPreviewSplitRequest struct {
+	content  string
+	config   types.ChunkingConfig
+	base     chunker.SplitterConfig
+	document chunker.SemanticDocument
+}
+
+type ingestionPreviewSplitResult struct {
+	chunks        []chunker.Chunk
+	parents       []chunker.Chunk
+	parentIndexes []int
+	diagnostics   *chunker.Diagnostics
+	scoreConfig   chunker.SplitterConfig
+}
+
+func splitIngestionPreview(request ingestionPreviewSplitRequest) (ingestionPreviewSplitResult, error) {
+	if request.config.Strategy == chunker.StrategyAuto {
+		return splitSemanticIngestionPreview(request)
 	}
-	parentConfig, childConfig := buildParentChildConfigs(config, base)
-	_, diagnostics := chunker.SplitWithDiagnostics(content, parentConfig)
-	result := chunker.SplitParentChild(content, parentConfig, childConfig)
+	if !request.config.EnableParentChild {
+		chunks, diagnostics := chunker.SplitWithDiagnostics(request.content, request.base)
+		return ingestionPreviewSplitResult{
+			chunks: chunks, diagnostics: diagnostics, scoreConfig: request.base,
+		}, nil
+	}
+	parentConfig, childConfig := buildParentChildConfigs(request.config, request.base)
+	_, diagnostics := chunker.SplitWithDiagnostics(request.content, parentConfig)
+	result := chunker.SplitParentChild(request.content, parentConfig, childConfig)
+	return ingestionParentChildSplitResult(result, diagnostics, chunker.NormalizeConfig(childConfig)), nil
+}
+
+func splitSemanticIngestionPreview(
+	request ingestionPreviewSplitRequest,
+) (ingestionPreviewSplitResult, error) {
+	diagnostics := &chunker.Diagnostics{
+		SelectedTier: chunker.TierSemantic, TierChain: []chunker.StrategyTier{chunker.TierSemantic},
+	}
+	if !request.config.EnableParentChild {
+		chunks, err := chunker.SplitSemanticDocument(request.content, request.base, request.document)
+		return ingestionPreviewSplitResult{
+			chunks: chunks, diagnostics: diagnostics, scoreConfig: request.base,
+		}, err
+	}
+	parentConfig, childConfig := buildParentChildConfigs(request.config, request.base)
+	childConfig.TokenLimit = request.base.TokenLimit
+	childConfig.Languages = append([]string(nil), request.base.Languages...)
+	childConfig = chunker.NormalizeConfig(childConfig)
+	result, err := chunker.SplitParentChildSemanticDocument(chunker.SemanticParentChildRequest{
+		Content: request.content, ParentConfig: parentConfig, ChildConfig: childConfig,
+		Document: request.document,
+	})
+	return ingestionParentChildSplitResult(result, diagnostics, childConfig), err
+}
+
+func ingestionParentChildSplitResult(
+	result chunker.ParentChildResult,
+	diagnostics *chunker.Diagnostics,
+	scoreConfig chunker.SplitterConfig,
+) ingestionPreviewSplitResult {
 	children := make([]chunker.Chunk, len(result.Children))
 	parentIndexes := make([]int, len(result.Children))
 	for index, child := range result.Children {
 		children[index] = child.Chunk
 		parentIndexes[index] = child.ParentIndex
 	}
-	return children, result.Parents, parentIndexes, diagnostics, childConfig
+	return ingestionPreviewSplitResult{
+		chunks: children, parents: result.Parents, parentIndexes: parentIndexes,
+		diagnostics: diagnostics, scoreConfig: scoreConfig,
+	}
 }
 
 func validateIngestionChunkPositions(content string, chunks []chunker.Chunk) error {
@@ -143,6 +189,9 @@ func validateParentChildPreview(children, parents []chunker.Chunk, parentIndexes
 }
 
 func ingestionLengthDistribution(chunks []chunker.Chunk) types.IngestionLengthDistribution {
+	if len(chunks) == 0 {
+		return types.IngestionLengthDistribution{}
+	}
 	lengths := make([]int, len(chunks))
 	total := 0
 	for index, current := range chunks {

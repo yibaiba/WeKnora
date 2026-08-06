@@ -99,6 +99,14 @@ func (scanner *semanticScanner) consumeSpecial(index int) (int, SemanticBlock, b
 	if semanticListPattern.MatchString(line.trimmed) {
 		return scanner.consumeListItem(index)
 	}
+	if tableRowPattern.MatchString(line.trimmed) {
+		scanner.tableSeq++
+		block := newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindTableRow, start: line.start, end: line.end, confidence: SemanticConfidenceSoft,
+		})
+		block.TableID = semanticTableID(scanner.tableSeq)
+		return index + 1, block, true
+	}
 	if next, block, ok := scanner.consumeRecord(index); ok {
 		return next, block, true
 	}
@@ -107,14 +115,6 @@ func (scanner *semanticScanner) consumeSpecial(index int) (int, SemanticBlock, b
 			kind: SemanticKindHeading, start: line.start, end: line.end,
 			confidence: confidence, atomic: true, depth: depth,
 		}), true
-	}
-	if tableRowPattern.MatchString(line.trimmed) {
-		scanner.tableSeq++
-		block := newSemanticBlock(semanticBlockSpec{
-			kind: SemanticKindTableRow, start: line.start, end: line.end, confidence: SemanticConfidenceSoft,
-		})
-		block.TableID = semanticTableID(scanner.tableSeq)
-		return index + 1, block, true
 	}
 	return 0, SemanticBlock{}, false
 }

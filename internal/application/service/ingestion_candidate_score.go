@@ -9,17 +9,12 @@ import (
 )
 
 const (
-	structureIntegrityWeight = 40.0
-	chunkSizeBalanceWeight   = 25.0
-	boundaryQualityWeight    = 15.0
-	overlapEfficiencyWeight  = 10.0
-	parentChildWeight        = 10.0
+	semanticIntegrityWeight = 50.0
+	boundaryQualityWeight   = 20.0
+	sizeFitWeight           = 15.0
+	contextEfficiencyWeight = 10.0
+	parentChildWeight       = 5.0
 )
-
-type sourceSpan struct {
-	kind       string
-	start, end int
-}
 
 type ingestionCandidateMetrics struct {
 	lengths   types.IngestionLengthDistribution
@@ -27,81 +22,109 @@ type ingestionCandidateMetrics struct {
 	score     types.IngestionCandidateScore
 }
 
-func ingestionPreviewMetrics(
-	content string,
-	chunks, parents []chunker.Chunk,
-	parentIndexes []int,
-	config types.IngestionChunkingRecommendation,
-	scoreConfig chunker.SplitterConfig,
-) ingestionCandidateMetrics {
-	spans := ingestionStructureSpans(content)
-	structure, structureRatio := scoreStructureRetention(spans, chunks)
+type ingestionCandidateMetricsRequest struct {
+	content       string
+	document      chunker.SemanticDocument
+	chunks        []chunker.Chunk
+	parents       []chunker.Chunk
+	parentIndexes []int
+	config        types.IngestionChunkingRecommendation
+	scoreConfig   chunker.SplitterConfig
+	validation    ingestionCandidateValidationResult
+}
+
+func ingestionPreviewMetrics(request ingestionCandidateMetricsRequest) ingestionCandidateMetrics {
+	structure := scoreSemanticStructure(request.document, request.chunks)
 	score := types.IngestionCandidateScore{
-		StructureIntegrity: roundScore(structureRatio * structureIntegrityWeight),
-		ChunkSizeBalance:   roundScore(scoreChunkSizeBalance(chunks, scoreConfig.ChunkSize) * chunkSizeBalanceWeight),
-		BoundaryQuality:    roundScore(scoreBoundaryQuality(content, chunks, spans, config.Separators) * boundaryQualityWeight),
-		OverlapEfficiency:  roundScore(scoreOverlapEfficiency(chunks, scoreConfig.ChunkOverlap) * overlapEfficiencyWeight),
-		ParentChild:        roundScore(scoreParentChild(chunks, parents, parentIndexes, config.EnableParentChild) * parentChildWeight),
+		SemanticIntegrity: roundScore(
+			scoreSemanticIntegrity(request.validation) * semanticIntegrityWeight,
+		),
+		BoundaryQuality: roundScore(
+			scoreBoundaryQuality(request) * boundaryQualityWeight,
+		),
+		SizeFit: roundScore(
+			scoreSizeFit(request.chunks, request.scoreConfig.ChunkSize, request.validation.violations) * sizeFitWeight,
+		),
+		ContextEfficiency: roundScore(
+			scoreContextEfficiency(request.chunks, request.validation.contextValid) * contextEfficiencyWeight,
+		),
+		ParentChild: roundScore(scoreParentChild(parentChildScoreRequest{
+			children: request.chunks, parents: request.parents,
+			parentIndexes: request.parentIndexes, enabled: request.config.EnableParentChild,
+		}) * parentChildWeight),
 	}
-	score.Total = roundScore(score.StructureIntegrity + score.ChunkSizeBalance +
-		score.BoundaryQuality + score.OverlapEfficiency + score.ParentChild)
+	score.Total = roundScore(score.SemanticIntegrity + score.BoundaryQuality +
+		score.SizeFit + score.ContextEfficiency + score.ParentChild)
 	return ingestionCandidateMetrics{
-		lengths: ingestionLengthDistribution(chunks), structure: structure, score: score,
+		lengths: ingestionLengthDistribution(request.chunks), structure: structure, score: score,
 	}
 }
 
-func scoreStructureRetention(
-	spans []sourceSpan,
+func scoreSemanticIntegrity(validation ingestionCandidateValidationResult) float64 {
+	ratio := 1.0
+	if validation.atomicEligible == 0 {
+		ratio = 1
+	} else {
+		ratio = float64(validation.atomicRetained) / float64(validation.atomicEligible)
+	}
+	if validation.quality.HeaderlessContinuations > 0 ||
+		containsIngestionViolation(validation.violations, ingestionViolationCodeContextMissing) {
+		ratio *= 0.5
+	}
+	return ratio
+}
+
+func scoreSemanticStructure(
+	document chunker.SemanticDocument,
 	chunks []chunker.Chunk,
-) (types.IngestionStructureMetrics, float64) {
+) types.IngestionStructureMetrics {
 	metrics := types.IngestionStructureMetrics{
 		HeadingRetention: 1, FAQRetention: 1, TableRetention: 1,
 	}
-	kinds := []string{"heading", "faq", "table"}
-	rates := make([]float64, 0, len(kinds))
-	for _, kind := range kinds {
-		total, retained := 0, 0
-		for _, span := range spans {
-			if span.kind != kind {
-				continue
-			}
-			total++
-			if spanContainedByChunk(span, chunks) {
-				retained++
-			}
-		}
+	groups := []struct {
+		name  string
+		kinds map[string]struct{}
+		set   func(float64)
+	}{
+		{name: "heading", kinds: semanticKindSet(chunker.SemanticKindHeading), set: func(value float64) { metrics.HeadingRetention = value }},
+		{name: "faq", kinds: semanticKindSet(chunker.SemanticKindFAQ), set: func(value float64) { metrics.FAQRetention = value }},
+		{name: "table", kinds: semanticKindSet(chunker.SemanticKindTableHeader, chunker.SemanticKindTableRow), set: func(value float64) { metrics.TableRetention = value }},
+	}
+	for _, group := range groups {
+		total, retained := countRetainedSemanticBlocks(document.Blocks, chunks, group.kinds)
 		if total == 0 {
 			continue
 		}
-		rate := float64(retained) / float64(total)
-		metrics.PresentTypes = append(metrics.PresentTypes, kind)
-		rates = append(rates, rate)
-		switch kind {
-		case "heading":
-			metrics.HeadingRetention = roundScore(rate)
-		case "faq":
-			metrics.FAQRetention = roundScore(rate)
-		case "table":
-			metrics.TableRetention = roundScore(rate)
-		}
+		metrics.PresentTypes = append(metrics.PresentTypes, group.name)
+		group.set(roundScore(float64(retained) / float64(total)))
 	}
-	if len(rates) == 0 {
-		return metrics, 1
-	}
-	total := 0.0
-	for _, rate := range rates {
-		total += rate
-	}
-	return metrics, total / float64(len(rates))
+	return metrics
 }
 
-func spanContainedByChunk(span sourceSpan, chunks []chunker.Chunk) bool {
-	for _, current := range chunks {
-		if span.start >= current.Start && span.end <= current.End {
-			return true
+func semanticKindSet(values ...string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
+}
+
+func countRetainedSemanticBlocks(
+	blocks []chunker.SemanticBlock,
+	chunks []chunker.Chunk,
+	kinds map[string]struct{},
+) (int, int) {
+	total, retained := 0, 0
+	for _, block := range blocks {
+		if _, ok := kinds[block.Kind]; !ok {
+			continue
+		}
+		total++
+		if semanticBlockContained(block, chunks) {
+			retained++
 		}
 	}
-	return false
+	return total, retained
 }
 
 func scoreChunkSizeBalance(chunks []chunker.Chunk, target int) float64 {
@@ -112,40 +135,58 @@ func scoreChunkSizeBalance(chunks []chunker.Chunk, target int) float64 {
 	if len(chunks) > 1 {
 		checked = chunks[:len(chunks)-1]
 	}
-	minimum := float64(target) * 0.5
-	maximum := float64(target) * 1.25
-	balanced := 0
+	total := 0.0
 	for _, current := range checked {
 		length := float64(len([]rune(current.Content)))
-		if length >= minimum && length <= maximum {
-			balanced++
+		if length > float64(target) {
+			return 0
 		}
+		total += length
 	}
-	return float64(balanced) / float64(len(checked))
+	mean := total / float64(len(checked))
+	deviation := 0.0
+	for _, current := range checked {
+		deviation += math.Abs(float64(len([]rune(current.Content))) - mean)
+	}
+	penalty := deviation / float64(len(checked)*target)
+	return math.Max(0.75, 1-penalty)
 }
 
-func scoreBoundaryQuality(
-	content string,
-	chunks []chunker.Chunk,
-	spans []sourceSpan,
-	separators []string,
-) float64 {
-	if len(chunks) <= 1 {
+func scoreSizeFit(chunks []chunker.Chunk, target int, violations []string) float64 {
+	if containsIngestionViolation(violations, ingestionViolationChunkSize) ||
+		containsIngestionViolation(violations, ingestionViolationTokenLimit) {
+		return 0
+	}
+	return scoreChunkSizeBalance(chunks, target)
+}
+
+func containsIngestionViolation(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func scoreBoundaryQuality(request ingestionCandidateMetricsRequest) float64 {
+	if len(request.chunks) <= 1 {
 		return 1
 	}
-	boundaries := make(map[int]struct{}, len(spans)*2)
-	for _, span := range spans {
-		boundaries[span.start] = struct{}{}
-		boundaries[span.end] = struct{}{}
+	boundaries := make(map[int]struct{}, len(request.document.Blocks)*2)
+	for _, block := range request.document.Blocks {
+		boundaries[block.Start] = struct{}{}
+		boundaries[block.End] = struct{}{}
 	}
-	runes := []rune(content)
+	runes := []rune(request.content)
 	hits := 0
-	for _, current := range chunks[:len(chunks)-1] {
-		if _, ok := boundaries[current.End]; ok || separatorEndsAt(runes, current.End, separators) {
+	for _, current := range request.chunks[:len(request.chunks)-1] {
+		_, semanticBoundary := boundaries[current.End]
+		if semanticBoundary || separatorEndsAt(runes, current.End, request.config.Separators) {
 			hits++
 		}
 	}
-	return float64(hits) / float64(len(chunks)-1)
+	return float64(hits) / float64(len(request.chunks)-1)
 }
 
 func separatorEndsAt(content []rune, boundary int, separators []string) bool {
@@ -161,117 +202,50 @@ func separatorEndsAt(content []rune, boundary int, separators []string) bool {
 	return false
 }
 
-func scoreOverlapEfficiency(chunks []chunker.Chunk, target int) float64 {
-	if len(chunks) <= 1 {
+func scoreContextEfficiency(chunks []chunker.Chunk, contextValid bool) float64 {
+	if !contextValid || len(chunks) == 0 {
+		return 0
+	}
+	sourceRunes, contextRunes := 0, 0
+	for _, current := range chunks {
+		sourceRunes += len([]rune(current.Content))
+		contextRunes += len([]rune(strings.TrimSpace(current.ContextHeader)))
+	}
+	if contextRunes == 0 {
 		return 1
 	}
-	total := 0.0
-	for index := 1; index < len(chunks); index++ {
-		actual := max(0, chunks[index-1].End-chunks[index].Start)
-		if target == 0 {
-			if actual == 0 {
-				total++
-			}
-			continue
-		}
-		difference := math.Abs(float64(actual-target)) / float64(target)
-		total += math.Max(0, 1-difference)
-	}
-	return total / float64(len(chunks)-1)
+	return float64(sourceRunes) / float64(sourceRunes+contextRunes)
 }
 
-func scoreParentChild(
-	children, parents []chunker.Chunk,
-	parentIndexes []int,
-	enabled bool,
-) float64 {
-	if !enabled {
+type parentChildScoreRequest struct {
+	children      []chunker.Chunk
+	parents       []chunker.Chunk
+	parentIndexes []int
+	enabled       bool
+}
+
+func scoreParentChild(request parentChildScoreRequest) float64 {
+	if !request.enabled {
 		return 1
 	}
-	if len(children) == 0 || len(children) != len(parentIndexes) {
+	if len(request.children) == 0 || len(request.children) != len(request.parentIndexes) {
 		return 0
 	}
 	consistent := 0
-	for index, parentIndex := range parentIndexes {
-		// The production chunker uses -1 for a self-contained child whose
-		// parent would be byte-for-byte identical and therefore is not stored.
+	for index, parentIndex := range request.parentIndexes {
 		if parentIndex == -1 {
 			consistent++
 			continue
 		}
-		if parentIndex < 0 || parentIndex >= len(parents) {
+		if parentIndex < 0 || parentIndex >= len(request.parents) {
 			continue
 		}
-		child, parent := children[index], parents[parentIndex]
+		child, parent := request.children[index], request.parents[parentIndex]
 		if child.Start >= parent.Start && child.End <= parent.End {
 			consistent++
 		}
 	}
-	return float64(consistent) / float64(len(children))
-}
-
-func ingestionStructureSpans(content string) []sourceSpan {
-	lines := ingestionLineSpans(content)
-	runes := []rune(content)
-	spans := make([]sourceSpan, 0)
-	var pendingQuestion *sourceSpan
-	for index := 0; index < len(lines); index++ {
-		line := lines[index]
-		trimmed := strings.TrimSpace(string(runes[line.start:line.end]))
-		if isMarkdownHeading(trimmed) {
-			spans = append(spans, sourceSpan{kind: "heading", start: line.start, end: line.end})
-		}
-		if isQuestionLine(trimmed) {
-			question := line
-			pendingQuestion = &question
-		} else if pendingQuestion != nil && isAnswerLine(trimmed) {
-			spans = append(spans, sourceSpan{kind: "faq", start: pendingQuestion.start, end: line.end})
-			pendingQuestion = nil
-		} else if trimmed != "" {
-			pendingQuestion = nil
-		}
-		if !isTableLine(trimmed) {
-			continue
-		}
-		start := line.start
-		end := line.end
-		for index+1 < len(lines) {
-			next := lines[index+1]
-			nextText := strings.TrimSpace(string(runes[next.start:next.end]))
-			if !isTableLine(nextText) {
-				break
-			}
-			index++
-			end = next.end
-		}
-		spans = append(spans, sourceSpan{kind: "table", start: start, end: end})
-	}
-	return spans
-}
-
-func ingestionLineSpans(content string) []sourceSpan {
-	runes := []rune(content)
-	result := make([]sourceSpan, 0, strings.Count(content, "\n")+1)
-	start := 0
-	for index, current := range runes {
-		if current != '\n' {
-			continue
-		}
-		result = append(result, sourceSpan{start: start, end: index + 1})
-		start = index + 1
-	}
-	if start < len(runes) || len(runes) == 0 {
-		result = append(result, sourceSpan{start: start, end: len(runes)})
-	}
-	return result
-}
-
-func isMarkdownHeading(line string) bool {
-	level := 0
-	for level < len(line) && level < 6 && line[level] == '#' {
-		level++
-	}
-	return level > 0 && len(line) > level && line[level] == ' '
+	return float64(consistent) / float64(len(request.children))
 }
 
 func roundScore(value float64) float64 {

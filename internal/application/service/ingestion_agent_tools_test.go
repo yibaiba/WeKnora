@@ -390,50 +390,67 @@ func TestIngestionCandidateScoresAllNamedDimensions(t *testing.T) {
 	content := "# 标题\nQ: 问题？\nA: 回答。\n|a|b|\n|---|---|\n|1|2|"
 	length := len([]rune(content))
 	chunks := []chunker.Chunk{{Content: content, Start: 0, End: length}}
-	metrics := ingestionPreviewMetrics(
-		content,
-		chunks,
-		nil,
-		nil,
-		ingestionTestConfig(length),
-		chunker.SplitterConfig{ChunkSize: length, ChunkOverlap: 0},
-	)
-	require.Equal(t, structureIntegrityWeight, metrics.score.StructureIntegrity)
-	require.Equal(t, chunkSizeBalanceWeight, metrics.score.ChunkSizeBalance)
+	document, err := chunker.AnalyzeSemanticDocument(content, chunker.SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	metrics := ingestionPreviewMetrics(ingestionCandidateMetricsRequest{
+		content: content, document: document, chunks: chunks,
+		config:      ingestionTestConfig(length),
+		scoreConfig: chunker.SplitterConfig{ChunkSize: length, ChunkOverlap: 0},
+		validation: ingestionCandidateValidationResult{
+			atomicEligible: 4, atomicRetained: 4, contextValid: true,
+		},
+	})
+	require.Equal(t, semanticIntegrityWeight, metrics.score.SemanticIntegrity)
 	require.Equal(t, boundaryQualityWeight, metrics.score.BoundaryQuality)
-	require.Equal(t, overlapEfficiencyWeight, metrics.score.OverlapEfficiency)
+	require.Equal(t, sizeFitWeight, metrics.score.SizeFit)
+	require.Equal(t, contextEfficiencyWeight, metrics.score.ContextEfficiency)
 	require.Equal(t, parentChildWeight, metrics.score.ParentChild)
 	require.Equal(t, 100.0, metrics.score.Total)
 	require.ElementsMatch(t, []string{"heading", "faq", "table"}, metrics.structure.PresentTypes)
 }
 
 func TestIngestionCandidateScoreComponentsPenalizeMismatches(t *testing.T) {
-	spans := []sourceSpan{{kind: "heading", start: 0, end: 10}}
-	_, retained := scoreStructureRetention(spans, []chunker.Chunk{{Start: 0, End: 10}})
-	_, split := scoreStructureRetention(spans, []chunker.Chunk{{Start: 0, End: 5}, {Start: 5, End: 10}})
-	require.Equal(t, 1.0, retained)
-	require.Zero(t, split)
+	require.Equal(t, 1.0, scoreSemanticIntegrity(ingestionCandidateValidationResult{
+		atomicEligible: 1, atomicRetained: 1,
+	}))
+	require.Zero(t, scoreSemanticIntegrity(ingestionCandidateValidationResult{
+		atomicEligible: 1,
+	}))
 
 	balanced := []chunker.Chunk{{Content: strings.Repeat("a", 100)}, {Content: "tail"}}
 	unbalanced := []chunker.Chunk{{Content: strings.Repeat("a", 40)}, {Content: "tail"}}
 	require.Equal(t, 1.0, scoreChunkSizeBalance(balanced, 100))
-	require.Zero(t, scoreChunkSizeBalance(unbalanced, 100))
+	require.Equal(t, 1.0, scoreChunkSizeBalance(unbalanced, 100))
+	require.Zero(t, scoreChunkSizeBalance(
+		[]chunker.Chunk{{Content: strings.Repeat("a", 101)}}, 100,
+	))
 
 	content := "alpha\n\nbeta"
 	goodBoundary := []chunker.Chunk{{Start: 0, End: 7}, {Start: 7, End: len([]rune(content))}}
 	badBoundary := []chunker.Chunk{{Start: 0, End: 5}, {Start: 5, End: len([]rune(content))}}
-	require.Equal(t, 1.0, scoreBoundaryQuality(content, goodBoundary, nil, []string{"\n\n"}))
-	require.Zero(t, scoreBoundaryQuality(content, badBoundary, nil, []string{"\n\n"}))
+	document := chunker.SemanticDocument{ContentLength: len([]rune(content)), Blocks: []chunker.SemanticBlock{
+		{Start: 0, End: 7}, {Start: 7, End: len([]rune(content))},
+	}}
+	require.Equal(t, 1.0, scoreBoundaryQuality(ingestionCandidateMetricsRequest{
+		content: content, document: document, chunks: goodBoundary,
+		config: types.IngestionChunkingRecommendation{Separators: []string{"\n\n"}},
+	}))
+	require.Zero(t, scoreBoundaryQuality(ingestionCandidateMetricsRequest{
+		content: content, document: document, chunks: badBoundary,
+		config: types.IngestionChunkingRecommendation{Separators: []string{"\n\n"}},
+	}))
 
-	matchedOverlap := []chunker.Chunk{{Start: 0, End: 100}, {Start: 80, End: 150}}
-	mismatchedOverlap := []chunker.Chunk{{Start: 0, End: 100}, {Start: 100, End: 150}}
-	require.Equal(t, 1.0, scoreOverlapEfficiency(matchedOverlap, 20))
-	require.Zero(t, scoreOverlapEfficiency(mismatchedOverlap, 20))
+	require.Equal(t, 1.0, scoreContextEfficiency(goodBoundary, true))
+	require.Zero(t, scoreContextEfficiency(goodBoundary, false))
 
 	children := []chunker.Chunk{{Start: 10, End: 20}}
 	parents := []chunker.Chunk{{Start: 0, End: 30}}
-	require.Equal(t, 1.0, scoreParentChild(children, parents, []int{0}, true))
-	require.Zero(t, scoreParentChild(children, parents, []int{1}, true))
+	require.Equal(t, 1.0, scoreParentChild(parentChildScoreRequest{
+		children: children, parents: parents, parentIndexes: []int{0}, enabled: true,
+	}))
+	require.Zero(t, scoreParentChild(parentChildScoreRequest{
+		children: children, parents: parents, parentIndexes: []int{1}, enabled: true,
+	}))
 }
 
 func TestSubmitIngestionDecisionRequiresPreviewAndRejectsDuplicate(t *testing.T) {

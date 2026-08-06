@@ -145,6 +145,7 @@ func TestModelIngestionAdvisorUsesEvidenceOutsideFormerSampleWindows(t *testing.
 	request := validIngestionAdvisorRequest()
 	request.Content = strings.Repeat("常", 5000) + evidenceMarker + strings.Repeat("规", 19000)
 	config := validIngestionRecommendation()
+	config.Strategy = "auto"
 	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
 	require.NoError(t, err)
 	candidateID, err := ingestionCandidateID(normalized)

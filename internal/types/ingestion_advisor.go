@@ -147,12 +147,31 @@ type IngestionStructureMetrics struct {
 }
 
 type IngestionCandidateScore struct {
-	StructureIntegrity float64 `json:"structure_integrity"`
-	ChunkSizeBalance   float64 `json:"chunk_size_balance"`
-	BoundaryQuality    float64 `json:"boundary_quality"`
-	OverlapEfficiency  float64 `json:"overlap_efficiency"`
-	ParentChild        float64 `json:"parent_child"`
-	Total              float64 `json:"total"`
+	SemanticIntegrity float64 `json:"semantic_integrity"`
+	BoundaryQuality   float64 `json:"boundary_quality"`
+	SizeFit           float64 `json:"size_fit"`
+	ContextEfficiency float64 `json:"context_efficiency"`
+	ParentChild       float64 `json:"parent_child"`
+	Total             float64 `json:"total"`
+}
+
+type IngestionStructureQuality struct {
+	OrphanTableRows         int `json:"orphan_table_rows"`
+	HeaderlessContinuations int `json:"headerless_continuations"`
+	SplitAtomicBlocks       int `json:"split_atomic_blocks"`
+	MixedSections           int `json:"mixed_sections"`
+	OversizeAtomicBlocks    int `json:"oversize_atomic_blocks"`
+}
+
+// IngestionChunkStructureDescription deliberately excludes source text,
+// structure identifiers, and positions so previews cannot disclose content.
+type IngestionChunkStructureDescription struct {
+	Index             int      `json:"index"`
+	Kinds             []string `json:"kinds"`
+	SectionDepth      int      `json:"section_depth"`
+	HasContext        bool     `json:"has_context"`
+	TableContinuation bool     `json:"table_continuation"`
+	ParentMapped      bool     `json:"parent_mapped"`
 }
 
 type IngestionTierRejection struct {
@@ -167,16 +186,18 @@ type IngestionChunkerDiagnostics struct {
 }
 
 type IngestionChunkingCandidate struct {
-	ID               string                          `json:"id"`
-	Config           IngestionChunkingRecommendation `json:"config"`
-	ChunkCount       int                             `json:"chunk_count"`
-	ParentChunkCount int                             `json:"parent_chunk_count"`
-	Lengths          IngestionLengthDistribution     `json:"lengths"`
-	Structure        IngestionStructureMetrics       `json:"structure"`
-	Diagnostics      IngestionChunkerDiagnostics     `json:"diagnostics"`
-	Score            IngestionCandidateScore         `json:"score"`
-	HardValid        bool                            `json:"hard_valid"`
-	Violations       []string                        `json:"violations"`
+	ID                string                               `json:"id"`
+	Config            IngestionChunkingRecommendation      `json:"config"`
+	ChunkCount        int                                  `json:"chunk_count"`
+	ParentChunkCount  int                                  `json:"parent_chunk_count"`
+	Lengths           IngestionLengthDistribution          `json:"lengths"`
+	Structure         IngestionStructureMetrics            `json:"structure"`
+	StructureQuality  IngestionStructureQuality            `json:"structure_quality"`
+	BlockDescriptions []IngestionChunkStructureDescription `json:"block_descriptions"`
+	Diagnostics       IngestionChunkerDiagnostics          `json:"diagnostics"`
+	Score             IngestionCandidateScore              `json:"score"`
+	HardValid         bool                                 `json:"hard_valid"`
+	Violations        []string                             `json:"violations"`
 }
 
 // IngestionAnalysis is persisted in knowledge.metadata.ingestion_analysis.
