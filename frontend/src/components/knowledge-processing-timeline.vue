@@ -1023,6 +1023,19 @@ function localizedStatus(status: string): string {
   return localized === key ? status : localized
 }
 
+function ingestionAnalysisForNode(node: SpanNode): IngestionAnalysis | null {
+  if (node.name !== 'document_analysis' || node.status === 'skipped') return null
+  const spanAnalysis = asIngestionAnalysis(node.output)
+  if (spanAnalysis) return spanAnalysis
+  return viewingLatestAttempt.value ? ingestionAnalysis.value : null
+}
+
+function displayStatus(node: SpanNode): string {
+  const analysis = ingestionAnalysisForNode(node)
+  if (node.status === 'done' && analysis?.applied_mode === 'fallback') return 'fallback'
+  return node.status
+}
+
 function documentAnalysisPhase(name: string): string | null {
   const phaseMatch = /^document_analysis\.([a-z_]+)/.exec(name)
   return phaseMatch?.[1] ?? null
@@ -1360,10 +1373,7 @@ const traceMetadata = computed(() => {
 const selectedIngestionAnalysis = computed<IngestionAnalysis | null>(() => {
   const row = selectedRow.value
   if (!row?.isStage || row.node.name !== 'document_analysis') return null
-  if (row.node.status === 'skipped') return null
-  const spanAnalysis = asIngestionAnalysis(row.node.output)
-  if (spanAnalysis) return spanAnalysis
-  return viewingLatestAttempt.value ? ingestionAnalysis.value : null
+  return ingestionAnalysisForNode(row.node)
 })
 
 watch([selectedSpanId, detailTab], () => {
@@ -1388,7 +1398,7 @@ function identityFields(row: FlatRow): IdentityField[] {
   const node = row.node as any
   out.push({ key: 'name', label: t('knowledgeStages.detail.name'), value: rowLabel(row), mono: false, copyable: false })
   out.push({ key: 'kind', label: t('knowledgeStages.detail.kind'), value: rowKindLabel(row), mono: true, copyable: false })
-  out.push({ key: 'status', label: t('knowledgeStages.detail.status'), value: localizedStatus(row.node.status), mono: false, copyable: false })
+  out.push({ key: 'status', label: t('knowledgeStages.detail.status'), value: localizedStatus(displayStatus(row.node)), mono: false, copyable: false })
   if (row.isStage) {
     const idx = stages.value.findIndex((s) => s.name === row.node.name)
     if (idx >= 0) {
@@ -1419,7 +1429,7 @@ const stageBreakdown = computed<StageRowSummary[]>(() => {
   return stages.value.map((s) => ({
     name: s.name,
     label: t(`knowledgeStages.stage.${s.name}`),
-    status: s.status,
+    status: displayStatus(s),
     duration_ms: s.duration_ms,
     pct: typeof s.duration_ms === 'number' && s.duration_ms > 0 ? Math.min(100, (s.duration_ms / total) * 100) : 0,
   }))
@@ -1505,8 +1515,8 @@ const processConfigLines = computed<string[]>(() => {
          ========================================================= -->
     <template v-if="compact">
       <div class="kp-compact-row">
-        <span v-for="s in stages" :key="s.name" class="kp-dot" :class="['kp-dot-' + s.status]"
-          :title="t(`knowledgeStages.stage.${s.name}`) + ' · ' + t(`knowledgeStages.status.${s.status}`)" />
+        <span v-for="s in stages" :key="s.name" class="kp-dot" :class="['kp-dot-' + displayStatus(s)]"
+          :title="t(`knowledgeStages.stage.${s.name}`) + ' · ' + localizedStatus(displayStatus(s))" />
       </div>
       <div class="kp-compact-caption">
         <template v-if="totalMs > 0">
@@ -1676,7 +1686,7 @@ const processConfigLines = computed<string[]>(() => {
                     </button>
                     <span v-else class="kp-tree-toggle-spacer" />
                     <span class="kp-status-dot"
-                      :class="['kp-dot-' + row.node.status, { 'kp-dot-placeholder': isPlaceholder(row.node) }]" />
+                      :class="['kp-dot-' + displayStatus(row.node), { 'kp-dot-placeholder': isPlaceholder(row.node) }]" />
                     <span class="kp-name-text"
                       :class="{ 'kp-name-root': row.isRoot, 'kp-name-mono': !row.isRoot && !row.isStage }">{{
                         rowLabel(row) }}</span>
@@ -1702,7 +1712,7 @@ const processConfigLines = computed<string[]>(() => {
                          span's own end (e.g. async postprocess subspans
                          under a closed stage). Renders behind the solid
                          self-bar so both are visible. -->
-                    <div v-if="wrapStyle(row.node)" class="kp-bar-wrap" :class="['kp-bar-wrap-' + row.node.status]"
+                    <div v-if="wrapStyle(row.node)" class="kp-bar-wrap" :class="['kp-bar-wrap-' + displayStatus(row.node)]"
                       :style="wrapStyle(row.node) || {}">
                       <span class="kp-bar-tip">
                         <span class="kp-bar-tip-name">{{ rowLabel(row) }}</span>
@@ -1713,7 +1723,7 @@ const processConfigLines = computed<string[]>(() => {
                       </span>
                     </div>
                     <div class="kp-bar"
-                      :class="['kp-bar-' + row.node.status, { 'kp-bar-running-anim': row.node.status === 'running' }]"
+                      :class="['kp-bar-' + displayStatus(row.node), { 'kp-bar-running-anim': row.node.status === 'running' }]"
                       :style="barStyle(row.node)">
                       <span class="kp-bar-tip">
                         <span class="kp-bar-tip-name">{{ rowLabel(row) }}</span>
@@ -1722,7 +1732,7 @@ const processConfigLines = computed<string[]>(() => {
                           ? formatDuration(liveElapsedMs(row.node))
                           : formatSpanDuration(row.node) }}</span>
                         <span class="kp-bar-tip-sep">·</span>
-                        <span>{{ localizedStatus(row.node.status) }}</span>
+                        <span>{{ localizedStatus(displayStatus(row.node)) }}</span>
                       </span>
                     </div>
                     <span v-if="barOffsetPct(row.node) !== null && barOffsetMs(row.node) > 0"
@@ -1742,11 +1752,11 @@ const processConfigLines = computed<string[]>(() => {
           <template v-if="selectedRow">
             <div class="kp-detail-head">
               <div class="kp-detail-title">
-                <span class="kp-status-dot kp-detail-dot" :class="['kp-dot-' + selectedRow.node.status]" />
+                <span class="kp-status-dot kp-detail-dot" :class="['kp-dot-' + displayStatus(selectedRow.node)]" />
                 <span class="kp-detail-name">{{ rowLabel(selectedRow) }}</span>
                 <span class="kp-detail-kind">{{ rowKindLabel(selectedRow) }}</span>
-                <span class="kp-status-chip" :class="'kp-chip-' + selectedRow.node.status">
-                  {{ localizedStatus(selectedRow.node.status) }}
+                <span class="kp-status-chip" :class="'kp-chip-' + displayStatus(selectedRow.node)">
+                  {{ localizedStatus(displayStatus(selectedRow.node)) }}
                 </span>
               </div>
               <div class="kp-detail-actions">
@@ -2574,6 +2584,10 @@ const processConfigLines = computed<string[]>(() => {
   background: var(--td-success-color);
 }
 
+.kp-bar-fallback {
+  background: var(--td-warning-color);
+}
+
 .kp-bar-failed {
   background: var(--td-error-color);
 }
@@ -2648,6 +2662,10 @@ const processConfigLines = computed<string[]>(() => {
   border-color: rgba(7, 192, 95, 0.35);
 }
 
+.kp-bar-wrap-fallback {
+  border-color: var(--td-warning-color);
+}
+
 .kp-bar-wrap-failed {
   border-color: rgba(229, 87, 64, 0.5);
 }
@@ -2719,6 +2737,11 @@ const processConfigLines = computed<string[]>(() => {
 /* Status dots (shared with compact mode) */
 .kp-dot-done {
   background: var(--td-success-color);
+}
+
+.kp-dot-fallback {
+  background: var(--td-warning-color);
+  box-shadow: 0 0 0 2px var(--td-warning-color-light);
 }
 
 .kp-dot-running {
@@ -2910,6 +2933,11 @@ const processConfigLines = computed<string[]>(() => {
 .kp-chip-done {
   background: var(--td-success-color-light);
   color: var(--td-success-color);
+}
+
+.kp-chip-fallback {
+  background: var(--td-warning-color-light);
+  color: var(--td-warning-color);
 }
 
 .kp-chip-running {

@@ -67,6 +67,21 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
   <section class="analysis-detail" :aria-label="t('knowledgeStages.analysis.title')">
     <div class="analysis-title">{{ t('knowledgeStages.analysis.title') }}</div>
     <p class="analysis-summary">{{ analysis.summary }}</p>
+    <div v-if="analysis.applied_mode === 'fallback'" class="analysis-fallback" role="status">
+      <t-icon name="error-circle" size="18px" aria-hidden="true" />
+      <div>
+        <strong>{{ t('knowledgeStages.analysis.fallbackTitle') }}</strong>
+        <span>{{ t('knowledgeStages.analysis.fallbackDescription') }}</span>
+      </div>
+    </div>
+    <div v-if="analysis.fallback_reason_codes.length > 0" class="analysis-reasons analysis-fallback-reasons">
+      <span class="analysis-subtitle">{{ t('knowledgeStages.analysis.fallbackReasonCodesLabel') }}</span>
+      <div class="analysis-reason-list">
+        <code v-for="reason in analysis.fallback_reason_codes" :key="reason" class="analysis-reason">
+          {{ reason }}
+        </code>
+      </div>
+    </div>
     <dl class="analysis-profile">
       <div>
         <dt>{{ t('knowledgeStages.analysis.documentKindLabel') }}</dt>
@@ -140,6 +155,34 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
   line-height: 1.6;
 }
 
+.analysis-fallback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--td-warning-color-3);
+  border-radius: var(--td-radius-medium);
+  background: var(--td-warning-color-light);
+  color: var(--td-warning-color);
+}
+
+.analysis-fallback > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.analysis-fallback strong {
+  font-size: 13px;
+}
+
+.analysis-fallback span {
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .analysis-profile {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -177,6 +220,11 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
 .analysis-mono,
 .analysis-reason {
   font-family: var(--app-font-family-mono);
+}
+
+.analysis-fallback-reasons .analysis-reason {
+  background: var(--td-warning-color-light);
+  color: var(--td-warning-color);
 }
 
 .analysis-reasons {

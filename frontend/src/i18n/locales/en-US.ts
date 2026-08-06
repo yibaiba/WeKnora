@@ -760,6 +760,9 @@ export default {
     },
     analysis: {
       title: 'Document analysis result',
+      fallbackTitle: 'Smart chunking fell back',
+      fallbackDescription: 'All three candidates failed structural validation, so the original knowledge base chunking config was applied.',
+      fallbackReasonCodesLabel: 'Fallback reasons',
       documentKindLabel: 'Document profile',
       confidenceLabel: 'Confidence',
       contentModeLabel: 'Content mode label',
@@ -775,10 +778,18 @@ export default {
       selectionReasonCodesLabel: 'Selection reasons',
       candidateNumber: 'Candidate {n}',
       candidateSelected: 'Candidate {n} · Selected',
+      candidateInvalid: 'Failed structural validation',
       totalScore: 'Candidate total score',
       chunkCount: 'Chunk count',
       lengthP50P95: 'Length P50 / P95',
       selectedTier: 'Chunking tier',
+      structureQuality: {
+        orphan_table_rows: 'Orphan table rows',
+        headerless_continuations: 'Headerless continuations',
+        split_atomic_blocks: 'Split atomic blocks',
+        mixed_sections: 'Mixed-section chunks',
+        oversize_atomic_blocks: 'Oversize atomic blocks'
+      },
       chunkConfigShort: 'Strategy · size / overlap',
       scoreBreakdown: 'Five-dimension score',
       toolStepsTitle: 'Tool steps',
@@ -793,15 +804,16 @@ export default {
         submit_decision: 'Submit chunking decision'
       },
       score: {
-        structure_integrity: 'Structure integrity',
-        chunk_size_balance: 'Chunk size balance',
+        semantic_integrity: 'Semantic integrity',
         boundary_quality: 'Boundary quality',
-        overlap_efficiency: 'Overlap efficiency',
+        size_fit: 'Size fit',
+        context_efficiency: 'Context efficiency',
         parent_child: 'Parent-child consistency'
       },
       tool: {
         preview_ingestion_chunking: 'Preview real chunking',
         submit_ingestion_decision: 'Submit chunking decision',
+        submit_ingestion_fallback: 'Submit ordinary chunking fallback',
         thinking: 'Evaluate and refine',
         knowledge_search: 'Search knowledge',
         grep_chunks: 'Search keywords',
@@ -863,6 +875,7 @@ export default {
       running: 'Running',
       finalizing: 'Finalizing',
       done: 'Done',
+      fallback: 'Fell back',
       failed: 'Failed',
       skipped: 'Skipped',
       cancelled: 'Cancelled'

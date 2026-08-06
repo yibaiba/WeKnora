@@ -5081,6 +5081,7 @@ export default {
       running: 'Выполняется',
       finalizing: 'Оптимизация',
       done: 'Готово',
+      fallback: 'Резервный режим',
       failed: 'Ошибка',
       skipped: 'Пропущено',
       cancelled: 'Отменено'
@@ -5123,6 +5124,9 @@ export default {
     },
     analysis: {
       title: 'Результат анализа документа',
+      fallbackTitle: 'Включён резервный режим разбиения',
+      fallbackDescription: 'Все три варианта не прошли структурную проверку, поэтому применена исходная конфигурация базы знаний.',
+      fallbackReasonCodesLabel: 'Причины перехода',
       documentKindLabel: 'Профиль документа',
       confidenceLabel: 'Уверенность',
       contentModeLabel: 'Метка режима содержимого',
@@ -5138,10 +5142,18 @@ export default {
       selectionReasonCodesLabel: 'Причины выбора',
       candidateNumber: 'Кандидат {n}',
       candidateSelected: 'Кандидат {n} · Выбран',
+      candidateInvalid: 'Структурная проверка не пройдена',
       totalScore: 'Итоговая оценка кандидата',
       chunkCount: 'Количество чанков',
       lengthP50P95: 'Длина P50 / P95',
       selectedTier: 'Уровень разбиения',
+      structureQuality: {
+        orphan_table_rows: 'Изолированные строки таблицы',
+        headerless_continuations: 'Продолжения без заголовка',
+        split_atomic_blocks: 'Разделённые атомарные блоки',
+        mixed_sections: 'Смешанные разделы',
+        oversize_atomic_blocks: 'Слишком большие атомарные блоки'
+      },
       chunkConfigShort: 'Стратегия · размер / перекрытие',
       scoreBreakdown: 'Оценка по пяти критериям',
       toolStepsTitle: 'Шаги инструментов',
@@ -5156,15 +5168,16 @@ export default {
         submit_decision: 'Отправка решения о разбиении'
       },
       score: {
-        structure_integrity: 'Целостность структуры',
-        chunk_size_balance: 'Баланс размеров чанков',
+        semantic_integrity: 'Семантическая целостность',
         boundary_quality: 'Качество границ',
-        overlap_efficiency: 'Эффективность перекрытия',
+        size_fit: 'Соответствие размера',
+        context_efficiency: 'Эффективность контекста',
         parent_child: 'Согласованность родитель–потомок'
       },
       tool: {
         preview_ingestion_chunking: 'Предпросмотр реального разбиения',
         submit_ingestion_decision: 'Отправить решение о разбиении',
+        submit_ingestion_fallback: 'Применить резервное обычное разбиение',
         thinking: 'Оценка и корректировка',
         knowledge_search: 'Поиск по знаниям',
         grep_chunks: 'Поиск ключевых слов',

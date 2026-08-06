@@ -5081,6 +5081,7 @@ export default {
       running: '진행 중',
       finalizing: '최적화 중',
       done: '완료',
+      fallback: '폴백됨',
       failed: '실패',
       skipped: '건너뜀',
       cancelled: '취소됨'
@@ -5123,6 +5124,9 @@ export default {
     },
     analysis: {
       title: '문서 분석 결과',
+      fallbackTitle: '스마트 청킹이 폴백됨',
+      fallbackDescription: '세 후보가 모두 구조 검증을 통과하지 못해 지식베이스의 기존 일반 청킹 설정을 적용했습니다.',
+      fallbackReasonCodesLabel: '폴백 이유',
       documentKindLabel: '문서 프로필',
       confidenceLabel: '신뢰도',
       contentModeLabel: '콘텐츠 모드 라벨',
@@ -5138,10 +5142,18 @@ export default {
       selectionReasonCodesLabel: '선택 이유',
       candidateNumber: '후보 {n}',
       candidateSelected: '후보 {n} · 선택됨',
+      candidateInvalid: '구조 검증 실패',
       totalScore: '후보 총점',
       chunkCount: '청크 수',
       lengthP50P95: '길이 P50 / P95',
       selectedTier: '청킹 계층',
+      structureQuality: {
+        orphan_table_rows: '고립된 표 행',
+        headerless_continuations: '헤더 없는 연속 블록',
+        split_atomic_blocks: '분할된 원자 블록',
+        mixed_sections: '혼합 섹션 블록',
+        oversize_atomic_blocks: '초과 크기 원자 블록'
+      },
       chunkConfigShort: '전략 · 크기 / 겹침',
       scoreBreakdown: '5개 항목 점수',
       toolStepsTitle: '도구 단계',
@@ -5156,15 +5168,16 @@ export default {
         submit_decision: '청킹 결정 제출'
       },
       score: {
-        structure_integrity: '구조 무결성',
-        chunk_size_balance: '청크 크기 균형',
+        semantic_integrity: '의미 무결성',
         boundary_quality: '경계 품질',
-        overlap_efficiency: '겹침 효율',
+        size_fit: '크기 적합성',
+        context_efficiency: '컨텍스트 효율',
         parent_child: '부모-자식 일관성'
       },
       tool: {
         preview_ingestion_chunking: '실제 청킹 미리보기',
         submit_ingestion_decision: '청킹 결정 제출',
+        submit_ingestion_fallback: '일반 청킹 폴백 제출',
         thinking: '평가 및 수정',
         knowledge_search: '지식 검색',
         grep_chunks: '키워드 검색',

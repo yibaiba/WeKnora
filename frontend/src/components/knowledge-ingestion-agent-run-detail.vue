@@ -14,12 +14,20 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const scoreDimensions: Array<{ key: keyof IngestionCandidateScore; weight: number }> = [
-  { key: 'structure_integrity', weight: 40 },
-  { key: 'chunk_size_balance', weight: 25 },
-  { key: 'boundary_quality', weight: 15 },
-  { key: 'overlap_efficiency', weight: 10 },
-  { key: 'parent_child', weight: 10 },
+  { key: 'semantic_integrity', weight: 50 },
+  { key: 'boundary_quality', weight: 20 },
+  { key: 'size_fit', weight: 15 },
+  { key: 'context_efficiency', weight: 10 },
+  { key: 'parent_child', weight: 5 },
 ]
+
+const structureQualityKeys = [
+  'orphan_table_rows',
+  'headerless_continuations',
+  'split_atomic_blocks',
+  'mixed_sections',
+  'oversize_atomic_blocks',
+] as const
 
 const phaseKeys = [
   'analyze_document',
@@ -59,7 +67,11 @@ function phaseStatus(phase: typeof phaseKeys[number]): string {
   const steps = props.analysis.agent_run.steps || []
   if (phase === 'analyze_document') return 'done'
   if (phase === 'evaluate_and_refine') return props.analysis.candidates.length > 0 ? 'done' : 'pending'
-  if (phase === 'submit_decision') return props.analysis.selected_candidate_id ? 'done' : 'pending'
+  if (phase === 'submit_decision') {
+    return props.analysis.selected_candidate_id || props.analysis.applied_mode === 'fallback'
+      ? 'done'
+      : 'pending'
+  }
   const matching = steps.filter(step => stepPhase(step) === phase)
   if (matching.length === 0) return phase === 'readonly_tools' ? 'skipped' : 'pending'
   return matching.some(step => step.status === 'failed') ? 'failed' : 'done'
@@ -67,7 +79,9 @@ function phaseStatus(phase: typeof phaseKeys[number]): string {
 
 function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
   if (step.tool_name === 'preview_ingestion_chunking') return 'preview_candidates'
-  if (step.tool_name === 'submit_ingestion_decision') return 'submit_decision'
+  if (step.tool_name === 'submit_ingestion_decision' || step.tool_name === 'submit_ingestion_fallback') {
+    return 'submit_decision'
+  }
   if (step.tool_name === 'thinking') return 'evaluate_and_refine'
   return 'readonly_tools'
 }
@@ -105,12 +119,18 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
           v-for="(candidate, index) in analysis.candidates"
           :key="candidate.id"
           class="candidate-card"
-          :class="{ 'candidate-card--selected': isSelected(candidate) }"
+          :class="{
+            'candidate-card--selected': isSelected(candidate),
+            'candidate-card--invalid': !candidate.hard_valid,
+          }"
         >
           <header class="candidate-head">
             <div>
               <strong>{{ candidateTitle(candidate, index) }}</strong>
               <code>{{ candidate.id }}</code>
+              <span v-if="!candidate.hard_valid" class="candidate-validity">
+                {{ t('knowledgeStages.analysis.candidateInvalid') }}
+              </span>
             </div>
             <div class="candidate-score">
               <span>{{ formatScore(candidate.score.total) }}</span>
@@ -140,6 +160,12 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
               <dd>{{ candidate.config.strategy }} · {{ candidate.config.chunk_size }} / {{ candidate.config.chunk_overlap }}</dd>
             </div>
           </dl>
+          <dl v-if="analysis.applied_mode === 'fallback'" class="candidate-quality">
+            <div v-for="key in structureQualityKeys" :key="key">
+              <dt>{{ t(`knowledgeStages.analysis.structureQuality.${key}`) }}</dt>
+              <dd>{{ candidate.structure_quality[key] }}</dd>
+            </div>
+          </dl>
           <table class="candidate-score-table">
             <caption>{{ t('knowledgeStages.analysis.scoreBreakdown') }}</caption>
             <tbody>
@@ -149,7 +175,7 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
               </tr>
             </tbody>
           </table>
-          <p v-if="candidate.violations.length > 0" class="candidate-violations" role="alert">
+          <p v-if="candidate.violations.length > 0" class="candidate-violations" role="note">
             {{ candidate.violations.join(' · ') }}
           </p>
         </article>
@@ -284,6 +310,10 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
   box-shadow: inset 3px 0 0 var(--td-brand-color);
 }
 
+.candidate-card--invalid {
+  border-color: var(--td-warning-color-3);
+}
+
 .candidate-head > div:first-child {
   display: flex;
   flex-direction: column;
@@ -295,6 +325,13 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
   overflow-wrap: anywhere;
   color: var(--td-text-color-placeholder);
   font-size: 12px;
+}
+
+.candidate-validity {
+  margin-top: 4px;
+  color: var(--td-warning-color);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .candidate-score {
@@ -313,6 +350,41 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin: 10px 0;
+}
+
+.candidate-quality {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--td-warning-color-3);
+  border-radius: var(--td-radius-default);
+  background: var(--td-warning-color-light);
+}
+
+.candidate-quality div {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.candidate-quality dt,
+.candidate-quality dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.candidate-quality dt {
+  color: var(--td-text-color-secondary);
+}
+
+.candidate-quality dd {
+  color: var(--td-warning-color);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .candidate-metrics div {
@@ -345,7 +417,7 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
 
 .candidate-violations {
   margin: 8px 0 0;
-  color: var(--td-error-color);
+  color: var(--td-warning-color);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -374,6 +446,7 @@ function stepPhase(step: IngestionAgentStep): typeof phaseKeys[number] {
 
 @media (max-width: 640px) {
   .candidate-list { grid-template-columns: 1fr; }
+  .candidate-quality { grid-template-columns: 1fr; }
   .tool-step-list li { flex-wrap: wrap; }
 }
 </style>

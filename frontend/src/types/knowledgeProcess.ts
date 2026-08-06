@@ -78,12 +78,29 @@ export interface IngestionChunkingRecommendation {
 }
 
 export interface IngestionCandidateScore {
-  structure_integrity: number
-  chunk_size_balance: number
+  semantic_integrity: number
   boundary_quality: number
-  overlap_efficiency: number
+  size_fit: number
+  context_efficiency: number
   parent_child: number
   total: number
+}
+
+export interface IngestionStructureQuality {
+  orphan_table_rows: number
+  headerless_continuations: number
+  split_atomic_blocks: number
+  mixed_sections: number
+  oversize_atomic_blocks: number
+}
+
+export interface IngestionChunkStructureDescription {
+  index: number
+  kinds: string[]
+  section_depth: number
+  has_context: boolean
+  table_continuation: boolean
+  parent_mapped: boolean
 }
 
 export interface IngestionChunkingCandidate {
@@ -104,6 +121,8 @@ export interface IngestionChunkingCandidate {
     faq_retention: number
     table_retention: number
   }
+  structure_quality: IngestionStructureQuality
+  block_descriptions: IngestionChunkStructureDescription[]
   diagnostics: {
     selected_tier: string
     tier_chain: string[]
@@ -136,6 +155,8 @@ export interface IngestionAgentRun {
 }
 
 export interface IngestionAnalysis {
+  applied_mode: 'smart' | 'fallback'
+  fallback_reason_codes: string[]
   document_kind: string
   confidence: number
   recommended_content_mode: string

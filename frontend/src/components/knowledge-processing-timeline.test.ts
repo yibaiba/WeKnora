@@ -52,6 +52,8 @@ test('counts skipped stages in the completed stage total', () => {
 
 test('renders every persisted ingestion analysis field and compares chunking values', () => {
   for (const field of [
+    'applied_mode',
+    'fallback_reason_codes',
     'document_kind',
     'confidence',
     'recommended_content_mode',
@@ -83,10 +85,10 @@ test('renders only structured ingestion phases, candidate scores, and redacted t
     assert.match(agentRunDetail, new RegExp(phase))
   }
   for (const score of [
-    'structure_integrity',
-    'chunk_size_balance',
+    'semantic_integrity',
     'boundary_quality',
-    'overlap_efficiency',
+    'size_fit',
+    'context_efficiency',
     'parent_child',
   ]) {
     assert.match(agentRunDetail, new RegExp(score))
@@ -105,6 +107,8 @@ test('validates persisted candidate and agent-run shapes before rendering', () =
     'p95',
     'tier_chain',
     'rejected',
+    'structure_quality',
+    'block_descriptions',
     'available_tools',
     'warnings',
     'steps',
@@ -115,6 +119,45 @@ test('validates persisted candidate and agent-run shapes before rendering', () =
   assert.match(analysisNormalizer, /run\.warnings\.filter\(isAgentWarning\)/)
   assert.match(analysisNormalizer, /run\.steps\.filter\(isAgentStep\)/)
   assert.doesNotMatch(analysisNormalizer, /thought|reasoning_content|raw_arguments|raw_output/i)
+})
+
+test('renders fallback analysis as a warning state with redacted structural statistics', () => {
+  const displayStatus = source.slice(
+    source.indexOf('function ingestionAnalysisForNode'),
+    source.indexOf('function documentAnalysisPhase'),
+  )
+
+  assert.match(displayStatus, /analysis\?\.applied_mode === 'fallback'/)
+  assert.match(source, /kp-dot-' \+ displayStatus/)
+  assert.match(source, /kp-bar-' \+ displayStatus/)
+  assert.match(source, /\.kp-dot-fallback/)
+  assert.match(source, /\.kp-bar-fallback/)
+  assert.match(analysisDetail, /analysis\.applied_mode === 'fallback'/)
+  assert.match(analysisDetail, /analysis\.fallback_reason_codes/)
+  assert.match(agentRunDetail, /candidate\.structure_quality\[key\]/)
+  assert.match(agentRunDetail, /submit_ingestion_fallback/)
+  for (const locale of localeSources) {
+    for (const key of [
+      'fallbackTitle',
+      'fallbackDescription',
+      'fallbackReasonCodesLabel',
+      'candidateInvalid',
+      'orphan_table_rows',
+      'headerless_continuations',
+      'split_atomic_blocks',
+      'mixed_sections',
+      'oversize_atomic_blocks',
+    ]) {
+      assert.match(locale, new RegExp(`${key}:`))
+    }
+  }
+})
+
+test('normalizes historical smart analyses and legacy candidate scores', () => {
+  assert.match(analysisNormalizer, /analysis\.applied_mode === 'fallback' \? 'fallback' : 'smart'/)
+  assert.match(analysisNormalizer, /LEGACY_SCORE_KEYS/)
+  assert.match(analysisNormalizer, /semantic_integrity: score\.structure_integrity/)
+  assert.match(analysisNormalizer, /context_efficiency: score\.overlap_efficiency/)
 })
 
 test('localizes every structured ingestion failure category in all supported locales', () => {
@@ -184,10 +227,10 @@ test('localizes document analysis child spans from their redacted phase identifi
 
 test('does not reuse stale analysis metadata for a skipped latest attempt', () => {
   const selectedAnalysis = source.slice(
-    source.indexOf('const selectedIngestionAnalysis'),
+    source.indexOf('function ingestionAnalysisForNode'),
     source.indexOf('watch([selectedSpanId, detailTab]'),
   )
 
-  assert.match(selectedAnalysis, /row\.node\.status === 'skipped'/)
+  assert.match(selectedAnalysis, /node\.status === 'skipped'/)
   assert.match(selectedAnalysis, /return viewingLatestAttempt\.value \? ingestionAnalysis\.value : null/)
 })

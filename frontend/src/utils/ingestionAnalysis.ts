@@ -9,12 +9,27 @@ import type {
 const CANDIDATE_LENGTH_KEYS = ['minimum', 'maximum', 'average', 'p50', 'p95'] as const
 const STRUCTURE_SCORE_KEYS = ['heading_retention', 'faq_retention', 'table_retention'] as const
 const SCORE_KEYS = [
+  'semantic_integrity',
+  'boundary_quality',
+  'size_fit',
+  'context_efficiency',
+  'parent_child',
+  'total',
+] as const
+const LEGACY_SCORE_KEYS = [
   'structure_integrity',
   'chunk_size_balance',
   'boundary_quality',
   'overlap_efficiency',
   'parent_child',
   'total',
+] as const
+const STRUCTURE_QUALITY_KEYS = [
+  'orphan_table_rows',
+  'headerless_continuations',
+  'split_atomic_blocks',
+  'mixed_sections',
+  'oversize_atomic_blocks',
 ] as const
 
 function isFiniteNumber(value: unknown): value is number {
@@ -57,23 +72,60 @@ function hasCandidateDiagnostics(candidate: Record<string, unknown>): boolean {
   })
 }
 
-function hasCandidateScore(candidate: Record<string, unknown>): boolean {
+function normalizeCandidateScore(candidate: Record<string, unknown>): IngestionChunkingCandidate['score'] | null {
   const score = candidate.score as Record<string, unknown> | undefined
-  return !!score && SCORE_KEYS.every(key => isFiniteNumber(score[key]))
+  if (!score) return null
+  if (SCORE_KEYS.every(key => isFiniteNumber(score[key]))) {
+    return score as unknown as IngestionChunkingCandidate['score']
+  }
+  if (!LEGACY_SCORE_KEYS.every(key => isFiniteNumber(score[key]))) return null
+  return {
+    semantic_integrity: score.structure_integrity as number,
+    boundary_quality: score.boundary_quality as number,
+    size_fit: score.chunk_size_balance as number,
+    context_efficiency: score.overlap_efficiency as number,
+    parent_child: score.parent_child as number,
+    total: score.total as number,
+  }
 }
 
-function isIngestionCandidate(value: unknown): value is IngestionChunkingCandidate {
+function normalizeStructureQuality(value: unknown): IngestionChunkingCandidate['structure_quality'] {
+  const quality = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  return Object.fromEntries(STRUCTURE_QUALITY_KEYS.map(key => [
+    key,
+    isFiniteNumber(quality[key]) ? quality[key] : 0,
+  ])) as unknown as IngestionChunkingCandidate['structure_quality']
+}
+
+function isBlockDescription(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
+  const description = value as Record<string, unknown>
+  return isFiniteNumber(description.index) && isStringArray(description.kinds) &&
+    isFiniteNumber(description.section_depth) && typeof description.has_context === 'boolean' &&
+    typeof description.table_continuation === 'boolean' && typeof description.parent_mapped === 'boolean'
+}
+
+function normalizeIngestionCandidate(value: unknown): IngestionChunkingCandidate | null {
+  if (!value || typeof value !== 'object') return null
   const candidate = value as Record<string, unknown>
-  return typeof candidate.id === 'string' &&
+  const valid = typeof candidate.id === 'string' &&
     isChunkingRecommendation(candidate.config) &&
     isFiniteNumber(candidate.chunk_count) &&
     isFiniteNumber(candidate.parent_chunk_count) &&
     typeof candidate.hard_valid === 'boolean' &&
     isStringArray(candidate.violations) &&
     hasCandidateMetrics(candidate) &&
-    hasCandidateDiagnostics(candidate) &&
-    hasCandidateScore(candidate)
+    hasCandidateDiagnostics(candidate)
+  const score = normalizeCandidateScore(candidate)
+  if (!valid || !score) return null
+  return {
+    ...candidate,
+    score,
+    structure_quality: normalizeStructureQuality(candidate.structure_quality),
+    block_descriptions: Array.isArray(candidate.block_descriptions)
+      ? candidate.block_descriptions.filter(isBlockDescription)
+      : [],
+  } as unknown as IngestionChunkingCandidate
 }
 
 function isAgentWarning(value: unknown): value is IngestionAgentRun['warnings'][number] {
@@ -128,11 +180,15 @@ export function asIngestionAnalysis(value: unknown): IngestionAnalysis | null {
   if (!hasAnalysisProfile(analysis)) return null
   if (!isChunkingRecommendation(analysis.recommended_chunking)) return null
   if (!isChunkingRecommendation(analysis.applied_chunking)) return null
-  const candidates = Array.isArray(analysis.candidates) && analysis.candidates.every(isIngestionCandidate)
-    ? analysis.candidates
+  const candidates = Array.isArray(analysis.candidates)
+    ? analysis.candidates.map(normalizeIngestionCandidate).filter(candidate => candidate !== null)
     : []
   return {
     ...analysis,
+    applied_mode: analysis.applied_mode === 'fallback' ? 'fallback' : 'smart',
+    fallback_reason_codes: isStringArray(analysis.fallback_reason_codes)
+      ? analysis.fallback_reason_codes
+      : [],
     candidates,
     selected_candidate_id: typeof analysis.selected_candidate_id === 'string'
       ? analysis.selected_candidate_id

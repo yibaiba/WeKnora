@@ -5081,6 +5081,7 @@ export default {
       running: '进行中',
       finalizing: '优化中',
       done: '已完成',
+      fallback: '已回退',
       failed: '失败',
       skipped: '已跳过',
       cancelled: '已取消'
@@ -5123,6 +5124,9 @@ export default {
     },
     analysis: {
       title: '文档分析结果',
+      fallbackTitle: '智能分块已回退',
+      fallbackDescription: '三个候选均未通过结构校验，已使用知识库原始普通分块配置。',
+      fallbackReasonCodesLabel: '回退原因',
       documentKindLabel: '文档画像',
       confidenceLabel: '置信度',
       contentModeLabel: '内容模式标注',
@@ -5138,10 +5142,18 @@ export default {
       selectionReasonCodesLabel: '选择原因',
       candidateNumber: '候选 {n}',
       candidateSelected: '候选 {n} · 已选择',
+      candidateInvalid: '未通过结构校验',
       totalScore: '候选总分',
       chunkCount: '块数量',
       lengthP50P95: '长度 P50 / P95',
       selectedTier: '切分层级',
+      structureQuality: {
+        orphan_table_rows: '孤立表格行',
+        headerless_continuations: '缺少表头的续块',
+        split_atomic_blocks: '被拆分的原子块',
+        mixed_sections: '混合章节块',
+        oversize_atomic_blocks: '超长原子块'
+      },
       chunkConfigShort: '策略 · 大小 / 重叠',
       scoreBreakdown: '五维评分',
       toolStepsTitle: '工具步骤',
@@ -5156,15 +5168,16 @@ export default {
         submit_decision: '提交切分决策'
       },
       score: {
-        structure_integrity: '结构完整性',
-        chunk_size_balance: '块大小平衡',
+        semantic_integrity: '语义完整性',
         boundary_quality: '边界质量',
-        overlap_efficiency: '重叠效率',
+        size_fit: '块长适配',
+        context_efficiency: '上下文重复效率',
         parent_child: '父子一致性'
       },
       tool: {
         preview_ingestion_chunking: '预览真实切分',
         submit_ingestion_decision: '提交切分决策',
+        submit_ingestion_fallback: '提交普通分块回退',
         thinking: '评估与修正',
         knowledge_search: '知识检索',
         grep_chunks: '关键词检索',
