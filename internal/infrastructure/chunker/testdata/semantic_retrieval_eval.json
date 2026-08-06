@@ -1,0 +1,49 @@
+{
+  "chunk_size": 120,
+  "chunk_overlap": 16,
+  "markdown": "# Release Verification\n\n## Scope\nThe release covers account access, exports, and scheduled maintenance.\nThe calibration interval remains thirty days for all regional sensors.\n\n## Interface Checks\n| Case | Category | Result |\n| --- | --- | --- |\n| TC-LOGIN | Authentication | Pass |\n| TC-EXPORT | Data Export | Pass |\n| TC-AUDIT | Audit Trail | Pass |\n\n## Performance\nRecord ID: PERF-001\nCategory: Throughput\nResult: Pass\nNotes: Sustained throughput remained above the target.\n\nRecord ID: PERF-002\nCategory: Latency\nResult: Pass\nNotes: Tail latency remained below the limit.\n\n## Operations FAQ\nQ: FAQ-ROLLBACK When is rollback approval required?\nA: Approval is required before the rollback window opens.\n\nQ: FAQ-OWNER Who owns the maintenance notice?\nA: The operations lead publishes the notice.\n\n## Retry Example\n```go\nfunc RetryTimeout() error {\n    return errors.New(\"timeout\")\n}\n```\n\n## Retention\nThe retention schedule keeps audit artifacts for ninety days.\nThe archive verification job runs every Friday.\n\n## Closing Notes\nRegional owners confirm the checklist after deployment.\nThe support handoff includes the incident contact matrix.\n",
+  "queries": [
+    {
+      "class": "structure",
+      "query": "Authentication Result",
+      "marker": "TC-LOGIN",
+      "required_context": "| Case | Category | Result |"
+    },
+    {
+      "class": "structure",
+      "query": "Throughput sustained target",
+      "marker": "PERF-001",
+      "required_context": "Record ID: PERF-001"
+    },
+    {
+      "class": "structure",
+      "query": "rollback approval window",
+      "marker": "FAQ-ROLLBACK",
+      "required_context": "A: Approval is required"
+    },
+    {
+      "class": "structure",
+      "query": "RetryTimeout timeout",
+      "marker": "RetryTimeout",
+      "required_context": "```go"
+    },
+    {
+      "class": "ordinary",
+      "query": "calibration interval sensors",
+      "marker": "calibration interval",
+      "required_context": ""
+    },
+    {
+      "class": "ordinary",
+      "query": "retention schedule audit artifacts",
+      "marker": "retention schedule",
+      "required_context": ""
+    },
+    {
+      "class": "ordinary",
+      "query": "support handoff contact matrix",
+      "marker": "support handoff",
+      "required_context": ""
+    }
+  ]
+}
