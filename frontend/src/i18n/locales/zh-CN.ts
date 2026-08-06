@@ -2376,6 +2376,10 @@ export default {
         openai: {
           label: 'OpenAI',
           description: 'gpt-5.2, gpt-5-mini, etc.'
+        },
+        ollama_cloud: {
+          label: 'Ollama Cloud',
+          description: '通过 OpenAI 兼容接口使用 Ollama 云端托管模型'
         }
       },
       validation: {

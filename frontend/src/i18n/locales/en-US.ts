@@ -3607,6 +3607,10 @@ export default {
           label: 'OpenAI',
           description: 'gpt-5.2, gpt-5-mini, etc.'
         },
+        ollama_cloud: {
+          label: 'Ollama Cloud',
+          description: 'Cloud-hosted Ollama models via the OpenAI-compatible API'
+        },
         anthropic: {
           label: 'Anthropic',
           description: 'Claude models via native Anthropic Messages API'

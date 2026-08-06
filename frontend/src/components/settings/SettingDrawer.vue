@@ -161,9 +161,10 @@ const loadStoredWidth = (): number | null => {
 // User's persisted width (px) wins over the prop default.
 const userWidthPx = ref<number | null>(loadStoredWidth())
 
-const effectiveWidth = computed(() =>
-  userWidthPx.value != null ? `${userWidthPx.value}px` : props.width
-)
+const effectiveWidth = computed(() => {
+  const preferredWidth = userWidthPx.value != null ? `${userWidthPx.value}px` : props.width
+  return `min(${preferredWidth}, 100vw)`
+})
 
 const drawerWidthPx = computed(() =>
   userWidthPx.value ?? parseWidthToPx(props.width)
@@ -482,5 +483,11 @@ const handleCancel = () => {
 
 .t-drawer.setting-drawer--resizing .t-drawer__content {
   transition: none !important;
+}
+
+@media (max-width: 479px) {
+  .setting-drawer-resize-handle {
+    display: none;
+  }
 }
 </style>

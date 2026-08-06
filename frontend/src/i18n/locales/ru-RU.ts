@@ -2376,6 +2376,10 @@ export default {
         openai: {
           label: 'OpenAI',
           description: 'gpt-5.2, gpt-5-mini, etc.'
+        },
+        ollama_cloud: {
+          label: 'Ollama Cloud',
+          description: 'Облачные модели Ollama через OpenAI-совместимый API'
         }
       },
       validation: {

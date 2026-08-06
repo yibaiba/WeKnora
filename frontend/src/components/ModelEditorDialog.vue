@@ -540,6 +540,16 @@ const fallbackProviderOptions = computed(() => [
     modelTypes: ['chat', 'embedding', 'vllm', 'asr']
   },
   {
+    value: 'ollama_cloud',
+    label: t('model.editor.providers.ollama_cloud.label'),
+    defaultUrls: {
+      chat: 'https://ollama.com/v1',
+      vllm: 'https://ollama.com/v1'
+    },
+    description: t('model.editor.providers.ollama_cloud.description'),
+    modelTypes: ['chat', 'vllm']
+  },
+  {
     value: 'azure_openai',
     label: t('model.editor.providers.azure_openai.label'),
     defaultUrls: {
@@ -2514,6 +2524,18 @@ const handleCancel = () => {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+  }
+}
+
+@media (max-width: 479px) {
+  .provider-select-popup .t-popup__content {
+    width: calc(100vw - 12px) !important;
+    max-width: calc(100vw - 12px);
+  }
+
+  .provider-select-popup .provider-option .provider-desc {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 </style>
