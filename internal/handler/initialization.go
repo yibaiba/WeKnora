@@ -1918,18 +1918,23 @@ func (h *InitializationHandler) checkChatModelConnection(
 		return false, fmt.Sprintf("创建聊天实例失败: %v", err)
 	}
 
+	strictProbe := isOllamaCloudModel(model)
 	testMessages := []chat.Message{{Role: "user", Content: "test"}}
 	testOptions := &chat.ChatOptions{
 		MaxTokens: 1,
 		Thinking:  &[]bool{false}[0], // for dashscope.aliyuncs qwen3-32b
 	}
+	if strictProbe {
+		testMessages, testOptions = ollamaCloudConnectionProbe()
+		ctx = types.WithRedactedLLMTracePayloads(ctx)
+	}
 
-	_, err = chatInstance.Chat(ctx, testMessages, testOptions)
+	response, err := chatInstance.Chat(ctx, testMessages, testOptions)
 	if err != nil {
 		errMsg := err.Error()
 		// 400 = endpoint reachable + auth ok, just a parameter mismatch
 		// (e.g. max_tokens vs max_completion_tokens). Treat as success.
-		if strings.Contains(errMsg, "status code: 400") {
+		if !strictProbe && strings.Contains(errMsg, "status code: 400") {
 			return true, "连接正常，模型可用"
 		}
 		// For every other failure mode we surface a human-readable hint
@@ -1938,6 +1943,12 @@ func (h *InitializationHandler) checkChatModelConnection(
 		// tried, response body, etc. — making remote debugging nearly
 		// impossible. Format: "<hint>：<raw err>".
 		return false, fmt.Sprintf("%s：%v", classifyConnectionError(errMsg), err)
+	}
+	if strictProbe {
+		if err := validateOllamaCloudConnectionResponse(response); err != nil {
+			return false, "模型连接成功，但结构化输出验证失败"
+		}
+		return true, "连接正常，模型可用，结构化输出验证通过"
 	}
 
 	// 连接成功，模型可用
