@@ -174,6 +174,7 @@ func (p *GRPCDocumentReader) readStream(
 			result.ImageDirPath = meta.GetImageDirPath()
 			result.Metadata = meta.GetMetadata()
 			result.Error = meta.GetError()
+			result.StructureBlocks = fromProtoStructureBlocks(meta.GetStructureBlocks())
 			if n := meta.GetImageCount(); n > 0 {
 				result.ImageRefs = make([]types.ImageRef, 0, n)
 			}
@@ -209,6 +210,7 @@ func (p *GRPCDocumentReader) readUnary(
 
 	result := &types.ReadResult{
 		MarkdownContent: resp.GetMarkdownContent(),
+		StructureBlocks: fromProtoStructureBlocks(resp.GetStructureBlocks()),
 		ImageDirPath:    resp.GetImageDirPath(),
 		Metadata:        resp.GetMetadata(),
 		Error:           resp.GetError(),
@@ -226,6 +228,23 @@ func (p *GRPCDocumentReader) readUnary(
 		}
 	}
 	return result, nil
+}
+
+func fromProtoStructureBlocks(blocks []*proto.StructureBlock) []types.DocumentStructureBlock {
+	result := make([]types.DocumentStructureBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if block == nil {
+			continue
+		}
+		result = append(result, types.DocumentStructureBlock{
+			Kind: block.GetKind(), Start: int(block.GetStart()), End: int(block.GetEnd()),
+			ParentID: block.GetParentId(), SectionDepth: int(block.GetSectionDepth()),
+			TableID: block.GetTableId(), RecordID: block.GetRecordId(),
+			Atomic: block.GetAtomic(), Confidence: block.GetConfidence(),
+			ContextKinds: append([]string(nil), block.GetContextKinds()...),
+		})
+	}
+	return result
 }
 
 func (p *GRPCDocumentReader) ListEngines(ctx context.Context, overrides map[string]string) ([]types.ParserEngineInfo, error) {

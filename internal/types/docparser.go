@@ -18,12 +18,29 @@ type ReadRequest struct {
 // ReadResult is the transport-agnostic result of document reading.
 type ReadResult struct {
 	MarkdownContent string
+	StructureBlocks []DocumentStructureBlock
 	ImageRefs       []ImageRef
 	ImageDirPath    string
 	Metadata        map[string]string
 	Error           string
 	IsAudio         bool   // true when the result contains raw audio data needing ASR transcription
 	AudioData       []byte // raw audio bytes for ASR processing
+}
+
+// DocumentStructureBlock is an optional parser hint whose positions refer to
+// the MarkdownContent returned in the same ReadResult. The ingestion pipeline
+// validates and relocates hints before using them; Content remains authoritative.
+type DocumentStructureBlock struct {
+	Kind         string
+	Start        int
+	End          int
+	ParentID     string
+	SectionDepth int
+	TableID      string
+	RecordID     string
+	Atomic       bool
+	Confidence   string
+	ContextKinds []string
 }
 
 // ImageRef represents an image reference extracted from the document.

@@ -43,12 +43,27 @@ message ImageRef {
   bytes  image_data = 5;     // inline bytes fallback
 }
 
+// Optional structural hint. start/end are rune offsets into markdown_content.
+message StructureBlock {
+  string kind = 1;
+  uint32 start = 2;
+  uint32 end = 3;
+  string parent_id = 4;
+  uint32 section_depth = 5;
+  string table_id = 6;
+  string record_id = 7;
+  bool atomic = 8;
+  string confidence = 9;
+  repeated string context_kinds = 10;
+}
+
 message ReadResponse {
   string markdown_content = 1;
   repeated ImageRef image_refs = 2;
   string image_dir_path = 3;
   map<string, string> metadata = 4;
   string error = 5;
+  repeated StructureBlock structure_blocks = 6;
 }
 
 // Metadata header for a streamed read. Sent exactly once, before any image.
@@ -58,6 +73,7 @@ message ReadStreamMeta {
   map<string, string> metadata = 3;
   string error = 4;
   uint32 image_count = 5; // best-effort total image count (0 if unknown)
+  repeated StructureBlock structure_blocks = 6;
 }
 
 // One frame of a ReadStream. The first frame carries `meta`; every subsequent

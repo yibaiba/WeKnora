@@ -26,6 +26,7 @@ from docreader.proto.docreader_pb2 import (
     ListEnginesResponse,
     ParserEngineInfo,
 )
+from docreader.structure import structure_blocks_from_document
 from docreader.utils.request import init_logging_request_id, request_id_context
 
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
@@ -204,6 +205,7 @@ class DocReaderServicer(docreader_pb2_grpc.DocReaderServicer):
 
                 response = ReadResponse(
                     markdown_content=_c(result.content),
+                    structure_blocks=structure_blocks_from_document(result),
                     image_refs=image_refs,
                     image_dir_path=image_dir,
                     metadata={k: _c(str(v)) for k, v in result.metadata.items()}
@@ -253,6 +255,7 @@ class DocReaderServicer(docreader_pb2_grpc.DocReaderServicer):
             yield ReadStreamResponse(
                 meta=ReadStreamMeta(
                     markdown_content=_c(result.content),
+                    structure_blocks=structure_blocks_from_document(result),
                     image_dir_path="",
                     metadata={k: _c(str(v)) for k, v in result.metadata.items()}
                     if result.metadata

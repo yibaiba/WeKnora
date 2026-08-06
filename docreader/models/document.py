@@ -59,6 +59,21 @@ class Chunk(BaseModel):
         return cls.from_dict(data, **kwargs)
 
 
+class StructureBlock(BaseModel):
+    """Optional structural hint positioned in the returned Markdown text."""
+
+    kind: str
+    start: int
+    end: int
+    parent_id: str = ""
+    section_depth: int = 0
+    table_id: str = ""
+    record_id: str = ""
+    atomic: bool = False
+    confidence: str = ""
+    context_kinds: List[str] = Field(default_factory=list)
+
+
 class Document(BaseModel):
     """Document including document content, document metadata."""
 
@@ -70,6 +85,10 @@ class Document(BaseModel):
     )
 
     chunks: List[Chunk] = Field(default_factory=list, description="document chunks")
+    structure_blocks: List[StructureBlock] = Field(
+        default_factory=list,
+        description="optional structural hints positioned in document content",
+    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
         description="metadata fields",

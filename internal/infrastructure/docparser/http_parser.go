@@ -46,12 +46,26 @@ type httpImageRef struct {
 	ImageData   []byte `json:"image_data,omitempty"`
 }
 
+type httpStructureBlock struct {
+	Kind         string   `json:"kind"`
+	Start        int      `json:"start"`
+	End          int      `json:"end"`
+	ParentID     string   `json:"parent_id,omitempty"`
+	SectionDepth int      `json:"section_depth,omitempty"`
+	TableID      string   `json:"table_id,omitempty"`
+	RecordID     string   `json:"record_id,omitempty"`
+	Atomic       bool     `json:"atomic,omitempty"`
+	Confidence   string   `json:"confidence,omitempty"`
+	ContextKinds []string `json:"context_kinds,omitempty"`
+}
+
 type httpReadResponse struct {
-	MarkdownContent string            `json:"markdown_content"`
-	ImageRefs       []httpImageRef    `json:"image_refs,omitempty"`
-	ImageDirPath    string            `json:"image_dir_path,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	MarkdownContent string               `json:"markdown_content"`
+	StructureBlocks []httpStructureBlock `json:"structure_blocks,omitempty"`
+	ImageRefs       []httpImageRef       `json:"image_refs,omitempty"`
+	ImageDirPath    string               `json:"image_dir_path,omitempty"`
+	Metadata        map[string]string    `json:"metadata,omitempty"`
+	Error           string               `json:"error,omitempty"`
 }
 
 // HTTPDocumentReader implements DocumentReader over HTTP/JSON.
@@ -166,6 +180,7 @@ func (p *HTTPDocumentReader) ListEngines(ctx context.Context, overrides map[stri
 func fromHTTPReadResponse(resp *httpReadResponse) *types.ReadResult {
 	result := &types.ReadResult{
 		MarkdownContent: resp.MarkdownContent,
+		StructureBlocks: fromHTTPStructureBlocks(resp.StructureBlocks),
 		ImageDirPath:    resp.ImageDirPath,
 		Metadata:        resp.Metadata,
 		Error:           resp.Error,
@@ -177,6 +192,20 @@ func fromHTTPReadResponse(resp *httpReadResponse) *types.ReadResult {
 			MimeType:    ref.MimeType,
 			StorageKey:  ref.StorageKey,
 			ImageData:   ref.ImageData,
+		})
+	}
+	return result
+}
+
+func fromHTTPStructureBlocks(blocks []httpStructureBlock) []types.DocumentStructureBlock {
+	result := make([]types.DocumentStructureBlock, 0, len(blocks))
+	for _, block := range blocks {
+		result = append(result, types.DocumentStructureBlock{
+			Kind: block.Kind, Start: block.Start, End: block.End,
+			ParentID: block.ParentID, SectionDepth: block.SectionDepth,
+			TableID: block.TableID, RecordID: block.RecordID,
+			Atomic: block.Atomic, Confidence: block.Confidence,
+			ContextKinds: append([]string(nil), block.ContextKinds...),
 		})
 	}
 	return result
