@@ -134,128 +134,15 @@ func buildIngestionAdvisorResult(
 	reasons := []string(nil)
 	if analysis != nil {
 		reasons = append(reasons, analysis.ReasonCodes...)
+		if ingestionAppliedMode(analysis) == types.IngestionAppliedModeFallback {
+			reasons = append([]string(nil), analysis.FallbackReasonCodes...)
+		}
 	}
 	return &types.IngestionAdvisorResult{
 		Analysis: analysis, Candidates: session.candidateSnapshot(),
 		SelectedCandidateID:  session.selectedCandidateID(),
 		SelectionReasonCodes: reasons, AgentRun: run,
 	}
-}
-
-func validateIngestionAgentOutcome(state *types.AgentState, session *ingestionAgentSession) error {
-	if state == nil {
-		return fmt.Errorf("文档分析 Agent 未返回运行状态")
-	}
-	if state.TerminatedByTool == submitIngestionDecisionTool && session.decisionSnapshot() != nil {
-		return validateIngestionAnalysisWithConstraints(session.decisionSnapshot(), session.constraints)
-	}
-	if err := unresolvedIngestionCoreToolFailure(state); err != nil {
-		return err
-	}
-	if countAgentToolCalls(state) == 0 {
-		return newIngestionAdvisorRunError(
-			ingestionAdvisorErrorToolCalling, "模型不支持原生工具调用或未调用任何工具",
-		)
-	}
-	if state.StopReason == "max_iterations" {
-		return ingestionAdvisorMaxRoundsError()
-	}
-	return newIngestionAdvisorRunError(
-		ingestionAdvisorErrorNotSubmitted,
-		"文档分析 Agent 未通过 submit_ingestion_decision 提交决策",
-	)
-}
-
-func ingestionAdvisorMaxRoundsError() error {
-	return newIngestionAdvisorRunError(
-		ingestionAdvisorErrorMaxRounds,
-		"文档分析 Agent 达到 %d 轮上限但未提交决策", ingestionAdvisorMaxRounds,
-	)
-}
-
-func unresolvedIngestionCoreToolFailure(state *types.AgentState) error {
-	if state == nil {
-		return nil
-	}
-	failures := ingestionUnresolvedCoreFailures{}
-	for _, step := range state.RoundSteps {
-		for index := range step.ToolCalls {
-			failures.record(&step.ToolCalls[index])
-		}
-	}
-	if failures.submit != nil {
-		return ingestionCoreToolFailure(*failures.submit)
-	}
-	if failures.preview != nil {
-		return ingestionCoreToolFailure(*failures.preview)
-	}
-	return nil
-}
-
-type ingestionUnresolvedCoreFailures struct {
-	preview *types.ToolCall
-	submit  *types.ToolCall
-}
-
-func (f *ingestionUnresolvedCoreFailures) record(call *types.ToolCall) {
-	if !isIngestionCoreTool(call.Name) {
-		return
-	}
-	succeeded := call.Result != nil && call.Result.Success
-	switch call.Name {
-	case previewIngestionChunkingTool:
-		if succeeded {
-			f.preview = nil
-			return
-		}
-		f.preview = call
-	case submitIngestionDecisionTool:
-		if succeeded {
-			f.submit = nil
-			return
-		}
-		f.submit = call
-	}
-}
-
-func ingestionCoreToolFailure(call types.ToolCall) error {
-	return newIngestionAdvisorRunError(
-		ingestionAdvisorErrorCandidate, "%s", safeCoreToolFailureMessage(call),
-	)
-}
-
-func safeCoreToolFailureMessage(call types.ToolCall) string {
-	if call.Result == nil || call.Result.Failure == nil {
-		return fmt.Sprintf("入库核心工具 %s 执行失败，详情已脱敏", call.Name)
-	}
-	failure := call.Result.Failure
-	return fmt.Sprintf(
-		"入库核心工具 %s 执行失败（错误码 %s，字段 %s，约束 %s）",
-		call.Name, failureCode(failure),
-		safeFailureValue(failureField(failure)), safeFailureValue(failureConstraint(failure)),
-	)
-}
-
-func safeFailureValue(value string) string {
-	if value == "" {
-		return "未指定"
-	}
-	return value
-}
-
-func isIngestionCoreTool(name string) bool {
-	return name == previewIngestionChunkingTool || name == submitIngestionDecisionTool
-}
-
-func countAgentToolCalls(state *types.AgentState) int {
-	if state == nil {
-		return 0
-	}
-	total := 0
-	for _, step := range state.RoundSteps {
-		total += len(step.ToolCalls)
-	}
-	return total
 }
 
 func classifyIngestionAgentExecutionError(err error) error {

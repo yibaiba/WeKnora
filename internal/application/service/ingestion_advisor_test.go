@@ -704,6 +704,14 @@ func TestValidateIngestionAnalysisRejectsInvalidEnumsAndBounds(t *testing.T) {
 		{name: "confidence", mutate: func(v *types.IngestionAnalysis) { v.Confidence = 1.1 }},
 		{name: "confidence NaN", mutate: func(v *types.IngestionAnalysis) { v.Confidence = math.NaN() }},
 		{name: "confidence infinity", mutate: func(v *types.IngestionAnalysis) { v.Confidence = math.Inf(1) }},
+		{name: "applied mode", mutate: func(v *types.IngestionAnalysis) { v.AppliedMode = "automatic" }},
+		{name: "fallback reasons missing", mutate: func(v *types.IngestionAnalysis) {
+			v.AppliedMode = types.IngestionAppliedModeFallback
+		}},
+		{name: "smart fallback reasons", mutate: func(v *types.IngestionAnalysis) {
+			v.AppliedMode = types.IngestionAppliedModeSmart
+			v.FallbackReasonCodes = []string{"not_allowed"}
+		}},
 		{name: "strategy", mutate: func(v *types.IngestionAnalysis) { v.RecommendedChunking.Strategy = "semantic" }},
 		{name: "chunk size", mutate: func(v *types.IngestionAnalysis) { v.RecommendedChunking.ChunkSize = 99 }},
 		{name: "overlap", mutate: func(v *types.IngestionAnalysis) { v.RecommendedChunking.ChunkOverlap = 351 }},
@@ -775,6 +783,30 @@ func TestValidateIngestionAdvisorResultRequiresPreviewedHardValidSelection(t *te
 	missingReasons := newResult()
 	missingReasons.SelectionReasonCodes = nil
 	require.ErrorContains(t, ValidateIngestionAdvisorResult(missingReasons), "selection_reason_codes")
+}
+
+func TestValidateIngestionAdvisorResultRequiresExactFallbackEvidence(t *testing.T) {
+	candidates := []types.IngestionChunkingCandidate{
+		ingestionInvalidCandidate("cand_1", "atomic_block_split"),
+		ingestionInvalidCandidate("cand_2", "source_coverage_gap"),
+		ingestionInvalidCandidate("cand_3", "token_limit_exceeded"),
+	}
+	reasons := ingestionFallbackReasonCodes(candidates)
+	analysis := validReactIngestionAnalysis()
+	analysis.AppliedMode = types.IngestionAppliedModeFallback
+	analysis.FallbackReasonCodes = append([]string(nil), reasons...)
+	result := &types.IngestionAdvisorResult{
+		Analysis: analysis, Candidates: candidates,
+		SelectionReasonCodes: append([]string(nil), reasons...),
+	}
+
+	require.NoError(t, ValidateIngestionAdvisorResult(result))
+
+	result.Candidates[0].HardValid = true
+	require.ErrorContains(t, ValidateIngestionAdvisorResult(result), "有效候选")
+	result.Candidates[0].HardValid = false
+	result.SelectionReasonCodes = []string{"incomplete"}
+	require.ErrorContains(t, ValidateIngestionAdvisorResult(result), "回退原因")
 }
 
 func TestValidateIngestionAdvisorConfigModes(t *testing.T) {

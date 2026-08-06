@@ -209,7 +209,7 @@ func ingestionPhaseForTool(toolName string) string {
 	switch toolName {
 	case previewIngestionChunkingTool:
 		return "preview_candidates"
-	case submitIngestionDecisionTool:
+	case submitIngestionDecisionTool, submitIngestionFallbackTool:
 		return "submit_decision"
 	case agenttools.ToolThinking:
 		return "evaluate_and_refine"

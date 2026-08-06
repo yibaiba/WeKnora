@@ -273,13 +273,12 @@ type taskTerminationBatch struct {
 func (e *AgentEngine) executeTaskTerminationCalls(
 	batch taskTerminationBatch,
 ) (remaining []types.LLMToolCall, found, terminated bool) {
-	terminationTool := configuredTerminationTool(batch.ctx)
-	if terminationTool == "" {
+	if len(configuredTerminationTools(batch.ctx)) == 0 {
 		return nil, false, false
 	}
 	remaining = make([]types.LLMToolCall, 0, len(batch.response.ToolCalls))
 	for index, toolCall := range batch.response.ToolCalls {
-		if toolCall.Function.Name != terminationTool {
+		if !isConfiguredTerminationTool(batch.ctx, toolCall.Function.Name) {
 			remaining = append(remaining, toolCall)
 			continue
 		}

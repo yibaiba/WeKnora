@@ -91,7 +91,7 @@ func (t *previewIngestionChunking) Execute(
 		CandidateID:         candidate.ID,
 		SavedCandidateCount: candidateCount,
 		CandidateLimit:      maxIngestionCandidates,
-		NextAction:          ingestionPreviewNextAction(candidateCount),
+		NextAction:          ingestionPreviewNextAction(t.session),
 		Candidate:           candidate,
 	}, map[string]interface{}{
 		"candidate_id": candidate.ID,
@@ -99,11 +99,72 @@ func (t *previewIngestionChunking) Execute(
 	})
 }
 
-func ingestionPreviewNextAction(candidateCount int) string {
-	if candidateCount >= maxIngestionCandidates {
+func ingestionPreviewNextAction(session *ingestionAgentSession) string {
+	if session.fallbackReady() {
+		return submitIngestionFallbackTool
+	}
+	if session.candidateCount() >= maxIngestionCandidates {
 		return submitIngestionDecisionTool
 	}
 	return "preview_or_submit"
+}
+
+type submitIngestionFallbackInput struct {
+	DocumentKind           string   `json:"document_kind"`
+	Confidence             float64  `json:"confidence"`
+	RecommendedContentMode string   `json:"recommended_content_mode"`
+	ReasonCodes            []string `json:"reason_codes"`
+	Summary                string   `json:"summary"`
+}
+
+type submitIngestionFallback struct {
+	agenttools.BaseTool
+	session *ingestionAgentSession
+}
+
+func newSubmitIngestionFallback(session *ingestionAgentSession) *submitIngestionFallback {
+	return &submitIngestionFallback{
+		BaseTool: agenttools.NewBaseTool(
+			submitIngestionFallbackTool,
+			"Submit the document profile and use the knowledge base's original ordinary chunking configuration. This is accepted only after exactly three saved candidates are all structurally invalid.",
+			json.RawMessage(`{
+  "type":"object",
+  "properties":{
+    "document_kind":{"type":"string","enum":["policy_manual","faq","tabular_data","report","meeting_notes","presentation","short_article","mixed_document"]},
+    "confidence":{"type":"number","minimum":0,"maximum":1},
+    "recommended_content_mode":{"type":"string","enum":["document","faq_candidate","wiki_candidate"]},
+    "reason_codes":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}},
+    "summary":{"type":"string","minLength":1}
+  },
+  "required":["document_kind","confidence","recommended_content_mode","reason_codes","summary"],
+  "additionalProperties":false
+}`),
+		),
+		session: session,
+	}
+}
+
+func (t *submitIngestionFallback) Execute(
+	_ context.Context,
+	raw json.RawMessage,
+) (*types.ToolResult, error) {
+	var input submitIngestionFallbackInput
+	if err := decodeIngestionToolInput(raw, &input); err != nil {
+		return ingestionToolFailure(wrapIngestionToolError(
+			err, ingestionFailureArgumentsInvalid, "", "json_schema", "回退决策参数无效",
+		))
+	}
+	analysis, err := t.session.submitFallback(input)
+	if err != nil {
+		return ingestionToolFailure(wrapIngestionToolError(
+			err, ingestionFailureDecisionInvalid, "", "all_candidates_structurally_invalid",
+			"提交回退决策无效",
+		))
+	}
+	return ingestionToolJSON(map[string]interface{}{
+		"accepted": true, "applied_mode": analysis.AppliedMode,
+		"fallback_reason_codes": analysis.FallbackReasonCodes,
+	}, map[string]interface{}{"applied_mode": analysis.AppliedMode})
 }
 
 type submitIngestionDecisionInput struct {

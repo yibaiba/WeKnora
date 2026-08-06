@@ -222,6 +222,8 @@ func chunkingRecommendationFromConfig(config types.ChunkingConfig) types.Ingesti
 
 func ingestionAnalysisOutput(analysis *types.IngestionAnalysis) types.JSONMap {
 	return types.JSONMap{
+		"applied_mode":             ingestionAppliedMode(analysis),
+		"fallback_reason_codes":    analysis.FallbackReasonCodes,
 		"document_kind":            analysis.DocumentKind,
 		"confidence":               analysis.Confidence,
 		"recommended_content_mode": analysis.RecommendedContentMode,

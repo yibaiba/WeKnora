@@ -15,6 +15,7 @@ import (
 const (
 	previewIngestionChunkingTool = "preview_ingestion_chunking"
 	submitIngestionDecisionTool  = "submit_ingestion_decision"
+	submitIngestionFallbackTool  = "submit_ingestion_fallback"
 	maxIngestionCandidates       = 3
 )
 
@@ -24,6 +25,7 @@ type ingestionAgentSession struct {
 	constraints types.IngestionChunkingConstraints
 	document    chunker.SemanticDocument
 	documentErr error
+	fallback    types.IngestionChunkingRecommendation
 
 	mu             sync.RWMutex
 	candidates     map[string]types.IngestionChunkingCandidate
@@ -44,41 +46,6 @@ type ingestionCandidateFlight struct {
 type ingestionCandidateBuildResult struct {
 	candidate types.IngestionChunkingCandidate
 	err       error
-}
-
-func newIngestionAgentSession(
-	content string,
-	constraints types.IngestionChunkingConstraints,
-) *ingestionAgentSession {
-	document, err := chunker.AnalyzeSemanticDocument(content, chunker.SemanticAnalysisOptions{})
-	return newIngestionAgentSessionWithDocument(content, constraints, ingestionSessionDocument{
-		document: document, err: err,
-	})
-}
-
-type ingestionSessionDocument struct {
-	document chunker.SemanticDocument
-	err      error
-}
-
-func newIngestionAgentSessionWithDocument(
-	content string,
-	constraints types.IngestionChunkingConstraints,
-	analysis ingestionSessionDocument,
-) *ingestionAgentSession {
-	return &ingestionAgentSession{
-		content:    content,
-		statistics: BuildIngestionDocumentStatistics(content),
-		constraints: types.IngestionChunkingConstraints{
-			TokenLimit: constraints.TokenLimit,
-			Languages:  append([]string(nil), constraints.Languages...),
-		},
-		document:       analysis.document,
-		documentErr:    analysis.err,
-		candidates:     make(map[string]types.IngestionChunkingCandidate),
-		inFlight:       make(map[string]*ingestionCandidateFlight),
-		buildCandidate: buildIngestionCandidate,
-	}
 }
 
 func (s *ingestionAgentSession) candidateSnapshot() []types.IngestionChunkingCandidate {
@@ -110,6 +77,7 @@ func (s *ingestionAgentSession) decisionSnapshot() *types.IngestionAnalysis {
 	}
 	result := *s.decision
 	result.ReasonCodes = append([]string(nil), s.decision.ReasonCodes...)
+	result.FallbackReasonCodes = append([]string(nil), s.decision.FallbackReasonCodes...)
 	result.RecommendedChunking = cloneChunkingRecommendation(s.decision.RecommendedChunking)
 	return &result
 }
@@ -213,6 +181,7 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 		return nil, fmt.Errorf("候选 %q 未通过硬校验", input.CandidateID)
 	}
 	analysis := &types.IngestionAnalysis{
+		AppliedMode:            types.IngestionAppliedModeSmart,
 		DocumentKind:           input.DocumentKind,
 		Confidence:             input.Confidence,
 		RecommendedContentMode: input.RecommendedContentMode,

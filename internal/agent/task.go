@@ -19,8 +19,8 @@ type taskRuntimeKey struct{}
 type taskRuntime struct {
 	options interfaces.AgentTaskOptions
 
-	mu             sync.RWMutex
-	terminationHit bool
+	mu           sync.RWMutex
+	terminatedBy string
 }
 
 func withTaskRuntime(ctx context.Context, options interfaces.AgentTaskOptions) context.Context {
@@ -45,12 +45,27 @@ func shouldSkipFinalAnswer(ctx context.Context) bool {
 	return runtime != nil && runtime.options.SkipFinalAnswer
 }
 
-func configuredTerminationTool(ctx context.Context) string {
+func configuredTerminationTools(ctx context.Context) []string {
 	runtime := taskRuntimeFromContext(ctx)
 	if runtime == nil {
-		return ""
+		return nil
 	}
-	return runtime.options.TerminationTool
+	if len(runtime.options.TerminationTools) > 0 {
+		return runtime.options.TerminationTools
+	}
+	if runtime.options.TerminationTool == "" {
+		return nil
+	}
+	return []string{runtime.options.TerminationTool}
+}
+
+func isConfiguredTerminationTool(ctx context.Context, toolName string) bool {
+	for _, configured := range configuredTerminationTools(ctx) {
+		if configured == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 func emitTaskEvent(ctx context.Context, event interfaces.AgentTaskEvent) {
@@ -63,11 +78,11 @@ func emitTaskEvent(ctx context.Context, event interfaces.AgentTaskEvent) {
 
 func markTerminationTool(ctx context.Context, toolName string, success bool) {
 	runtime := taskRuntimeFromContext(ctx)
-	if runtime == nil || !success || runtime.options.TerminationTool != toolName {
+	if runtime == nil || !success || !isConfiguredTerminationTool(ctx, toolName) {
 		return
 	}
 	runtime.mu.Lock()
-	runtime.terminationHit = true
+	runtime.terminatedBy = toolName
 	runtime.mu.Unlock()
 }
 
@@ -78,5 +93,5 @@ func terminationToolHit(ctx context.Context) (string, bool) {
 	}
 	runtime.mu.RLock()
 	defer runtime.mu.RUnlock()
-	return runtime.options.TerminationTool, runtime.terminationHit
+	return runtime.terminatedBy, runtime.terminatedBy != ""
 }

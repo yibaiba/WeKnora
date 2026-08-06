@@ -70,7 +70,9 @@ func (a *modelIngestionAdvisor) analyze(
 		)
 	}
 
-	session := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
+	session := newIngestionAgentSessionWithFallback(
+		request.Content, request.ChunkingConstraints, request.FallbackChunking,
+	)
 	preparation, err := prepareIngestionAgent(ctx, ingestionAgentPreparationRequest{
 		Model: chatModel, Request: request, Session: session,
 	})
@@ -158,7 +160,7 @@ func executeIngestionAgent(ctx context.Context, request executeIngestionAgentReq
 		Options: interfaces.AgentTaskOptions{
 			SystemPrompt:      request.SystemPrompt,
 			MaxIterations:     ingestionAdvisorMaxRounds,
-			TerminationTool:   submitIngestionDecisionTool,
+			TerminationTools:  []string{submitIngestionDecisionTool, submitIngestionFallbackTool},
 			SkipFinalAnswer:   true,
 			StructuredEventFn: ingestionProgressReceiver(request.Request.ProgressFn),
 		},
@@ -183,6 +185,7 @@ func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.Ing
 func registerIngestionDecisionTools(registry *agenttools.ToolRegistry, session *ingestionAgentSession) {
 	registry.RegisterTool(newPreviewIngestionChunking(session))
 	registry.RegisterTool(newSubmitIngestionDecision(session))
+	registry.RegisterTool(newSubmitIngestionFallback(session))
 }
 
 func buildIngestionAgentConfig(request types.IngestionAdvisorRequest) *types.AgentConfig {

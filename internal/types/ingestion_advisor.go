@@ -24,6 +24,11 @@ const (
 	IngestionContentModeWikiCandidate = "wiki_candidate"
 )
 
+const (
+	IngestionAppliedModeSmart    = "smart"
+	IngestionAppliedModeFallback = "fallback"
+)
+
 // IngestionAdvisorConfig opts a file upload or reparse into document analysis.
 // A nil config preserves the historical processing path.
 type IngestionAdvisorConfig struct {
@@ -48,6 +53,7 @@ type IngestionAdvisorRequest struct {
 	AllowWebAccess      bool
 	AllowReadOnlyMCP    bool
 	ChunkingConstraints IngestionChunkingConstraints
+	FallbackChunking    IngestionChunkingRecommendation
 	ProgressFn          func(IngestionAgentStep)
 	AnalysisProgressFn  func(IngestionDocumentAnalysisProgress)
 	Timeout             time.Duration
@@ -202,6 +208,8 @@ type IngestionChunkingCandidate struct {
 
 // IngestionAnalysis is persisted in knowledge.metadata.ingestion_analysis.
 type IngestionAnalysis struct {
+	AppliedMode            string                          `json:"applied_mode"`
+	FallbackReasonCodes    []string                        `json:"fallback_reason_codes"`
 	DocumentKind           string                          `json:"document_kind"`
 	Confidence             float64                         `json:"confidence"`
 	RecommendedContentMode string                          `json:"recommended_content_mode"`

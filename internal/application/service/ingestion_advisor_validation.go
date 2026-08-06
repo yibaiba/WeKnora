@@ -71,6 +71,16 @@ func validateIngestionAnalysisWithConstraints(
 	if analysis == nil {
 		return fmt.Errorf("文档分析结果为空")
 	}
+	mode := ingestionAppliedMode(analysis)
+	if mode != types.IngestionAppliedModeSmart && mode != types.IngestionAppliedModeFallback {
+		return fmt.Errorf("applied_mode %q 不受支持", analysis.AppliedMode)
+	}
+	if mode == types.IngestionAppliedModeFallback && len(analysis.FallbackReasonCodes) == 0 {
+		return fmt.Errorf("fallback_reason_codes 不能为空")
+	}
+	if mode == types.IngestionAppliedModeSmart && len(analysis.FallbackReasonCodes) > 0 {
+		return fmt.Errorf("smart 模式不能包含 fallback_reason_codes")
+	}
 	if _, ok := allowedDocumentKinds[analysis.DocumentKind]; !ok {
 		return fmt.Errorf("document_kind %q 不受支持", analysis.DocumentKind)
 	}
@@ -106,6 +116,9 @@ func validateIngestionAdvisorResultWithConstraints(
 	if err := validateIngestionAnalysisWithConstraints(result.Analysis, constraints); err != nil {
 		return err
 	}
+	if ingestionAppliedMode(result.Analysis) == types.IngestionAppliedModeFallback {
+		return validateIngestionFallbackResult(result)
+	}
 	if result.SelectedCandidateID == "" || len(result.SelectionReasonCodes) == 0 {
 		return fmt.Errorf("selected_candidate_id 和 selection_reason_codes 不能为空")
 	}
@@ -122,6 +135,30 @@ func validateIngestionAdvisorResultWithConstraints(
 		return nil
 	}
 	return fmt.Errorf("选中候选 %q 不存在", result.SelectedCandidateID)
+}
+
+func ingestionAppliedMode(analysis *types.IngestionAnalysis) string {
+	if analysis == nil || analysis.AppliedMode == "" {
+		return types.IngestionAppliedModeSmart
+	}
+	return analysis.AppliedMode
+}
+
+func validateIngestionFallbackResult(result *types.IngestionAdvisorResult) error {
+	if result.SelectedCandidateID != "" || len(result.Candidates) != maxIngestionCandidates {
+		return fmt.Errorf("回退决策必须包含三个无效候选且不能选择候选")
+	}
+	for _, candidate := range result.Candidates {
+		if candidate.HardValid {
+			return fmt.Errorf("存在硬校验有效候选时不能回退")
+		}
+	}
+	expected := ingestionFallbackReasonCodes(result.Candidates)
+	if !reflect.DeepEqual(result.Analysis.FallbackReasonCodes, expected) ||
+		!reflect.DeepEqual(result.SelectionReasonCodes, expected) {
+		return fmt.Errorf("回退原因与候选违例不一致")
+	}
+	return nil
 }
 
 func ValidateIngestionChunkingRecommendation(value types.IngestionChunkingRecommendation) error {

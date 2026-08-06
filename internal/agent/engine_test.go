@@ -638,6 +638,31 @@ func TestExecuteTaskStopsAfterSuccessfulTerminationTool(t *testing.T) {
 	})
 }
 
+func TestExecuteTaskStopsAfterAnyConfiguredTerminationTool(t *testing.T) {
+	model := taskToolCallModel(types.LLMToolCall{
+		ID:       "fallback-1",
+		Function: types.FunctionCall{Name: "submit_task_fallback", Arguments: `{}`},
+	})
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	fallback := newCountingTool("submit_task_fallback")
+	engine.toolRegistry.RegisterTool(fallback)
+
+	state, err := engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
+		SessionID: "task-session", MessageID: "task-message", Query: "perform task",
+		Options: interfaces.AgentTaskOptions{
+			MaxIterations:    4,
+			TerminationTools: []string{"submit_task_result", fallback.Name()},
+			SkipFinalAnswer:  true,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "termination_tool", state.StopReason)
+	require.Equal(t, fallback.Name(), state.TerminatedByTool)
+	require.Equal(t, 1, fallback.calls)
+}
+
 func TestExecuteTaskPrioritizesSuccessfulTerminationOverParallelSibling(t *testing.T) {
 	model := taskToolCallModel(
 		types.LLMToolCall{ID: "slow-1", Function: types.FunctionCall{Name: "slow_read", Arguments: `{}`}},

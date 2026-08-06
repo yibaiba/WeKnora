@@ -127,7 +127,8 @@ func safeIngestionFailureConstraint(constraint string) string {
 		"at_most_half_chunk_size", "parent_chunk_size_range", "child_chunk_size_range",
 		"not_greater_than_parent_chunk_size", "non_empty_supported_separators",
 		"source_rune_positions", "strictly_increasing_end_positions", "valid_parent_child_mapping",
-		"serializable_candidate", "candidate_limit", "previewed_hard_valid_candidate", "persisted_candidate":
+		"serializable_candidate", "candidate_limit", "previewed_hard_valid_candidate", "persisted_candidate",
+		"all_candidates_structurally_invalid":
 		return constraint
 	default:
 		return ""

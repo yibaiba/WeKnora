@@ -25,6 +25,7 @@ func cloneIngestionAnalysis(analysis *types.IngestionAnalysis) *types.IngestionA
 	}
 	cloned := *analysis
 	cloned.ReasonCodes = append([]string(nil), analysis.ReasonCodes...)
+	cloned.FallbackReasonCodes = append([]string(nil), analysis.FallbackReasonCodes...)
 	cloned.RecommendedChunking = cloneChunkingRecommendation(analysis.RecommendedChunking)
 	cloned.AppliedChunking = cloneChunkingRecommendation(analysis.AppliedChunking)
 	cloned.Candidates = cloneIngestionCandidates(analysis.Candidates)
