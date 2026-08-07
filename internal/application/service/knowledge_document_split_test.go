@@ -60,6 +60,58 @@ func TestSplitKnowledgeDocumentUsesSemanticTreeForParentChild(t *testing.T) {
 	}
 }
 
+func TestSplitKnowledgeDocumentCountsTitleInFinalEmbeddingBudget(t *testing.T) {
+	content := "# Scope\n\n" + strings.Repeat("production embedding input words. ", 12)
+	document, err := chunker.AnalyzeSemanticDocument(content, chunker.SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := chunker.NewTokenCounter(chunker.TokenCounterConfig{
+		Encoding: chunker.TokenizerEncodingCL100KBase,
+	})
+	require.NoError(t, err)
+	prefix := "Quarterly operations verification handbook"
+
+	for _, parentChild := range []bool{false, true} {
+		t.Run(map[bool]string{false: "flat", true: "parent_child"}[parentChild], func(t *testing.T) {
+			effective := semanticEffectiveConfig(parentChild, 200)
+			effective.ChunkingConfig.TokenLimit = 20
+			effective.ChunkingConfig.Languages = []string{chunker.LangEnglish}
+			effective.ChunkingConfig.ParentChunkSize = 200
+			effective.ChunkingConfig.ChildChunkSize = 80
+			result, splitErr := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
+				content: content, document: document, effective: effective,
+				tokenCounter: counter, embeddingPrefix: prefix,
+			})
+			require.NoError(t, splitErr)
+			require.Greater(t, len(result.chunks), 1)
+			requireParsedChunksCoverSource(t, content, result.chunks)
+			for _, current := range result.chunks {
+				count, countErr := counter.Count(chunker.PrependEmbeddingPrefix(
+					prefix, current.EmbeddingContent(),
+				))
+				require.NoError(t, countErr)
+				require.LessOrEqual(t, count.Count, 20)
+			}
+		})
+	}
+}
+
+func TestValidateKnowledgeEmbeddingBudgetRejectsTitleOverflow(t *testing.T) {
+	counter, err := chunker.NewTokenCounter(chunker.TokenCounterConfig{
+		Encoding: chunker.TokenizerEncodingCL100KBase,
+	})
+	require.NoError(t, err)
+	effective := semanticEffectiveConfig(false, 100)
+	effective.ChunkingConfig.TokenLimit = 5
+	request := knowledgeDocumentSplitRequest{
+		effective: effective, tokenCounter: counter,
+		embeddingPrefix: "A title that consumes the complete budget",
+	}
+
+	err = validateKnowledgeEmbeddingBudget(request, []types.ParsedChunk{{Content: "body"}})
+
+	require.ErrorContains(t, err, "embedding token 超限")
+}
+
 func TestSplitKnowledgeDocumentFallbackUsesOrdinaryConfig(t *testing.T) {
 	content := strings.Repeat("ordinary paragraph. ", 30)
 	document, err := chunker.AnalyzeSemanticDocument(content, chunker.SemanticAnalysisOptions{})

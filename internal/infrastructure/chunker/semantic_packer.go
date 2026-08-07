@@ -45,12 +45,16 @@ func SplitSemanticDocument(
 
 func (packer semanticPacker) expand(blocks []SemanticBlock) ([]semanticPackingUnit, error) {
 	units := make([]semanticPackingUnit, 0, len(blocks))
+	contextLimit, err := packer.contextTokenLimit()
+	if err != nil {
+		return nil, err
+	}
 	for _, block := range blocks {
-		context, err := packer.context.contextFor(
-			block, false, packer.config.TokenLimit, packer.config.TokenCounter,
+		context, contextErr := packer.context.contextFor(
+			block, false, contextLimit, packer.config.TokenCounter,
 		)
-		if err != nil {
-			return nil, err
+		if contextErr != nil {
+			return nil, contextErr
 		}
 		fits, err := packer.fits(block.Start, block.End, context.header)
 		if err != nil {
@@ -74,14 +78,18 @@ func (packer semanticPacker) expand(blocks []SemanticBlock) ([]semanticPackingUn
 
 func (packer semanticPacker) splitOversize(block SemanticBlock) ([]semanticPackingUnit, error) {
 	result := make([]semanticPackingUnit, 0, (block.End-block.Start)/packer.config.ChunkSize+1)
+	contextLimit, err := packer.contextTokenLimit()
+	if err != nil {
+		return nil, err
+	}
 	start := block.Start
 	for start < block.End {
 		continuation := start > block.Start
-		context, err := packer.context.contextFor(
-			block, continuation, packer.config.TokenLimit, packer.config.TokenCounter,
+		context, contextErr := packer.context.contextFor(
+			block, continuation, contextLimit, packer.config.TokenCounter,
 		)
-		if err != nil {
-			return nil, err
+		if contextErr != nil {
+			return nil, contextErr
 		}
 		limit, err := packer.sourceBudget(context.header)
 		if err != nil {
@@ -120,13 +128,31 @@ func (packer semanticPacker) splitOversize(block SemanticBlock) ([]semanticPacki
 	return result, nil
 }
 
+func (packer semanticPacker) contextTokenLimit() (int, error) {
+	if packer.config.TokenLimit <= 0 || strings.TrimSpace(packer.config.EmbeddingPrefix) == "" {
+		return packer.config.TokenLimit, nil
+	}
+	count, err := tokenCounterOrConservative(packer.config.TokenCounter).Count(
+		PrependEmbeddingPrefix(packer.config.EmbeddingPrefix, ""),
+	)
+	if err != nil {
+		return 0, err
+	}
+	remaining := packer.config.TokenLimit - count.Count
+	if remaining <= 0 {
+		return 0, fmt.Errorf("embedding prefix exceeds chunk budget")
+	}
+	return remaining, nil
+}
+
 func (packer semanticPacker) sourceBudget(header string) (int, error) {
 	limit := packer.config.ChunkSize
 	if packer.config.TokenLimit <= 0 {
 		return limit, nil
 	}
 	lang := semanticConfigLanguage(packer.config)
-	headerCount, err := tokenCounterOrConservative(packer.config.TokenCounter).Count(header)
+	overhead := PrependEmbeddingPrefix(packer.config.EmbeddingPrefix, header)
+	headerCount, err := tokenCounterOrConservative(packer.config.TokenCounter).Count(overhead)
 	if err != nil {
 		return 0, err
 	}
@@ -152,6 +178,7 @@ func (packer semanticPacker) fits(start, end int, header string) (bool, error) {
 	if header != "" {
 		body = header + "\n\n" + body
 	}
+	body = PrependEmbeddingPrefix(packer.config.EmbeddingPrefix, body)
 	count, err := tokenCounterOrConservative(packer.config.TokenCounter).Count(body)
 	if err != nil {
 		return false, err

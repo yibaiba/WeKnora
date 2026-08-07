@@ -88,9 +88,10 @@ type IngestionDocumentAnalysisProgress struct {
 // IngestionChunkingConstraints are knowledge-base-owned splitter inputs. The
 // advisor may observe them when previewing but never overwrite them.
 type IngestionChunkingConstraints struct {
-	TokenLimit   int
-	Languages    []string
-	TokenCounter TokenCounter
+	TokenLimit      int
+	Languages       []string
+	TokenCounter    TokenCounter
+	EmbeddingPrefix string `json:"-"`
 }
 
 type TokenCount struct {

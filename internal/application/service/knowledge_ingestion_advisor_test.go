@@ -468,6 +468,7 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 		ingestionAdvisor: advisor, spanTracker: tracker,
 	}
 	run := smartIngestionRun(newSmartIngestionKnowledge(t, "doc-1"))
+	run.Knowledge.Title = "Production document title"
 	overrides, err := run.Knowledge.ProcessOverrides()
 	require.NoError(t, err)
 	overrides.IngestionAdvisor.AllowWebAccess = true
@@ -490,6 +491,7 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.Same(t, service, advisor.runtimes[0].WebSearchKnowledge)
 	require.Equal(t, 1024, advisor.requests[0].ChunkingConstraints.TokenLimit)
 	require.Equal(t, []string{"de"}, advisor.requests[0].ChunkingConstraints.Languages)
+	require.Equal(t, run.Knowledge.Title, advisor.requests[0].ChunkingConstraints.EmbeddingPrefix)
 	require.Equal(t, appconfig.DefaultIngestionAdvisorTimeout, advisor.requests[0].Timeout)
 	require.Equal(t, types.IngestionAppliedModeSmart, effective.IngestionAppliedMode)
 	require.Equal(t, types.IngestionAppliedModeSmart, persistedAppliedMode(t, run.Knowledge))

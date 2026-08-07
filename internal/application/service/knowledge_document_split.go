@@ -9,10 +9,11 @@ import (
 )
 
 type knowledgeDocumentSplitRequest struct {
-	content      string
-	effective    types.EffectiveProcessConfig
-	document     chunker.SemanticDocument
-	tokenCounter types.TokenCounter
+	content         string
+	effective       types.EffectiveProcessConfig
+	document        chunker.SemanticDocument
+	tokenCounter    types.TokenCounter
+	embeddingPrefix string
 }
 
 type knowledgeDocumentSplitResult struct {
@@ -32,6 +33,7 @@ func splitKnowledgeDocument(
 ) (knowledgeDocumentSplitResult, error) {
 	base := buildSplitterConfigFromEffective(request.effective)
 	base.TokenCounter = request.tokenCounter
+	base.EmbeddingPrefix = request.embeddingPrefix
 	base.SemanticPackingPolicy = cloneSemanticPackingPolicy(request.effective.SemanticPackingPolicy)
 	set, err := buildKnowledgeChunkSet(request, base)
 	if err != nil {
@@ -42,7 +44,35 @@ func splitKnowledgeDocument(
 			return knowledgeDocumentSplitResult{}, fmt.Errorf("普通分块回退校验失败: %w", err)
 		}
 	}
-	return mapKnowledgeChunkSet(set), nil
+	result := mapKnowledgeChunkSet(set)
+	if err := validateKnowledgeEmbeddingBudget(request, result.chunks); err != nil {
+		return knowledgeDocumentSplitResult{}, err
+	}
+	return result, nil
+}
+
+func validateKnowledgeEmbeddingBudget(
+	request knowledgeDocumentSplitRequest,
+	chunks []types.ParsedChunk,
+) error {
+	limit := request.effective.ChunkingConfig.TokenLimit
+	if !usesSemanticProductionSplit(request.effective) || limit <= 0 {
+		return nil
+	}
+	if request.tokenCounter == nil {
+		return fmt.Errorf("生产语义分块缺少 token counter")
+	}
+	for index, current := range chunks {
+		content := chunker.PrependEmbeddingPrefix(request.embeddingPrefix, current.EmbeddingContent())
+		count, err := request.tokenCounter.Count(content)
+		if err != nil {
+			return fmt.Errorf("重计生产块 %d token 失败: %w", index, err)
+		}
+		if count.Count > limit {
+			return fmt.Errorf("生产块 %d embedding token 超限: %d > %d", index, count.Count, limit)
+		}
+	}
+	return nil
 }
 
 func buildKnowledgeChunkSet(

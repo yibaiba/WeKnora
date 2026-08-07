@@ -132,6 +132,7 @@ func TestBoundaryScoreUsesEvidencePriority(t *testing.T) {
 
 func TestAgentQueryCarriesDefaultBackendCandidateWithoutSourceText(t *testing.T) {
 	request := validIngestionAdvisorRequest()
+	request.ChunkingConstraints.EmbeddingPrefix = "Confidential document title"
 	request.FallbackChunking = ingestionTestConfig(512)
 	session := newIngestionAgentSessionFromRequest(request)
 	evidence := ingestionDocumentEvidence{
@@ -149,6 +150,7 @@ func TestAgentQueryCarriesDefaultBackendCandidateWithoutSourceText(t *testing.T)
 		Role: "user", Content: query,
 	}}))
 	require.NotContains(t, query, request.Content)
+	require.NotContains(t, query, request.ChunkingConstraints.EmbeddingPrefix)
 	require.NotContains(t, query, "block_descriptions")
 }
 

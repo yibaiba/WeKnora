@@ -34,6 +34,7 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 	config := ingestionChunkingConfig(request.config, request.constraints)
 	base := normalizeSplitterConfig(config, true)
 	base.TokenCounter = request.constraints.TokenCounter
+	base.EmbeddingPrefix = request.constraints.EmbeddingPrefix
 	base.SemanticPackingPolicy = cloneSemanticPackingPolicy(request.policy)
 	split, err := splitIngestionPreview(ingestionPreviewSplitRequest{
 		content: request.content, config: config, base: base, document: request.document,

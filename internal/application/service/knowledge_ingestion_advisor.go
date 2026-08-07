@@ -134,6 +134,7 @@ func (s *knowledgeService) analyzeIngestionContent(
 		return nil, err
 	}
 	constraints.TokenCounter = counter
+	constraints.EmbeddingPrefix = run.Knowledge.Title
 	document := chunker.CloneSemanticDocument(run.Document)
 	result, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
 		Content:             run.Content,

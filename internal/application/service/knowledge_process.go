@@ -269,6 +269,7 @@ func buildParentChildConfigs(cc types.ChunkingConfig, base chunker.SplitterConfi
 		TokenLimit:            base.TokenLimit,
 		Languages:             append([]string(nil), base.Languages...),
 		TokenCounter:          base.TokenCounter,
+		EmbeddingPrefix:       base.EmbeddingPrefix,
 		SemanticPackingPolicy: cloneSemanticPackingPolicy(base.SemanticPackingPolicy),
 		AllowZeroOverlap:      base.AllowZeroOverlap,
 	}
@@ -3444,7 +3445,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 	}
 	splitResult, err := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
 		content: convertResult.MarkdownContent, effective: eff, document: semanticDocument,
-		tokenCounter: productionTokenCounter,
+		tokenCounter: productionTokenCounter, embeddingPrefix: knowledge.Title,
 	})
 	if err != nil {
 		return err

@@ -69,7 +69,9 @@ func mergeSemanticChildContext(
 		)
 	}
 	child.ContextHeader = merged
-	embeddingCount, err := counter.Count(child.EmbeddingContent())
+	embeddingCount, err := counter.Count(PrependEmbeddingPrefix(
+		config.EmbeddingPrefix, child.EmbeddingContent(),
+	))
 	if err != nil {
 		return Chunk{}, err
 	}
@@ -81,7 +83,9 @@ func mergeSemanticChildContext(
 		child.ContextReasonCodes = appendUniqueReason(
 			child.ContextReasonCodes, SemanticReasonAncestorOmitted,
 		)
-		embeddingCount, err = counter.Count(child.EmbeddingContent())
+		embeddingCount, err = counter.Count(PrependEmbeddingPrefix(
+			config.EmbeddingPrefix, child.EmbeddingContent(),
+		))
 		if err != nil {
 			return Chunk{}, err
 		}

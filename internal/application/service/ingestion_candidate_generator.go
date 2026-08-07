@@ -222,7 +222,9 @@ func highConfidenceAtomicP90(session *ingestionAgentSession) (int, error) {
 		if !block.Atomic || block.Confidence != chunker.SemanticConfidenceHigh {
 			continue
 		}
-		count, err := counter.Count(string(runes[block.Start:block.End]))
+		count, err := counter.Count(chunker.PrependEmbeddingPrefix(
+			session.constraints.EmbeddingPrefix, string(runes[block.Start:block.End]),
+		))
 		if err != nil {
 			return 0, fmt.Errorf("统计高置信原子 token 失败: %w", err)
 		}

@@ -1,8 +1,7 @@
 package service
 
 import (
-	"strings"
-
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -13,9 +12,5 @@ func buildKnowledgeIndexContent(knowledge *types.Knowledge, content string) stri
 	if knowledge == nil {
 		return content
 	}
-	title := strings.TrimSpace(knowledge.Title)
-	if title == "" {
-		return content
-	}
-	return title + "\n" + content
+	return chunker.PrependEmbeddingPrefix(knowledge.Title, content)
 }

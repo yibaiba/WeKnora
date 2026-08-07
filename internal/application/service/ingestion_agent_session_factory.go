@@ -59,9 +59,10 @@ func newIngestionAgentSessionWithDocument(
 		content:    content,
 		statistics: BuildIngestionDocumentStatistics(content),
 		constraints: types.IngestionChunkingConstraints{
-			TokenLimit:   constraints.TokenLimit,
-			Languages:    append([]string(nil), constraints.Languages...),
-			TokenCounter: constraints.TokenCounter,
+			TokenLimit:      constraints.TokenLimit,
+			Languages:       append([]string(nil), constraints.Languages...),
+			TokenCounter:    constraints.TokenCounter,
+			EmbeddingPrefix: constraints.EmbeddingPrefix,
 		},
 		document:       analysis.document,
 		documentErr:    analysis.err,

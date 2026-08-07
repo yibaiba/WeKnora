@@ -164,7 +164,9 @@ func validateCandidateLimits(
 		if current.End-current.Start > request.scoreConfig.ChunkSize {
 			violations.add(ingestionViolationChunkSize)
 		}
-		embedding, err := counter.Count(current.EmbeddingContent())
+		embedding, err := counter.Count(chunker.PrependEmbeddingPrefix(
+			request.constraints.EmbeddingPrefix, current.EmbeddingContent(),
+		))
 		if err != nil {
 			return err
 		}

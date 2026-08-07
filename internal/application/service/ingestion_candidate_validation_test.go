@@ -69,6 +69,32 @@ func TestIngestionCandidateValidationChecksCoverageAndTokenLimit(t *testing.T) {
 	require.Contains(t, overlapResult.violations, ingestionViolationOverlap)
 }
 
+func TestIngestionCandidateValidationCountsProductionTitlePrefix(t *testing.T) {
+	content := "compact body words remain valid alone"
+	document := analyzeIngestionTestDocument(t, content)
+	counter, err := chunker.NewTokenCounter(chunker.TokenCounterConfig{
+		Encoding: chunker.TokenizerEncodingCL100KBase,
+	})
+	require.NoError(t, err)
+	bodyCount, err := counter.Count(content)
+	require.NoError(t, err)
+	prefix := "Long production document title"
+	fullCount, err := counter.Count(chunker.PrependEmbeddingPrefix(prefix, content))
+	require.NoError(t, err)
+	require.Greater(t, fullCount.Count, bodyCount.Count)
+	request := ingestionValidationTestRequest(content, document, []chunker.Chunk{{
+		Content: content, Start: 0, End: len([]rune(content)),
+	}})
+	request.constraints = types.IngestionChunkingConstraints{
+		TokenLimit: bodyCount.Count, TokenCounter: counter, EmbeddingPrefix: prefix,
+	}
+
+	result := requireIngestionCandidateValidation(t, request)
+
+	require.Contains(t, result.violations, ingestionViolationTokenLimit)
+	require.Equal(t, fullCount.Count, result.embeddingTokens)
+}
+
 func TestIngestionCandidateValidationRejectsRequiredContextOverBudget(t *testing.T) {
 	header := "| Very descriptive column name | Another descriptive column |\n| --- | --- |\n"
 	content := header + "| value | result |\n"

@@ -106,6 +106,45 @@ func TestSemanticPackingHonorsTokenLimitIncludingContext(t *testing.T) {
 	requireChunksRestoreSource(t, content, chunks)
 }
 
+func TestSemanticPackingHonorsTokenLimitIncludingEmbeddingPrefix(t *testing.T) {
+	content := "# Scope\n\n" + strings.Repeat("production embedding input words. ", 12)
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
+	prefix := "Quarterly operations verification handbook"
+
+	chunks, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 200, AllowZeroOverlap: true, TokenLimit: 20,
+		Languages: []string{LangEnglish}, TokenCounter: counter,
+		EmbeddingPrefix: prefix,
+	}, document)
+
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 1)
+	for _, current := range chunks {
+		count, countErr := counter.Count(PrependEmbeddingPrefix(prefix, current.EmbeddingContent()))
+		require.NoError(t, countErr)
+		require.LessOrEqual(t, count.Count, 20)
+	}
+	requireChunksRestoreSource(t, content, chunks)
+}
+
+func TestSemanticPackingRejectsEmbeddingPrefixThatConsumesBudget(t *testing.T) {
+	content := "body"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
+
+	_, err = SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 20, TokenLimit: 2, TokenCounter: counter,
+		EmbeddingPrefix: "title consumes budget",
+	}, document)
+
+	require.ErrorContains(t, err, "embedding prefix exceeds chunk budget")
+}
+
 func TestSemanticContextKeepsNearestHeadingAndReportsOmittedAncestor(t *testing.T) {
 	content := "# Outer context heading with many descriptive words\n\n## Inner\n\n" +
 		strings.Repeat("body words remain within the inner section. ", 8)
@@ -234,13 +273,16 @@ func TestSemanticParentChildRecountsFinalEmbeddingContent(t *testing.T) {
 		ChildConfig: SplitterConfig{
 			ChunkSize: 70, Strategy: StrategyAuto, AllowZeroOverlap: true,
 			TokenLimit: 30, TokenCounter: counter,
+			EmbeddingPrefix: "Operations handbook title",
 		},
 		Document: document,
 	})
 
 	require.NoError(t, err)
 	for _, child := range result.Children {
-		count, countErr := counter.Count(child.EmbeddingContent())
+		count, countErr := counter.Count(PrependEmbeddingPrefix(
+			"Operations handbook title", child.EmbeddingContent(),
+		))
 		require.NoError(t, countErr)
 		require.LessOrEqual(t, count.Count, 30)
 	}

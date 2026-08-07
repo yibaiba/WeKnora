@@ -50,6 +50,20 @@ func (c Chunk) EmbeddingContent() string {
 	return c.ContextHeader + "\n\n" + body
 }
 
+// PrependEmbeddingPrefix adds immutable document-level context exactly as the
+// indexing path does. The prefix stays outside Content and ContextHeader so it
+// cannot change source positions or consume the structural context allowance.
+func PrependEmbeddingPrefix(prefix, content string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return content
+	}
+	if content == "" {
+		return prefix
+	}
+	return prefix + "\n" + content
+}
+
 // ImageRef is an image reference found within a chunk's content.
 type ImageRef struct {
 	OriginalRef string
@@ -79,6 +93,10 @@ type SplitterConfig struct {
 	// TokenCounter is injected by ingestion from the selected embedding model.
 	// Nil uses the explicit conservative byte upper bound.
 	TokenCounter TokenCounter
+	// EmbeddingPrefix is immutable document-level context, such as a title,
+	// prepended by the indexing path. It participates in the final token budget
+	// but is never stored in Content or ContextHeader.
+	EmbeddingPrefix string
 	// SemanticPackingPolicy is a backend-derived value object. It affects only
 	// semantic packing and is never populated from Agent tool arguments.
 	SemanticPackingPolicy types.SemanticPackingPolicy
