@@ -20,6 +20,8 @@ const (
 	ingestionViolationTableHeaderInvalid = "table_continuation_header_invalid"
 	ingestionViolationCodeContextMissing = "code_continuation_context_missing"
 	ingestionViolationContextSource      = "context_source_invalid"
+	ingestionViolationContextBudget      = "context_budget_exceeded"
+	ingestionViolationRequiredContext    = "required_context_budget_exceeded"
 )
 
 type ingestionCandidateValidationRequest struct {
@@ -34,12 +36,17 @@ type ingestionCandidateValidationRequest struct {
 }
 
 type ingestionCandidateValidationResult struct {
-	violations     []string
-	quality        types.IngestionStructureQuality
-	descriptions   []types.IngestionChunkStructureDescription
-	atomicEligible int
-	atomicRetained int
-	contextValid   bool
+	violations      []string
+	quality         types.IngestionStructureQuality
+	descriptions    []types.IngestionChunkStructureDescription
+	atomicEligible  int
+	atomicRetained  int
+	contextValid    bool
+	sourceTokens    []int
+	contextTokens   int
+	embeddingTokens int
+	tokenCountMode  string
+	tokenizerID     string
 }
 
 type ingestionViolationSet map[string]struct{}
@@ -58,14 +65,19 @@ type ingestionStructureValidator struct {
 
 func validateIngestionCandidate(
 	request ingestionCandidateValidationRequest,
-) ingestionCandidateValidationResult {
+) (ingestionCandidateValidationResult, error) {
 	violations := make(ingestionViolationSet)
 	validateCandidateRanges(request, violations)
-	validateCandidateLimits(request, violations)
-	result := validateCandidateStructure(request, violations)
+	result, err := validateCandidateStructure(request, violations)
+	if err != nil {
+		return ingestionCandidateValidationResult{}, err
+	}
+	if err := validateCandidateLimits(request, &result, violations); err != nil {
+		return ingestionCandidateValidationResult{}, err
+	}
 	result.violations = sortedIngestionViolations(violations)
 	result.descriptions = describeIngestionChunks(request)
-	return result
+	return result, nil
 }
 
 func validateCandidateRanges(
@@ -135,53 +147,83 @@ func validateChunkCoverage(
 
 func validateCandidateLimits(
 	request ingestionCandidateValidationRequest,
+	result *ingestionCandidateValidationResult,
 	violations ingestionViolationSet,
-) {
-	language := ingestionValidationLanguage(request.constraints, request.content)
+) error {
+	counter := request.constraints.TokenCounter
+	if counter == nil {
+		var err error
+		counter, err = chunker.NewTokenCounter(chunker.TokenCounterConfig{
+			Encoding: chunker.TokenizerEncodingByteUpperBound,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	for _, current := range request.chunks {
 		if current.End-current.Start > request.scoreConfig.ChunkSize {
 			violations.add(ingestionViolationChunkSize)
 		}
-		if request.constraints.TokenLimit > 0 &&
-			chunker.ApproxTokenCount(current.EmbeddingContent(), language) > request.constraints.TokenLimit {
+		embedding, err := counter.Count(current.EmbeddingContent())
+		if err != nil {
+			return err
+		}
+		source, err := counter.Count(current.Content)
+		if err != nil {
+			return err
+		}
+		context, err := counter.Count(current.ContextHeader)
+		if err != nil {
+			return err
+		}
+		result.sourceTokens = append(result.sourceTokens, source.Count)
+		result.contextTokens += context.Count
+		result.embeddingTokens += embedding.Count
+		result.tokenCountMode = embedding.Mode
+		result.tokenizerID = embedding.TokenizerID
+		if request.constraints.TokenLimit > 0 && embedding.Count > request.constraints.TokenLimit {
 			violations.add(ingestionViolationTokenLimit)
 		}
+		if request.constraints.TokenLimit > 0 && context.Count > min(128, request.constraints.TokenLimit/5) {
+			violations.add(ingestionViolationContextBudget)
+		}
+		for _, reason := range current.ContextReasonCodes {
+			if reason == chunker.SemanticReasonRequiredContextExceeds {
+				violations.add(ingestionViolationRequiredContext)
+			}
+		}
 	}
-}
-
-func ingestionValidationLanguage(
-	constraints types.IngestionChunkingConstraints,
-	content string,
-) string {
-	if len(constraints.Languages) > 0 {
-		return constraints.Languages[0]
-	}
-	return chunker.DetectLanguage(content)
+	return nil
 }
 
 func validateCandidateStructure(
 	request ingestionCandidateValidationRequest,
 	violations ingestionViolationSet,
-) ingestionCandidateValidationResult {
+) (ingestionCandidateValidationResult, error) {
 	validator := ingestionStructureValidator{
 		request: request, index: newIngestionSemanticIndex(request.content, request.document),
 		result: ingestionCandidateValidationResult{contextValid: true}, violations: violations,
 	}
-	validator.validateAtomicBlocks()
+	if err := validator.validateAtomicBlocks(); err != nil {
+		return ingestionCandidateValidationResult{}, err
+	}
 	validator.validateTableContinuations()
 	validator.validateCodeContinuations()
 	validator.validateChunkContexts()
 	validator.result.quality.MixedSections = countMixedSectionChunks(request.chunks, validator.index)
-	return validator.result
+	return validator.result, nil
 }
 
-func (validator *ingestionStructureValidator) validateAtomicBlocks() {
-	language := ingestionValidationLanguage(validator.request.constraints, validator.request.content)
+func (validator *ingestionStructureValidator) validateAtomicBlocks() error {
 	for _, block := range validator.request.document.Blocks {
 		if !block.Atomic || block.Confidence != chunker.SemanticConfidenceHigh {
 			continue
 		}
-		if !validator.semanticBlockFitsBudget(block, language) {
+		fits, err := validator.semanticBlockFitsBudget(block)
+		if err != nil {
+			return err
+		}
+		if !fits {
 			validator.result.quality.OversizeAtomicBlocks++
 			continue
 		}
@@ -193,24 +235,45 @@ func (validator *ingestionStructureValidator) validateAtomicBlocks() {
 		validator.result.quality.SplitAtomicBlocks++
 		validator.violations.add(ingestionViolationAtomicSplit)
 	}
+	return nil
 }
 
 func (validator ingestionStructureValidator) semanticBlockFitsBudget(
 	block chunker.SemanticBlock,
-	language string,
-) bool {
+) (bool, error) {
 	if block.End-block.Start > validator.request.scoreConfig.ChunkSize {
-		return false
+		return false, nil
 	}
 	if validator.request.constraints.TokenLimit <= 0 {
-		return true
+		return true, nil
 	}
 	body := validator.index.blockText(block)
-	header := validator.index.atomicBudgetContext(block)
-	if header != "" {
-		body = header + "\n\n" + body
+	context, err := chunker.BuildSemanticContext(chunker.SemanticContextRequest{
+		Content: validator.request.content, Document: validator.request.document,
+		Block: block, TokenLimit: validator.request.constraints.TokenLimit,
+		TokenCounter: validator.request.constraints.TokenCounter,
+	})
+	if err != nil {
+		return false, err
 	}
-	return chunker.ApproxTokenCount(body, language) <= validator.request.constraints.TokenLimit
+	if context.Header != "" {
+		body = context.Header + "\n\n" + body
+	}
+	counter := validator.request.constraints.TokenCounter
+	if counter == nil {
+		var err error
+		counter, err = chunker.NewTokenCounter(chunker.TokenCounterConfig{
+			Encoding: chunker.TokenizerEncodingByteUpperBound,
+		})
+		if err != nil {
+			return false, err
+		}
+	}
+	count, err := counter.Count(body)
+	if err != nil {
+		return false, err
+	}
+	return count.Count <= validator.request.constraints.TokenLimit, nil
 }
 
 func semanticBlockContained(block chunker.SemanticBlock, chunks []chunker.Chunk) bool {

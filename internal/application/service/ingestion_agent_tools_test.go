@@ -287,7 +287,9 @@ func TestIngestionPreviewMatchesTokenAndLanguageConstrainedFormalSplitter(t *tes
 	require.Equal(t, formalConfig.ChunkSize, candidate.Config.ChunkSize)
 	require.Equal(t, formalConfig.ChunkOverlap, candidate.Config.ChunkOverlap)
 	require.Equal(t, len(formalChunks), candidate.ChunkCount)
-	require.Equal(t, ingestionLengthDistribution(formalChunks), candidate.Lengths)
+	require.Equal(t, ingestionTokenLengthDistribution(
+		countTestChunkTokens(t, formalChunks, nil),
+	), candidate.Lengths)
 	require.Equal(t, string(diagnostics.SelectedTier), candidate.Diagnostics.SelectedTier)
 }
 
@@ -317,7 +319,9 @@ func TestParentChildPreviewMatchesFormalConstrainedConfigs(t *testing.T) {
 
 	require.Equal(t, len(formal.Parents), candidate.ParentChunkCount)
 	require.Equal(t, len(children), candidate.ChunkCount)
-	require.Equal(t, ingestionLengthDistribution(children), candidate.Lengths)
+	require.Equal(t, ingestionTokenLengthDistribution(
+		countTestChunkTokens(t, children, nil),
+	), candidate.Lengths)
 }
 
 func TestIngestionPreviewAcceptsLongTableSourcePositions(t *testing.T) {
@@ -398,6 +402,7 @@ func TestIngestionCandidateScoresAllNamedDimensions(t *testing.T) {
 		scoreConfig: chunker.SplitterConfig{ChunkSize: length, ChunkOverlap: 0},
 		validation: ingestionCandidateValidationResult{
 			atomicEligible: 4, atomicRetained: 4, contextValid: true,
+			sourceTokens: []int{10}, embeddingTokens: 10,
 		},
 	})
 	require.Equal(t, semanticIntegrityWeight, metrics.score.SemanticIntegrity)
@@ -407,6 +412,28 @@ func TestIngestionCandidateScoresAllNamedDimensions(t *testing.T) {
 	require.Equal(t, parentChildWeight, metrics.score.ParentChild)
 	require.Equal(t, 100.0, metrics.score.Total)
 	require.ElementsMatch(t, []string{"heading", "faq", "table"}, metrics.structure.PresentTypes)
+}
+
+func countTestChunkTokens(
+	t *testing.T,
+	chunks []chunker.Chunk,
+	counter types.TokenCounter,
+) []int {
+	t.Helper()
+	if counter == nil {
+		var err error
+		counter, err = chunker.NewTokenCounter(chunker.TokenCounterConfig{
+			Encoding: chunker.TokenizerEncodingByteUpperBound,
+		})
+		require.NoError(t, err)
+	}
+	result := make([]int, len(chunks))
+	for index, current := range chunks {
+		count, err := counter.Count(current.Content)
+		require.NoError(t, err)
+		result[index] = count.Count
+	}
+	return result
 }
 
 func TestIngestionCandidateScoreComponentsPenalizeMismatches(t *testing.T) {

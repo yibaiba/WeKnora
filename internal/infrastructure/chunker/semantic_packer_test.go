@@ -1,6 +1,7 @@
 package chunker
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -88,16 +89,68 @@ func TestSemanticPackingHonorsTokenLimitIncludingContext(t *testing.T) {
 	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
 	require.NoError(t, err)
 
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
 	chunks, err := SplitSemanticDocument(content, SplitterConfig{
 		ChunkSize: 200, ChunkOverlap: 0, AllowZeroOverlap: true,
-		TokenLimit: 20, Languages: []string{LangEnglish},
+		TokenLimit: 20, Languages: []string{LangEnglish}, TokenCounter: counter,
 	}, document)
 
 	require.NoError(t, err)
 	for _, chunk := range chunks {
-		require.LessOrEqual(t, ApproxTokenCount(chunk.EmbeddingContent(), LangEnglish), 20)
+		count, countErr := counter.Count(chunk.EmbeddingContent())
+		require.NoError(t, countErr)
+		require.LessOrEqual(t, count.Count, 20)
 	}
 	requireChunksRestoreSource(t, content, chunks)
+}
+
+func TestSemanticContextKeepsNearestHeadingAndReportsOmittedAncestor(t *testing.T) {
+	content := "# Outer context heading with many descriptive words\n\n## Inner\n\n" +
+		strings.Repeat("body words remain within the inner section. ", 8)
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
+
+	chunks, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 70, AllowZeroOverlap: true, TokenLimit: 30,
+		Languages: []string{LangEnglish}, TokenCounter: counter,
+	}, document)
+
+	require.NoError(t, err)
+	found := false
+	for _, current := range chunks {
+		if !strings.Contains(current.Content, "body words") || strings.Contains(current.Content, "## Inner") {
+			continue
+		}
+		found = true
+		require.Contains(t, current.ContextHeader, "## Inner")
+		require.NotContains(t, current.ContextHeader, "Outer context")
+		require.Contains(t, current.ContextReasonCodes, SemanticReasonAncestorOmitted)
+		count, countErr := counter.Count(current.ContextHeader)
+		require.NoError(t, countErr)
+		require.LessOrEqual(t, count.Count, 6)
+	}
+	require.True(t, found)
+}
+
+func TestSemanticPackingSurfacesInjectedCounterFailure(t *testing.T) {
+	content := "# Heading\n\nbody"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+
+	_, err = SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 20, TokenLimit: 10, TokenCounter: failingTokenCounter{},
+	}, document)
+
+	require.ErrorContains(t, err, "counter failed")
+}
+
+type failingTokenCounter struct{}
+
+func (failingTokenCounter) Count(string) (TokenCount, error) {
+	return TokenCount{}, errors.New("counter failed")
 }
 
 func TestSemanticPackingDoesNotRepeatSoftHeadingAsContext(t *testing.T) {
@@ -142,6 +195,32 @@ func TestSemanticParentChildReusesRanges(t *testing.T) {
 		parent := result.Parents[child.ParentIndex]
 		require.GreaterOrEqual(t, child.Start, parent.Start)
 		require.LessOrEqual(t, child.End, parent.End)
+	}
+}
+
+func TestSemanticParentChildRecountsFinalEmbeddingContent(t *testing.T) {
+	content := "# Outer heading with verbose context words that should be omitted\n\n## Inner\n\n" +
+		strings.Repeat("compact body sentence. ", 20)
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
+
+	result, err := SplitParentChildSemanticDocument(SemanticParentChildRequest{
+		Content:      content,
+		ParentConfig: SplitterConfig{ChunkSize: 180, Strategy: StrategyAuto, AllowZeroOverlap: true},
+		ChildConfig: SplitterConfig{
+			ChunkSize: 70, Strategy: StrategyAuto, AllowZeroOverlap: true,
+			TokenLimit: 30, TokenCounter: counter,
+		},
+		Document: document,
+	})
+
+	require.NoError(t, err)
+	for _, child := range result.Children {
+		count, countErr := counter.Count(child.EmbeddingContent())
+		require.NoError(t, countErr)
+		require.LessOrEqual(t, count.Count, 30)
 	}
 }
 

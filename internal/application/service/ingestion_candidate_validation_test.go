@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestIngestionCandidateValidationChecksCoverageAndTokenLimit(t *testing.T) {
 		TokenLimit: 10, Languages: []string{chunker.LangEnglish},
 	}
 
-	result := validateIngestionCandidate(request)
+	result := requireIngestionCandidateValidation(t, request)
 
 	require.Contains(t, result.violations, ingestionViolationSourceCoverage)
 	require.Contains(t, result.violations, ingestionViolationTokenLimit)
@@ -63,8 +64,57 @@ func TestIngestionCandidateValidationChecksCoverageAndTokenLimit(t *testing.T) {
 	})
 	overlap.scoreConfig.ChunkOverlap = 10
 	overlap.config.ChunkOverlap = 10
-	overlapResult := validateIngestionCandidate(overlap)
+	overlapResult := requireIngestionCandidateValidation(t, overlap)
 	require.Contains(t, overlapResult.violations, ingestionViolationOverlap)
+}
+
+func TestIngestionCandidateValidationRejectsRequiredContextOverBudget(t *testing.T) {
+	header := "| Very descriptive column name | Another descriptive column |\n| --- | --- |\n"
+	content := header + "| value | result |\n"
+	document := analyzeIngestionTestDocument(t, content)
+	counter, err := chunker.NewTokenCounter(chunker.TokenCounterConfig{
+		Encoding: chunker.TokenizerEncodingCL100KBase,
+	})
+	require.NoError(t, err)
+	chunkSize := len([]rune(header))
+	config := chunker.SplitterConfig{
+		ChunkSize: chunkSize, AllowZeroOverlap: true,
+		TokenLimit: 40, TokenCounter: counter,
+	}
+	chunks, err := chunker.SplitSemanticDocument(content, config, document)
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 1)
+
+	request := ingestionValidationTestRequest(content, document, chunks)
+	request.scoreConfig = config
+	request.constraints = types.IngestionChunkingConstraints{
+		TokenLimit: 40, TokenCounter: counter,
+	}
+	result, err := validateIngestionCandidate(request)
+
+	require.NoError(t, err)
+	require.Contains(t, result.violations, ingestionViolationContextBudget)
+	require.Contains(t, result.violations, ingestionViolationRequiredContext)
+}
+
+func TestIngestionPreviewSurfacesInjectedTokenCounterFailure(t *testing.T) {
+	content := "# Heading\n\nbody"
+	session := newIngestionAgentSession(content, types.IngestionChunkingConstraints{
+		TokenLimit: 10, TokenCounter: failingIngestionTokenCounter{},
+	})
+	config := ingestionTestConfig(100)
+	config.Strategy = chunker.StrategyAuto
+
+	_, err := session.preview(config)
+
+	require.ErrorContains(t, err, "counter failed")
+	require.Empty(t, session.candidateSnapshot())
+}
+
+type failingIngestionTokenCounter struct{}
+
+func (failingIngestionTokenCounter) Count(string) (types.TokenCount, error) {
+	return types.TokenCount{}, errors.New("counter failed")
 }
 
 func TestIngestionCandidateValidationRejectsReversedSourceOrder(t *testing.T) {
@@ -76,7 +126,7 @@ func TestIngestionCandidateValidationRejectsReversedSourceOrder(t *testing.T) {
 		{Content: content[12:], Start: 12, End: 16},
 	})
 
-	result := validateIngestionCandidate(request)
+	result := requireIngestionCandidateValidation(t, request)
 
 	require.Contains(t, result.violations, ingestionViolationSourceOrder)
 }
@@ -112,12 +162,16 @@ func TestIngestionCandidateValidationRequiresOriginalTableHeader(t *testing.T) {
 		{Content: string([]rune(content)[row.Start:]), Start: row.Start, End: row.End},
 	}
 
-	missing := validateIngestionCandidate(ingestionValidationTestRequest(content, document, baseChunks))
+	missing := requireIngestionCandidateValidation(
+		t, ingestionValidationTestRequest(content, document, baseChunks),
+	)
 	require.Contains(t, missing.violations, ingestionViolationTableHeaderMissing)
 	require.Equal(t, 1, missing.quality.HeaderlessContinuations)
 
 	baseChunks[1].ContextHeader = "| case-1 | pass |"
-	invalid := validateIngestionCandidate(ingestionValidationTestRequest(content, document, baseChunks))
+	invalid := requireIngestionCandidateValidation(
+		t, ingestionValidationTestRequest(content, document, baseChunks),
+	)
 	require.Contains(t, invalid.violations, ingestionViolationTableHeaderInvalid)
 	require.Contains(t, invalid.violations, ingestionViolationContextSource)
 }
@@ -130,7 +184,7 @@ func TestIngestionCandidateValidationKeepsSoftStructureAsScoringSignals(t *testi
 	request := ingestionValidationTestRequest(content, document, chunks)
 	request.scoreConfig.ChunkSize = length
 
-	result := validateIngestionCandidate(request)
+	result := requireIngestionCandidateValidation(t, request)
 
 	require.Empty(t, result.violations)
 	require.Equal(t, 1, result.quality.OrphanTableRows)
@@ -147,7 +201,7 @@ func TestIngestionCandidateValidationRejectsHighConfidenceOrphanTableRow(t *test
 		Content: content, Start: 0, End: length,
 	}})
 
-	result := validateIngestionCandidate(request)
+	result := requireIngestionCandidateValidation(t, request)
 
 	require.Contains(t, result.violations, ingestionViolationTableHeaderInvalid)
 	require.Equal(t, 1, result.quality.OrphanTableRows)
@@ -163,14 +217,18 @@ func TestIngestionCandidateValidationReportsOversizeAtomicWithoutHardFailure(t *
 		{Content: string(runes[100:]), ContextHeader: "```", Start: 100, End: len(runes)},
 	}
 
-	result := validateIngestionCandidate(ingestionValidationTestRequest(content, document, chunks))
+	result := requireIngestionCandidateValidation(
+		t, ingestionValidationTestRequest(content, document, chunks),
+	)
 
 	require.NotContains(t, result.violations, ingestionViolationAtomicSplit)
 	require.NotContains(t, result.violations, ingestionViolationCodeContextMissing)
 	require.Equal(t, 1, result.quality.OversizeAtomicBlocks)
 
 	chunks[1].ContextHeader = ""
-	missingContext := validateIngestionCandidate(ingestionValidationTestRequest(content, document, chunks))
+	missingContext := requireIngestionCandidateValidation(
+		t, ingestionValidationTestRequest(content, document, chunks),
+	)
 	require.Contains(t, missingContext.violations, ingestionViolationCodeContextMissing)
 }
 
@@ -224,4 +282,14 @@ func ingestionValidationTestRequest(
 			ChunkSize: 100, ChunkOverlap: 0, AllowZeroOverlap: true,
 		},
 	}
+}
+
+func requireIngestionCandidateValidation(
+	t *testing.T,
+	request ingestionCandidateValidationRequest,
+) ingestionCandidateValidationResult {
+	t.Helper()
+	result, err := validateIngestionCandidate(request)
+	require.NoError(t, err)
+	return result
 }

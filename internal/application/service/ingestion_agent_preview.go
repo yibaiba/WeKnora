@@ -31,6 +31,7 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 	}
 	config := ingestionChunkingConfig(request.config, request.constraints)
 	base := normalizeSplitterConfig(config, true)
+	base.TokenCounter = request.constraints.TokenCounter
 	split, err := splitIngestionPreview(ingestionPreviewSplitRequest{
 		content: request.content, config: config, base: base, document: request.document,
 	})
@@ -39,16 +40,24 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 			err, ingestionFailureCandidatePreview, "", "semantic_chunking", "语义候选生成失败",
 		)
 	}
-	validation := validateIngestionCandidate(ingestionCandidateValidationRequest{
+	validation, err := validateIngestionCandidate(ingestionCandidateValidationRequest{
 		content: request.content, document: request.document, chunks: split.chunks,
 		parents: split.parents, parentIndexes: split.parentIndexes,
 		config: request.config, scoreConfig: split.scoreConfig, constraints: request.constraints,
 	})
+	if err != nil {
+		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
+			err, ingestionFailureCandidatePreview, "", "token_counter", "候选 token 校验失败",
+		)
+	}
 	metrics := ingestionPreviewMetrics(ingestionCandidateMetricsRequest{
 		content: request.content, document: request.document, chunks: split.chunks,
 		parents: split.parents, parentIndexes: split.parentIndexes,
 		config: request.config, scoreConfig: split.scoreConfig, validation: validation,
+		tokenLimit: request.constraints.TokenLimit,
 	})
+	diagnostics := convertIngestionDiagnostics(split.diagnostics)
+	diagnostics.ContextReasonCodes = ingestionContextReasonCodes(split.chunks)
 	return types.IngestionChunkingCandidate{
 		ID:                request.id,
 		Config:            cloneChunkingRecommendation(request.config),
@@ -58,11 +67,27 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 		Structure:         metrics.structure,
 		StructureQuality:  validation.quality,
 		BlockDescriptions: validation.descriptions,
-		Diagnostics:       convertIngestionDiagnostics(split.diagnostics),
+		Diagnostics:       diagnostics,
 		Score:             metrics.score,
 		HardValid:         len(validation.violations) == 0,
 		Violations:        validation.violations,
 	}, nil
+}
+
+func ingestionContextReasonCodes(chunks []chunker.Chunk) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0, 2)
+	for _, current := range chunks {
+		for _, reason := range current.ContextReasonCodes {
+			if _, ok := seen[reason]; ok {
+				continue
+			}
+			seen[reason] = struct{}{}
+			result = append(result, reason)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 type ingestionPreviewSplitRequest struct {
@@ -187,15 +212,14 @@ func validateParentChildPreview(children, parents []chunker.Chunk, parentIndexes
 	return nil
 }
 
-func ingestionLengthDistribution(chunks []chunker.Chunk) types.IngestionLengthDistribution {
-	if len(chunks) == 0 {
+func ingestionTokenLengthDistribution(tokenLengths []int) types.IngestionLengthDistribution {
+	if len(tokenLengths) == 0 {
 		return types.IngestionLengthDistribution{}
 	}
-	lengths := make([]int, len(chunks))
+	lengths := append([]int(nil), tokenLengths...)
 	total := 0
-	for index, current := range chunks {
-		lengths[index] = len([]rune(current.Content))
-		total += lengths[index]
+	for _, length := range lengths {
+		total += length
 	}
 	sort.Ints(lengths)
 	return types.IngestionLengthDistribution{
@@ -205,6 +229,14 @@ func ingestionLengthDistribution(chunks []chunker.Chunk) types.IngestionLengthDi
 		P50:     percentileLength(lengths, 0.50),
 		P95:     percentileLength(lengths, 0.95),
 	}
+}
+
+func ingestionLengthDistribution(chunks []chunker.Chunk) types.IngestionLengthDistribution {
+	lengths := make([]int, len(chunks))
+	for index, current := range chunks {
+		lengths[index] = len([]rune(current.Content))
+	}
+	return ingestionTokenLengthDistribution(lengths)
 }
 
 func percentileLength(sorted []int, percentile float64) int {

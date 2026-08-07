@@ -31,6 +31,7 @@ type ingestionCandidateMetricsRequest struct {
 	config        types.IngestionChunkingRecommendation
 	scoreConfig   chunker.SplitterConfig
 	validation    ingestionCandidateValidationResult
+	tokenLimit    int
 }
 
 func ingestionPreviewMetrics(request ingestionCandidateMetricsRequest) ingestionCandidateMetrics {
@@ -43,10 +44,10 @@ func ingestionPreviewMetrics(request ingestionCandidateMetricsRequest) ingestion
 			scoreBoundaryQuality(request) * boundaryQualityWeight,
 		),
 		SizeFit: roundScore(
-			scoreSizeFit(request.chunks, request.scoreConfig.ChunkSize, request.validation.violations) * sizeFitWeight,
+			scoreTokenSizeFit(request) * sizeFitWeight,
 		),
 		ContextEfficiency: roundScore(
-			scoreContextEfficiency(request.chunks, request.validation.contextValid) * contextEfficiencyWeight,
+			scoreTokenContextEfficiency(request.validation) * contextEfficiencyWeight,
 		),
 		ParentChild: roundScore(scoreParentChild(parentChildScoreRequest{
 			children: request.chunks, parents: request.parents,
@@ -56,7 +57,8 @@ func ingestionPreviewMetrics(request ingestionCandidateMetricsRequest) ingestion
 	score.Total = roundScore(score.SemanticIntegrity + score.BoundaryQuality +
 		score.SizeFit + score.ContextEfficiency + score.ParentChild)
 	return ingestionCandidateMetrics{
-		lengths: ingestionLengthDistribution(request.chunks), structure: structure, score: score,
+		lengths:   ingestionTokenLengthDistribution(request.validation.sourceTokens),
+		structure: structure, score: score,
 	}
 }
 
@@ -160,6 +162,58 @@ func scoreSizeFit(chunks []chunker.Chunk, target int, violations []string) float
 	return scoreChunkSizeBalance(chunks, target)
 }
 
+func scoreTokenSizeFit(request ingestionCandidateMetricsRequest) float64 {
+	violations := request.validation.violations
+	if containsIngestionViolation(violations, ingestionViolationChunkSize) ||
+		containsIngestionViolation(violations, ingestionViolationTokenLimit) {
+		return 0
+	}
+	target := targetTokenCount(request)
+	return scoreTokenSizeBalance(request.validation.sourceTokens, target)
+}
+
+func targetTokenCount(request ingestionCandidateMetricsRequest) int {
+	totalRunes, totalTokens := 0, 0
+	for index, current := range request.chunks {
+		if index >= len(request.validation.sourceTokens) {
+			break
+		}
+		totalRunes += len([]rune(current.Content))
+		totalTokens += request.validation.sourceTokens[index]
+	}
+	if totalRunes == 0 || totalTokens == 0 {
+		return 0
+	}
+	target := int(math.Ceil(float64(request.scoreConfig.ChunkSize*totalTokens) / float64(totalRunes)))
+	if request.tokenLimit > 0 {
+		target = min(target, request.tokenLimit)
+	}
+	return max(1, target)
+}
+
+func scoreTokenSizeBalance(lengths []int, target int) float64 {
+	if len(lengths) == 0 || target <= 0 {
+		return 0
+	}
+	checked := lengths
+	if len(lengths) > 1 {
+		checked = lengths[:len(lengths)-1]
+	}
+	total := 0.0
+	for _, length := range checked {
+		if length > target {
+			return 0
+		}
+		total += float64(length)
+	}
+	mean := total / float64(len(checked))
+	deviation := 0.0
+	for _, length := range checked {
+		deviation += math.Abs(float64(length) - mean)
+	}
+	return math.Max(0.75, 1-deviation/float64(len(checked)*target))
+}
+
 func containsIngestionViolation(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
@@ -215,6 +269,20 @@ func scoreContextEfficiency(chunks []chunker.Chunk, contextValid bool) float64 {
 		return 1
 	}
 	return float64(sourceRunes) / float64(sourceRunes+contextRunes)
+}
+
+func scoreTokenContextEfficiency(validation ingestionCandidateValidationResult) float64 {
+	if !validation.contextValid || validation.embeddingTokens <= 0 {
+		return 0
+	}
+	sourceTokens := 0
+	for _, count := range validation.sourceTokens {
+		sourceTokens += count
+	}
+	if validation.contextTokens == 0 {
+		return 1
+	}
+	return float64(sourceTokens) / float64(sourceTokens+validation.contextTokens)
 }
 
 type parentChildScoreRequest struct {

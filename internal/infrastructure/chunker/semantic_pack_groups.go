@@ -10,19 +10,27 @@ type semanticPackGroup struct {
 	pendingStart int
 }
 
-func (packer semanticPacker) pack(units []semanticPackingUnit) []Chunk {
+func (packer semanticPacker) pack(units []semanticPackingUnit) ([]Chunk, error) {
 	chunks := make([]Chunk, 0, len(units))
 	group := semanticPackGroup{pendingStart: -1}
 	for _, unit := range units {
 		if strings.TrimSpace(string(packer.runes[unit.Start:unit.End])) == "" {
-			group = packer.addWhitespace(group, unit, &chunks)
+			var err error
+			group, err = packer.addWhitespace(group, unit, &chunks)
+			if err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if len(group.units) == 0 {
 			group = startSemanticGroup(group.pendingStart, unit)
 			continue
 		}
-		if packer.canMerge(group, unit) {
+		canMerge, err := packer.canMerge(group, unit)
+		if err != nil {
+			return nil, err
+		}
+		if canMerge {
 			group.units = append(group.units, unit)
 			group.end = unit.End
 			continue
@@ -38,27 +46,31 @@ func (packer semanticPacker) pack(units []semanticPackingUnit) []Chunk {
 	for index := range chunks {
 		chunks[index].Seq = index
 	}
-	return chunks
+	return chunks, nil
 }
 
 func (packer semanticPacker) addWhitespace(
 	group semanticPackGroup,
 	unit semanticPackingUnit,
 	chunks *[]Chunk,
-) semanticPackGroup {
+) (semanticPackGroup, error) {
 	if len(group.units) == 0 {
 		if group.pendingStart < 0 {
 			group.pendingStart = unit.Start
 		}
-		return group
+		return group, nil
 	}
-	if packer.fits(group.start, unit.End, group.context) {
+	fits, err := packer.fits(group.start, unit.End, group.context)
+	if err != nil {
+		return group, err
+	}
+	if fits {
 		group.units = append(group.units, unit)
 		group.end = unit.End
-		return group
+		return group, nil
 	}
 	*chunks = appendSemanticGroup(*chunks, group, packer.runes)
-	return semanticPackGroup{pendingStart: unit.Start}
+	return semanticPackGroup{pendingStart: unit.Start}, nil
 }
 
 func startSemanticGroup(pendingStart int, unit semanticPackingUnit) semanticPackGroup {
@@ -72,27 +84,31 @@ func startSemanticGroup(pendingStart int, unit semanticPackingUnit) semanticPack
 	}
 }
 
-func (packer semanticPacker) canMerge(group semanticPackGroup, next semanticPackingUnit) bool {
-	if group.end != next.Start || !packer.fits(group.start, next.End, group.context) {
-		return false
+func (packer semanticPacker) canMerge(group semanticPackGroup, next semanticPackingUnit) (bool, error) {
+	if group.end != next.Start {
+		return false, nil
+	}
+	fits, err := packer.fits(group.start, next.End, group.context)
+	if err != nil || !fits {
+		return false, err
 	}
 	anchor := lastSemanticMeaningfulUnit(group.units, packer.runes)
 	if next.Kind == SemanticKindHeading {
-		return false
+		return false, nil
 	}
 	if anchor.Kind == SemanticKindHeading {
-		return next.ParentID == anchor.ID
+		return next.ParentID == anchor.ID, nil
 	}
 	if semanticStandaloneKind(anchor.Kind) || semanticStandaloneKind(next.Kind) {
-		return false
+		return false, nil
 	}
 	if anchor.TableID != "" || next.TableID != "" {
-		return anchor.TableID != "" && anchor.TableID == next.TableID
+		return anchor.TableID != "" && anchor.TableID == next.TableID, nil
 	}
 	if anchor.RecordID != "" || next.RecordID != "" {
-		return anchor.RecordID != "" && anchor.RecordID == next.RecordID
+		return anchor.RecordID != "" && anchor.RecordID == next.RecordID, nil
 	}
-	return anchor.Kind == next.Kind && anchor.ParentID == next.ParentID
+	return anchor.Kind == next.Kind && anchor.ParentID == next.ParentID, nil
 }
 
 func lastSemanticMeaningfulUnit(units []semanticPackingUnit, content []rune) semanticPackingUnit {
@@ -115,6 +131,7 @@ func appendSemanticGroup(chunks []Chunk, group semanticPackGroup, content []rune
 	}
 	return append(chunks, Chunk{
 		Content: string(content[group.start:group.end]), ContextHeader: group.context,
-		Start: group.start, End: group.end,
+		ContextReasonCodes: append([]string(nil), group.units[0].ContextReasonCodes...),
+		Start:              group.start, End: group.end,
 	})
 }

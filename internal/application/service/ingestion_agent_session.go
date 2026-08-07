@@ -261,6 +261,9 @@ func cloneIngestionCandidate(value types.IngestionChunkingCandidate) types.Inges
 	}
 	value.Diagnostics.TierChain = append([]string(nil), value.Diagnostics.TierChain...)
 	value.Diagnostics.Rejected = append([]types.IngestionTierRejection(nil), value.Diagnostics.Rejected...)
+	value.Diagnostics.ContextReasonCodes = append(
+		[]string(nil), value.Diagnostics.ContextReasonCodes...,
+	)
 	value.Violations = append([]string(nil), value.Violations...)
 	return value
 }

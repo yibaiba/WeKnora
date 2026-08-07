@@ -9,9 +9,10 @@ import (
 )
 
 type knowledgeDocumentSplitRequest struct {
-	content   string
-	effective types.EffectiveProcessConfig
-	document  chunker.SemanticDocument
+	content      string
+	effective    types.EffectiveProcessConfig
+	document     chunker.SemanticDocument
+	tokenCounter types.TokenCounter
 }
 
 type knowledgeDocumentSplitResult struct {
@@ -30,6 +31,7 @@ func splitKnowledgeDocument(
 	request knowledgeDocumentSplitRequest,
 ) (knowledgeDocumentSplitResult, error) {
 	base := buildSplitterConfigFromEffective(request.effective)
+	base.TokenCounter = request.tokenCounter
 	set, err := buildKnowledgeChunkSet(request, base)
 	if err != nil {
 		return knowledgeDocumentSplitResult{}, err

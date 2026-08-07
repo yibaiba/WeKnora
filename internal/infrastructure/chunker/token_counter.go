@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/tiktoken-go/tokenizer"
 )
 
@@ -19,15 +20,8 @@ const (
 	ConservativeEmbeddingTokenReserve = 8
 )
 
-type TokenCount struct {
-	Count       int
-	Mode        string
-	TokenizerID string
-}
-
-type TokenCounter interface {
-	Count(text string) (TokenCount, error)
-}
+type TokenCount = types.TokenCount
+type TokenCounter = types.TokenCounter
 
 type TokenCounterConfig struct {
 	Encoding string
@@ -86,4 +80,11 @@ func knownEmbeddingEncoding(model string) string {
 		return TokenizerEncodingCL100KBase
 	}
 	return ""
+}
+
+func tokenCounterOrConservative(counter TokenCounter) TokenCounter {
+	if counter != nil {
+		return counter
+	}
+	return conservativeTokenCounter{}
 }

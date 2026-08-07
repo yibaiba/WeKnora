@@ -267,6 +267,7 @@ func buildParentChildConfigs(cc types.ChunkingConfig, base chunker.SplitterConfi
 		Strategy:         base.Strategy,
 		TokenLimit:       base.TokenLimit,
 		Languages:        append([]string(nil), base.Languages...),
+		TokenCounter:     base.TokenCounter,
 		AllowZeroOverlap: base.AllowZeroOverlap,
 	}
 	return
@@ -3432,8 +3433,16 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		processOpts.Metadata = convertResult.Metadata
 	}
 
+	var productionTokenCounter types.TokenCounter
+	if eff.IngestionAdvisorApplied {
+		productionTokenCounter, err = s.resolveIngestionTokenCounter(ctx, kb)
+		if err != nil {
+			return err
+		}
+	}
 	splitResult, err := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
 		content: convertResult.MarkdownContent, effective: eff, document: semanticDocument,
+		tokenCounter: productionTokenCounter,
 	})
 	if err != nil {
 		return err

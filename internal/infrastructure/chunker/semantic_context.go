@@ -2,11 +2,55 @@ package chunker
 
 import "strings"
 
+const (
+	semanticContextTokenPercent = 20
+	semanticContextTokenCap     = 128
+
+	SemanticReasonAncestorOmitted        = "context_ancestor_omitted"
+	SemanticReasonRequiredContextExceeds = "required_context_budget_exceeded"
+)
+
 type semanticContextIndex struct {
 	content      []rune
 	byID         map[string]SemanticBlock
 	tableHeaders map[string]SemanticBlock
 	records      map[string]SemanticBlock
+}
+
+type semanticContextItem struct {
+	text     string
+	required bool
+}
+
+type semanticContext struct {
+	header      string
+	reasonCodes []string
+}
+
+type SemanticContextRequest struct {
+	Content      string
+	Document     SemanticDocument
+	Block        SemanticBlock
+	Continuation bool
+	TokenLimit   int
+	TokenCounter TokenCounter
+}
+
+type SemanticContextResult struct {
+	Header      string
+	ReasonCodes []string
+}
+
+func BuildSemanticContext(request SemanticContextRequest) (SemanticContextResult, error) {
+	context, err := newSemanticContextIndex(request.Content, request.Document).contextFor(
+		request.Block, request.Continuation, request.TokenLimit, request.TokenCounter,
+	)
+	if err != nil {
+		return SemanticContextResult{}, err
+	}
+	return SemanticContextResult{
+		Header: context.header, ReasonCodes: append([]string(nil), context.reasonCodes...),
+	}, nil
 }
 
 func newSemanticContextIndex(content string, document SemanticDocument) semanticContextIndex {
@@ -26,22 +70,69 @@ func newSemanticContextIndex(content string, document SemanticDocument) semantic
 	return index
 }
 
-func (index semanticContextIndex) headerFor(block SemanticBlock, continuation bool) string {
-	parts := index.headingAncestors(block.ParentID)
-	if block.Kind == SemanticKindTableRow {
-		parts = appendSemanticContext(parts, index.blockText(index.tableHeaders[block.TableID]))
+func (index semanticContextIndex) contextFor(
+	block SemanticBlock,
+	continuation bool,
+	tokenLimit int,
+	counter TokenCounter,
+) (semanticContext, error) {
+	items := index.contextItems(block, continuation)
+	if tokenLimit <= 0 {
+		return semanticContext{header: joinSemanticContextItems(items)}, nil
 	}
-	if continuation && block.Kind == SemanticKindRecord {
-		parts = appendSemanticContext(parts, firstSemanticSourceLine(index.blockText(index.records[block.RecordID])))
-	}
-	if continuation && block.Kind == SemanticKindCodeBlock {
-		parts = appendSemanticContext(parts, firstSemanticSourceLine(index.blockText(block)))
-	}
-	return strings.Join(parts, "\n")
+	budget := min(semanticContextTokenCap, tokenLimit*semanticContextTokenPercent/100)
+	return fitSemanticContext(items, budget, tokenCounterOrConservative(counter))
 }
 
-func (index semanticContextIndex) headingAncestors(parentID string) []string {
-	var reversed []string
+func (index semanticContextIndex) contextItems(
+	block SemanticBlock,
+	continuation bool,
+) []semanticContextItem {
+	items := make([]semanticContextItem, 0, 6)
+	if block.Kind == SemanticKindTableRow {
+		items = appendContextItem(items, index.blockText(index.tableHeaders[block.TableID]), true)
+	}
+	if continuation && block.Kind == SemanticKindRecord {
+		items = appendContextItem(items, firstSemanticSourceLine(index.blockText(index.records[block.RecordID])), true)
+	}
+	if continuation && block.Kind == SemanticKindCodeBlock {
+		items = appendContextItem(items, firstSemanticSourceLine(index.blockText(block)), true)
+	}
+	for _, heading := range index.headingAncestorsNearestFirst(block.ParentID) {
+		items = appendContextItem(items, heading, false)
+	}
+	return items
+}
+
+func fitSemanticContext(
+	items []semanticContextItem,
+	budget int,
+	counter TokenCounter,
+) (semanticContext, error) {
+	selected := make([]semanticContextItem, 0, len(items))
+	reasons := make([]string, 0, 2)
+	for _, item := range items {
+		candidate := append(append([]semanticContextItem(nil), selected...), item)
+		count, err := counter.Count(joinSemanticContextItems(candidate))
+		if err != nil {
+			return semanticContext{}, err
+		}
+		if count.Count <= budget {
+			selected = candidate
+			continue
+		}
+		if item.required {
+			selected = candidate
+			reasons = appendUniqueReason(reasons, SemanticReasonRequiredContextExceeds)
+			continue
+		}
+		reasons = appendUniqueReason(reasons, SemanticReasonAncestorOmitted)
+	}
+	return semanticContext{header: joinSemanticContextItems(selected), reasonCodes: reasons}, nil
+}
+
+func (index semanticContextIndex) headingAncestorsNearestFirst(parentID string) []string {
+	result := make([]string, 0, 4)
 	seen := make(map[string]struct{})
 	for parentID != "" {
 		if _, duplicate := seen[parentID]; duplicate {
@@ -53,13 +144,9 @@ func (index semanticContextIndex) headingAncestors(parentID string) []string {
 			break
 		}
 		if parent.Kind == SemanticKindHeading && parent.Confidence == SemanticConfidenceHigh {
-			reversed = append(reversed, index.blockText(parent))
+			result = appendUniqueContext(result, index.blockText(parent))
 		}
 		parentID = parent.ParentID
-	}
-	result := make([]string, 0, len(reversed))
-	for position := len(reversed) - 1; position >= 0; position-- {
-		result = appendSemanticContext(result, reversed[position])
 	}
 	return result
 }
@@ -71,7 +158,20 @@ func (index semanticContextIndex) blockText(block SemanticBlock) string {
 	return strings.TrimSpace(string(index.content[block.Start:block.End]))
 }
 
-func appendSemanticContext(parts []string, value string) []string {
+func appendContextItem(items []semanticContextItem, value string, required bool) []semanticContextItem {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return items
+	}
+	for _, existing := range items {
+		if existing.text == value {
+			return items
+		}
+	}
+	return append(items, semanticContextItem{text: value, required: required})
+}
+
+func appendUniqueContext(parts []string, value string) []string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return parts
@@ -82,6 +182,23 @@ func appendSemanticContext(parts []string, value string) []string {
 		}
 	}
 	return append(parts, value)
+}
+
+func joinSemanticContextItems(items []semanticContextItem) string {
+	parts := make([]string, len(items))
+	for index, item := range items {
+		parts[index] = item.text
+	}
+	return strings.Join(parts, "\n")
+}
+
+func appendUniqueReason(values []string, reason string) []string {
+	for _, value := range values {
+		if value == reason {
+			return values
+		}
+	}
+	return append(values, reason)
 }
 
 func firstSemanticSourceLine(value string) string {

@@ -25,6 +25,19 @@ type ingestionAdvisorStub struct {
 	analysisProgress []types.IngestionDocumentAnalysisProgress
 }
 
+type ingestionTokenModelServiceStub struct {
+	interfaces.ModelService
+	model *types.Model
+	err   error
+}
+
+func (s *ingestionTokenModelServiceStub) GetModelByID(
+	context.Context,
+	string,
+) (*types.Model, error) {
+	return s.model, s.err
+}
+
 func (s *ingestionAdvisorStub) Analyze(
 	_ context.Context,
 	request types.IngestionAdvisorRequest,
@@ -440,6 +453,24 @@ func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T
 	require.NoError(t, marshalProgressErr)
 	require.NotContains(t, string(progressJSON), run.Content)
 	require.NotContains(t, string(progressJSON), "aggregated_evidence")
+}
+
+func TestResolveIngestionTokenCounterUsesEmbeddingModelConfiguration(t *testing.T) {
+	service := &knowledgeService{modelService: &ingestionTokenModelServiceStub{model: &types.Model{
+		Name: "custom-model",
+		Parameters: types.ModelParameters{EmbeddingParameters: types.EmbeddingParameters{
+			TokenizerEncoding: types.TokenizerEncodingO200KBase,
+		}},
+	}}}
+
+	counter, err := service.resolveIngestionTokenCounter(context.Background(), &types.KnowledgeBase{
+		EmbeddingModelID: "embedding-1",
+	})
+	require.NoError(t, err)
+	count, err := counter.Count("hello 世界")
+	require.NoError(t, err)
+	require.Equal(t, chunker.TokenCountModeExact, count.Mode)
+	require.Equal(t, chunker.TokenizerEncodingO200KBase, count.TokenizerID)
 }
 
 func TestApplyIngestionAdvisorFallbackPreservesOriginalChunking(t *testing.T) {

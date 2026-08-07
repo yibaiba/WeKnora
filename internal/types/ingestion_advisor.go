@@ -87,8 +87,19 @@ type IngestionDocumentAnalysisProgress struct {
 // IngestionChunkingConstraints are knowledge-base-owned splitter inputs. The
 // advisor may observe them when previewing but never overwrite them.
 type IngestionChunkingConstraints struct {
-	TokenLimit int
-	Languages  []string
+	TokenLimit   int
+	Languages    []string
+	TokenCounter TokenCounter
+}
+
+type TokenCount struct {
+	Count       int
+	Mode        string
+	TokenizerID string
+}
+
+type TokenCounter interface {
+	Count(text string) (TokenCount, error)
 }
 
 type IngestionAgentWarning struct {
@@ -188,9 +199,10 @@ type IngestionTierRejection struct {
 }
 
 type IngestionChunkerDiagnostics struct {
-	SelectedTier string                   `json:"selected_tier"`
-	TierChain    []string                 `json:"tier_chain"`
-	Rejected     []IngestionTierRejection `json:"rejected"`
+	SelectedTier       string                   `json:"selected_tier"`
+	TierChain          []string                 `json:"tier_chain"`
+	Rejected           []IngestionTierRejection `json:"rejected"`
+	ContextReasonCodes []string                 `json:"context_reason_codes,omitempty"`
 }
 
 type IngestionChunkingCandidate struct {

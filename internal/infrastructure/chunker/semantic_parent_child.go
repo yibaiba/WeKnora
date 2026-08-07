@@ -31,12 +31,73 @@ func SplitParentChildSemanticDocument(request SemanticParentChildRequest) (Paren
 			sub.Seq = childSequence
 			sub.Start += parent.Start
 			sub.End += parent.Start
-			sub.ContextHeader = mergeBreadcrumbs(parent.ContextHeader, sub.ContextHeader)
+			sub, splitErr = mergeSemanticChildContext(parent, sub, request.ChildConfig)
+			if splitErr != nil {
+				return ParentChildResult{}, splitErr
+			}
 			children = append(children, ChildChunk{Chunk: sub, ParentIndex: parentIndex})
 			childSequence++
 		}
 	}
 	return ParentChildResult{Parents: storedParents, Children: children}, nil
+}
+
+func mergeSemanticChildContext(
+	parent Chunk,
+	child Chunk,
+	config SplitterConfig,
+) (Chunk, error) {
+	child.ContextReasonCodes = mergeSemanticReasons(
+		parent.ContextReasonCodes, child.ContextReasonCodes,
+	)
+	if config.TokenLimit <= 0 {
+		child.ContextHeader = mergeBreadcrumbs(parent.ContextHeader, child.ContextHeader)
+		return child, nil
+	}
+	counter := tokenCounterOrConservative(config.TokenCounter)
+	originalChildHeader := child.ContextHeader
+	merged := mergeBreadcrumbs(parent.ContextHeader, originalChildHeader)
+	contextCount, err := counter.Count(merged)
+	if err != nil {
+		return Chunk{}, err
+	}
+	contextBudget := min(semanticContextTokenCap, config.TokenLimit/5)
+	if contextCount.Count > contextBudget && parent.ContextHeader != "" {
+		merged = originalChildHeader
+		child.ContextReasonCodes = appendUniqueReason(
+			child.ContextReasonCodes, SemanticReasonAncestorOmitted,
+		)
+	}
+	child.ContextHeader = merged
+	embeddingCount, err := counter.Count(child.EmbeddingContent())
+	if err != nil {
+		return Chunk{}, err
+	}
+	if embeddingCount.Count <= config.TokenLimit {
+		return child, nil
+	}
+	if parent.ContextHeader != "" && child.ContextHeader != originalChildHeader {
+		child.ContextHeader = originalChildHeader
+		child.ContextReasonCodes = appendUniqueReason(
+			child.ContextReasonCodes, SemanticReasonAncestorOmitted,
+		)
+		embeddingCount, err = counter.Count(child.EmbeddingContent())
+		if err != nil {
+			return Chunk{}, err
+		}
+	}
+	if embeddingCount.Count > config.TokenLimit {
+		return Chunk{}, fmt.Errorf("semantic child embedding exceeds token budget")
+	}
+	return child, nil
+}
+
+func mergeSemanticReasons(left, right []string) []string {
+	result := append([]string(nil), left...)
+	for _, reason := range right {
+		result = appendUniqueReason(result, reason)
+	}
+	return result
 }
 
 func semanticStoredParentIndex(parent Chunk, children []Chunk, parents *[]Chunk) int {

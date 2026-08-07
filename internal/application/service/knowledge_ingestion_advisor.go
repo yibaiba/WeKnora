@@ -86,6 +86,11 @@ func (s *knowledgeService) analyzeIngestionContent(
 	}
 	run := request.Run
 	constraints := ingestionChunkingConstraintsFromConfig(run.Effective.ChunkingConfig)
+	counter, err := s.resolveIngestionTokenCounter(ctx, run.KB)
+	if err != nil {
+		return nil, err
+	}
+	constraints.TokenCounter = counter
 	document := chunker.CloneSemanticDocument(run.Document)
 	result, err := s.ingestionAdvisor.Analyze(ctx, types.IngestionAdvisorRequest{
 		Content:             run.Content,
@@ -115,6 +120,33 @@ func (s *knowledgeService) analyzeIngestionContent(
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *knowledgeService) resolveIngestionTokenCounter(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (types.TokenCounter, error) {
+	config := chunker.TokenCounterConfig{Encoding: chunker.TokenizerEncodingByteUpperBound}
+	if kb == nil || kb.EmbeddingModelID == "" {
+		return chunker.NewTokenCounter(config)
+	}
+	if s.modelService == nil {
+		return nil, fmt.Errorf("embedding model service is unavailable")
+	}
+	model, err := s.modelService.GetModelByID(ctx, kb.EmbeddingModelID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve embedding tokenizer model: %w", err)
+	}
+	if model == nil {
+		return nil, fmt.Errorf("resolve embedding tokenizer model: empty model")
+	}
+	config.Encoding = model.Parameters.EmbeddingParameters.TokenizerEncoding
+	config.Model = model.Name
+	counter, err := chunker.NewTokenCounter(config)
+	if err != nil {
+		return nil, fmt.Errorf("create embedding token counter: %w", err)
+	}
+	return counter, nil
 }
 
 func applyIngestionAnalysis(

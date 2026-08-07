@@ -39,14 +39,6 @@ func (index ingestionSemanticIndex) blockText(block chunker.SemanticBlock) strin
 	return strings.TrimSpace(string(index.content[block.Start:block.End]))
 }
 
-func (index ingestionSemanticIndex) atomicBudgetContext(block chunker.SemanticBlock) string {
-	parts := index.headingAncestors(block.ParentID)
-	if block.Kind == chunker.SemanticKindTableRow {
-		parts = appendUniqueContext(parts, index.blockText(index.tableHeaders[block.TableID]))
-	}
-	return strings.Join(parts, "\n")
-}
-
 func (index ingestionSemanticIndex) sectionDepth(block chunker.SemanticBlock) int {
 	depth := block.SectionDepth
 	parentID := block.ParentID

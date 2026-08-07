@@ -8,7 +8,8 @@ import (
 
 type semanticPackingUnit struct {
 	SemanticBlock
-	ContextHeader string
+	ContextHeader      string
+	ContextReasonCodes []string
 }
 
 type semanticPacker struct {
@@ -39,15 +40,27 @@ func SplitSemanticDocument(
 	if err != nil {
 		return nil, err
 	}
-	return packer.pack(units), nil
+	return packer.pack(units)
 }
 
 func (packer semanticPacker) expand(blocks []SemanticBlock) ([]semanticPackingUnit, error) {
 	units := make([]semanticPackingUnit, 0, len(blocks))
 	for _, block := range blocks {
-		header := packer.context.headerFor(block, false)
-		if packer.fits(block.Start, block.End, header) {
-			units = append(units, semanticPackingUnit{SemanticBlock: block, ContextHeader: header})
+		context, err := packer.context.contextFor(
+			block, false, packer.config.TokenLimit, packer.config.TokenCounter,
+		)
+		if err != nil {
+			return nil, err
+		}
+		fits, err := packer.fits(block.Start, block.End, context.header)
+		if err != nil {
+			return nil, err
+		}
+		if fits {
+			units = append(units, semanticPackingUnit{
+				SemanticBlock: block, ContextHeader: context.header,
+				ContextReasonCodes: context.reasonCodes,
+			})
 			continue
 		}
 		parts, err := packer.splitOversize(block)
@@ -64,8 +77,16 @@ func (packer semanticPacker) splitOversize(block SemanticBlock) ([]semanticPacki
 	start := block.Start
 	for start < block.End {
 		continuation := start > block.Start
-		header := packer.context.headerFor(block, continuation)
-		limit := packer.sourceBudget(header)
+		context, err := packer.context.contextFor(
+			block, continuation, packer.config.TokenLimit, packer.config.TokenCounter,
+		)
+		if err != nil {
+			return nil, err
+		}
+		limit, err := packer.sourceBudget(context.header)
+		if err != nil {
+			return nil, err
+		}
 		if limit <= 0 {
 			return nil, fmt.Errorf("semantic context exceeds chunk budget")
 		}
@@ -75,7 +96,14 @@ func (packer semanticPacker) splitOversize(block SemanticBlock) ([]semanticPacki
 				start: start, proposed: end, kind: block.Kind,
 			})
 		}
-		for end > start && !packer.fits(start, end, header) {
+		for end > start {
+			fits, fitErr := packer.fits(start, end, context.header)
+			if fitErr != nil {
+				return nil, fitErr
+			}
+			if fits {
+				break
+			}
 			end--
 		}
 		if end <= start {
@@ -83,41 +111,52 @@ func (packer semanticPacker) splitOversize(block SemanticBlock) ([]semanticPacki
 		}
 		part := block
 		part.Start, part.End = start, end
-		result = append(result, semanticPackingUnit{SemanticBlock: part, ContextHeader: header})
+		result = append(result, semanticPackingUnit{
+			SemanticBlock: part, ContextHeader: context.header,
+			ContextReasonCodes: context.reasonCodes,
+		})
 		start = end
 	}
 	return result, nil
 }
 
-func (packer semanticPacker) sourceBudget(header string) int {
+func (packer semanticPacker) sourceBudget(header string) (int, error) {
 	limit := packer.config.ChunkSize
 	if packer.config.TokenLimit <= 0 {
-		return limit
+		return limit, nil
 	}
 	lang := semanticConfigLanguage(packer.config)
-	remaining := packer.config.TokenLimit - ApproxTokenCount(header, lang)
+	headerCount, err := tokenCounterOrConservative(packer.config.TokenCounter).Count(header)
+	if err != nil {
+		return 0, err
+	}
+	remaining := packer.config.TokenLimit - headerCount.Count
 	if remaining <= 0 {
-		return 0
+		return 0, nil
 	}
 	tokenChars := CharsForTokenLimit(remaining, lang)
 	if tokenChars > 0 && tokenChars < limit {
-		return tokenChars
+		return tokenChars, nil
 	}
-	return limit
+	return limit, nil
 }
 
-func (packer semanticPacker) fits(start, end int, header string) bool {
+func (packer semanticPacker) fits(start, end int, header string) (bool, error) {
 	if end <= start || end-start > packer.config.ChunkSize {
-		return false
+		return false, nil
 	}
 	if packer.config.TokenLimit <= 0 {
-		return true
+		return true, nil
 	}
 	body := string(packer.runes[start:end])
 	if header != "" {
 		body = header + "\n\n" + body
 	}
-	return ApproxTokenCount(body, semanticConfigLanguage(packer.config)) <= packer.config.TokenLimit
+	count, err := tokenCounterOrConservative(packer.config.TokenCounter).Count(body)
+	if err != nil {
+		return false, err
+	}
+	return count.Count <= packer.config.TokenLimit, nil
 }
 
 func semanticConfigLanguage(config SplitterConfig) string {

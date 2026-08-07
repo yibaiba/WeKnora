@@ -24,11 +24,12 @@ import (
 // position invariant while still letting embedding pipelines see the
 // section context.
 type Chunk struct {
-	Content       string
-	ContextHeader string
-	Seq           int
-	Start         int
-	End           int
+	Content            string
+	ContextHeader      string
+	ContextReasonCodes []string
+	Seq                int
+	Start              int
+	End                int
 }
 
 // EmbeddingContent returns the text that should be fed to the embedding
@@ -74,6 +75,9 @@ type SplitterConfig struct {
 	TokenLimit int
 	// Languages hints multilingual heuristic patterns. Empty = auto-detect.
 	Languages []string
+	// TokenCounter is injected by ingestion from the selected embedding model.
+	// Nil uses the explicit conservative byte upper bound.
+	TokenCounter TokenCounter
 }
 
 // Default chunk sizing constants. Single source of truth for the entire
