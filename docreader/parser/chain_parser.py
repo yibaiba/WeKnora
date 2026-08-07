@@ -9,8 +9,9 @@ This module provides two chain-of-responsibility pattern implementations for doc
 import logging
 from typing import Dict, List, Tuple, Type
 
-from docreader.models.document import Document
+from docreader.models.document import Document, StructureBlock
 from docreader.parser.base_parser import BaseParser
+from docreader.parser.structure_relocation import relocate_structure_blocks
 from docreader.utils import endecode
 
 logger = logging.getLogger(__name__)
@@ -138,17 +139,33 @@ class PipelineParser(BaseParser):
         document = Document()
         for p in self._parsers:
             logger.info(f"PipelineParser: using parser {p.__class__.__name__}")
-            # Parse content with current parser
-            document = p.parse_into_text(content)
+            previous = document
+            next_document = p.parse_into_text(content)
+            if previous.structure_blocks:
+                relocation = relocate_structure_blocks(
+                    previous.content,
+                    next_document.content,
+                    previous.structure_blocks,
+                )
+                if relocation.rejected_count:
+                    logger.warning(
+                        "PipelineParser: rejected %d structure hints (%s)",
+                        relocation.rejected_count,
+                        ",".join(relocation.reason_codes),
+                    )
+                stage_blocks = _merge_structure_blocks(
+                    list(relocation.blocks), next_document.structure_blocks
+                )
+                next_document = next_document.model_copy(
+                    update={"structure_blocks": stage_blocks}
+                )
+            document = next_document
             # Convert document content back to bytes for next parser
             content = endecode.encode_bytes(document.content)
             # Accumulate images and metadata from this parser
             images.update(document.images)
             metadata.update(document.metadata)
-        # Merge all accumulated images and metadata into final document
-        document.images.update(images)
-        document.metadata.update(metadata)
-        return document
+        return document.model_copy(update={"images": images, "metadata": metadata})
 
     @classmethod
     def create(cls, *parser_classes: Type["BaseParser"]) -> Type["PipelineParser"]:
@@ -168,6 +185,33 @@ class PipelineParser(BaseParser):
         names = "_".join([p.__name__ for p in parser_classes])
         # Dynamically create a new class with the parser configuration
         return type(f"PipelineParser_{names}", (cls,), {"_parser_cls": parser_classes})
+
+
+def _merge_structure_blocks(
+    previous: list[StructureBlock],
+    current: list[StructureBlock],
+) -> list[StructureBlock]:
+    """Prefer current-stage hints and retain non-duplicate upstream hints."""
+    current_ids = {block.id for block in current if block.id}
+    retained = [
+        block
+        for block in previous
+        if block.id not in current_ids
+        and not any(
+            block.start < stage_block.end and stage_block.start < block.end
+            for stage_block in current
+        )
+    ]
+    ordered = sorted(retained + list(current), key=lambda block: (block.start, block.end))
+    result: list[StructureBlock] = []
+    seen: dict[str, str] = {}
+    for block in ordered:
+        if block.parent_id and seen.get(block.parent_id) != "heading":
+            continue
+        result.append(block)
+        if block.id:
+            seen[block.id] = block.kind
+    return result
 
 
 if __name__ == "__main__":

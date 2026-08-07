@@ -11,6 +11,7 @@ from docreader.parser.concurrency import parser_worker_limit
 from docreader.parser.docx_structure import attach_docx_structure
 from docreader.parser.markdown_parser import MarkdownParser
 from docreader.parser.ppt_convert import normalize_ppt_bytes
+from docreader.parser.pptx_structure import attach_pptx_structure
 from docreader.parser.pptx_media import (
     attach_pptx_media_to_markdown,
     markdown_needs_pptx_media_attach,
@@ -60,7 +61,10 @@ class StdMarkitdownParser(BaseParser):
         images: dict[str, str] = {}
         if pptx_bytes is not None and markdown_needs_pptx_media_attach(text):
             text, images = attach_pptx_media_to_markdown(text, pptx_bytes)
-        return Document(content=text, images=images)
+        document = Document(content=text, images=images)
+        if pptx_bytes is not None:
+            return attach_pptx_structure(pptx_bytes, document)
+        return document
 
     def _convert_markitdown(self, content: bytes, ext: str | None, *, keep_data_uris: bool):
         try:
@@ -79,7 +83,13 @@ class MarkitdownParser(PipelineParser):
     _parser_cls = (StdMarkitdownParser, MarkdownParser)
 
     def parse_into_text(self, content: bytes) -> Document:
-        document = super().parse_into_text(content)
-        if (self.file_type or "").lstrip(".").lower() != "docx":
-            return document
-        return attach_docx_structure(content, document)
+        file_type = (self.file_type or "").lstrip(".").lower()
+        structure_content = content
+        if file_type in ("ppt", "pptx"):
+            structure_content, _ = normalize_ppt_bytes(content, file_type)
+        document = super().parse_into_text(structure_content)
+        if file_type == "docx":
+            return attach_docx_structure(content, document)
+        if file_type in ("ppt", "pptx"):
+            return attach_pptx_structure(structure_content, document)
+        return document

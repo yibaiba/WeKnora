@@ -216,11 +216,18 @@
     },
     {
       "format": "pptx",
-      "hint_source": "# Quarterly Review\n\n## Highlights\n- Stable throughput\n\n![Trend chart](images/trend.png)\nFigure 1. Trend overview\n\n\fSlide 2\n\n## Actions\n- Monitor the next release\n",
-      "markdown": "# Quarterly Review\n\n## Highlights\n- Stable throughput\n\n![Trend chart](stored/trend-long-name.png)\nFigure 1. Trend overview\n\n\fSlide 2\n\n## Actions\n- Monitor the next release\n",
+      "hint_source": "<!-- Slide number: 1 -->\n# Quarterly Review\nStable throughput\n| Metric | State |\n| --- | --- |\n| Recall | Good |\n\n![Trend chart](images/trend.png)\nFigure 1. Trend overview\n\n<!-- Slide number: 2 -->\n# Actions\nMonitor the next release\n",
+      "markdown": "<!-- Slide number: 1 -->\n# Quarterly Review\nStable throughput\n| Metric | State |\n| --- | --- |\n| Recall | Good |\n\n![Trend chart](stored/trend-long-name.png)\nFigure 1. Trend overview\n\n<!-- Slide number: 2 -->\n# Actions\nMonitor the next release\n",
       "structure_blocks": [
         {
-          "id": "pptx-heading",
+          "id": "pptx-slide-1",
+          "kind": "page_region",
+          "needle": "<!-- Slide number: 1 -->\n",
+          "atomic": false,
+          "confidence": "high"
+        },
+        {
+          "id": "pptx-heading-1",
           "kind": "heading",
           "needle": "# Quarterly Review\n",
           "section_depth": 1,
@@ -228,16 +235,66 @@
           "confidence": "high"
         },
         {
+          "id": "pptx-list-item",
+          "kind": "list_item",
+          "needle": "Stable throughput\n",
+          "parent_id": "pptx-heading-1",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pptx-table-header",
+          "kind": "table_header",
+          "needle": "| Metric | State |\n| --- | --- |\n",
+          "parent_id": "pptx-heading-1",
+          "table_id": "pptx-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pptx-table-row",
+          "kind": "table_row",
+          "needle": "| Recall | Good |\n",
+          "parent_id": "pptx-heading-1",
+          "table_id": "pptx-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
           "id": "pptx-image",
           "kind": "image_caption",
           "needle": "![Trend chart](images/trend.png)\nFigure 1. Trend overview\n",
+          "parent_id": "pptx-heading-1",
           "atomic": true,
           "confidence": "high",
           "context_kinds": ["image", "caption"]
+        },
+        {
+          "id": "pptx-slide-2",
+          "kind": "page_region",
+          "needle": "<!-- Slide number: 2 -->\n",
+          "atomic": false,
+          "confidence": "high"
+        },
+        {
+          "id": "pptx-heading-2",
+          "kind": "heading",
+          "needle": "# Actions\n",
+          "section_depth": 1,
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pptx-action",
+          "kind": "paragraph",
+          "needle": "Monitor the next release\n",
+          "parent_id": "pptx-heading-2",
+          "atomic": false,
+          "confidence": "high"
         }
       ],
-      "expected_kinds": ["heading", "list_item", "image_caption", "page_region"],
-      "expected_hints_accepted": 1,
+      "expected_kinds": ["heading", "paragraph", "list_item", "table_header", "table_row", "image_caption", "page_region"],
+      "expected_hints_accepted": 8,
       "expected_hints_rejected": 1
     }
   ]
