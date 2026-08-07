@@ -21,6 +21,7 @@ func TestIngestionPreviewReturnsInvalidStructuralCandidateWithoutToolError(t *te
 			{
 				ID: "block_2", Kind: chunker.SemanticKindFAQ, Start: 50, End: 80,
 				Atomic: true, Confidence: chunker.SemanticConfidenceHigh,
+				ContextKinds: []string{"question", "answer"},
 			},
 			{ID: "block_3", Kind: chunker.SemanticKindParagraph, Start: 80, End: len([]rune(content))},
 		},
@@ -176,7 +177,7 @@ func TestIngestionCandidateValidationRequiresOriginalTableHeader(t *testing.T) {
 	require.Contains(t, invalid.violations, ingestionViolationContextSource)
 }
 
-func TestIngestionCandidateValidationKeepsSoftStructureAsScoringSignals(t *testing.T) {
+func TestIngestionCandidateValidationRebuildsOrphanTableSyntaxLocally(t *testing.T) {
 	content := "| orphan | row |\n\n# Alpha\ntext\n\n# Beta\ntext\n"
 	document := analyzeIngestionTestDocument(t, content)
 	length := len([]rune(content))
@@ -187,24 +188,22 @@ func TestIngestionCandidateValidationKeepsSoftStructureAsScoringSignals(t *testi
 	result := requireIngestionCandidateValidation(t, request)
 
 	require.Empty(t, result.violations)
-	require.Equal(t, 1, result.quality.OrphanTableRows)
+	require.Zero(t, result.quality.OrphanTableRows)
 	require.Equal(t, 1, result.quality.MixedSections)
+	require.Equal(t, chunker.SemanticKindPreamble, document.Blocks[0].Kind)
+	require.Empty(t, document.Blocks[0].TableID)
 }
 
-func TestIngestionCandidateValidationRejectsHighConfidenceOrphanTableRow(t *testing.T) {
+func TestIngestionCandidateValidationCannotReceiveOrphanTableRow(t *testing.T) {
 	content := "| orphan | row |\n"
 	document := analyzeIngestionTestDocument(t, content)
-	document.Blocks[0].Atomic = true
-	document.Blocks[0].Confidence = chunker.SemanticConfidenceHigh
+	document.Blocks[0].Kind = chunker.SemanticKindTableRow
+	document.Blocks[0].TableID = "orphan-table"
 	length := len([]rune(content))
-	request := ingestionValidationTestRequest(content, document, []chunker.Chunk{{
-		Content: content, Start: 0, End: length,
-	}})
 
-	result := requireIngestionCandidateValidation(t, request)
-
-	require.Contains(t, result.violations, ingestionViolationTableHeaderInvalid)
-	require.Equal(t, 1, result.quality.OrphanTableRows)
+	err := chunker.ValidateSemanticDocument(document)
+	require.ErrorContains(t, err, "has no header")
+	require.Equal(t, length, document.ContentLength)
 }
 
 func TestIngestionCandidateValidationReportsOversizeAtomicWithoutHardFailure(t *testing.T) {

@@ -49,6 +49,7 @@ func TestBalancedCandidateUsesHighConfidenceAtomicP90(t *testing.T) {
 		document: chunker.SemanticDocument{ContentLength: len([]rune(content)), Blocks: []chunker.SemanticBlock{{
 			ID: "faq", Kind: chunker.SemanticKindFAQ, Start: 0, End: len([]rune(content)),
 			Atomic: true, Confidence: chunker.SemanticConfidenceHigh,
+			ContextKinds: []string{"question", "answer"},
 		}}},
 		fallback: ingestionTestConfig(512),
 	})
@@ -102,6 +103,7 @@ func TestCandidateGenerationSurfacesTokenCounterFailure(t *testing.T) {
 		document: chunker.SemanticDocument{ContentLength: len([]rune(content)), Blocks: []chunker.SemanticBlock{{
 			ID: "faq", Kind: chunker.SemanticKindFAQ, Start: 0, End: len([]rune(content)),
 			Atomic: true, Confidence: chunker.SemanticConfidenceHigh,
+			ContextKinds: []string{"question", "answer"},
 		}}},
 		fallback: ingestionTestConfig(512),
 	})

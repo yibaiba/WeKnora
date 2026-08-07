@@ -1,12 +1,11 @@
 package chunker
 
 import (
-	"regexp"
+	"io"
 	"strings"
-	"unicode/utf8"
-)
 
-var semanticHTMLRow = regexp.MustCompile(`(?is)<tr\b[^>]*>.*?</tr>`)
+	"golang.org/x/net/html"
+)
 
 func (scanner *semanticScanner) consumeHTMLTable(index int) (int, []SemanticBlock, bool) {
 	if !strings.Contains(strings.ToLower(scanner.lines[index].text), "<table") {
@@ -35,43 +34,80 @@ type semanticHTMLTableRequest struct {
 	tableID string
 }
 
+type semanticHTMLRowSpan struct {
+	start     int
+	hasHeader bool
+}
+
 func semanticHTMLTableBlocks(request semanticHTMLTableRequest) []SemanticBlock {
 	content := semanticLineRangeText(request.lines, request.start, request.end)
-	rows := semanticHTMLRow.FindAllStringIndex(content, -1)
-	if len(rows) == 0 {
-		block := newSemanticBlock(semanticBlockSpec{
-			kind: SemanticKindTableRow, start: request.start, end: request.end,
+	rows := parseSemanticHTMLRows(content)
+	if len(rows) == 0 || !rows[0].hasHeader {
+		return []SemanticBlock{newSemanticBlock(semanticBlockSpec{
+			kind: SemanticKindParagraph, start: request.start, end: request.end,
 			confidence: SemanticConfidenceHigh, atomic: true,
-		})
-		block.TableID = request.tableID
-		return []SemanticBlock{block}
+		})}
 	}
-	starts := make([]int, len(rows))
-	for index, row := range rows {
-		starts[index] = request.start + utf8.RuneCountInString(content[:row[0]])
-	}
+	byteToRune := buildByteToRuneIndex([]byte(content))
 	result := make([]SemanticBlock, 0, len(rows))
 	for index, row := range rows {
-		blockStart := starts[index]
+		start := request.start + byteToRune[row.start]
 		if index == 0 {
-			blockStart = request.start
+			start = request.start
 		}
-		blockEnd := request.end
+		end := request.end
 		if index+1 < len(rows) {
-			blockEnd = starts[index+1]
+			end = request.start + byteToRune[rows[index+1].start]
 		}
 		kind := SemanticKindTableRow
-		if strings.Contains(strings.ToLower(content[row[0]:row[1]]), "<th") {
+		if index == 0 && row.hasHeader {
 			kind = SemanticKindTableHeader
 		}
-		block := newSemanticBlock(semanticBlockSpec{
-			kind: kind, start: blockStart, end: blockEnd,
-			confidence: SemanticConfidenceHigh, atomic: true,
-		})
-		block.TableID = request.tableID
-		result = append(result, block)
+		result = append(result, semanticHTMLTableBlock(kind, start, end, request.tableID))
 	}
 	return result
+}
+
+func parseSemanticHTMLRows(content string) []semanticHTMLRowSpan {
+	tokenizer := html.NewTokenizer(strings.NewReader(content))
+	rows := make([]semanticHTMLRowSpan, 0)
+	offset := 0
+	current := semanticHTMLRowSpan{start: -1}
+	for {
+		tokenType := tokenizer.Next()
+		raw := tokenizer.Raw()
+		tokenStart := offset
+		offset += len(raw)
+		if tokenType == html.ErrorToken {
+			if tokenizer.Err() != nil && tokenizer.Err() != io.EOF {
+				return nil
+			}
+			return rows
+		}
+		tokenName, _ := tokenizer.TagName()
+		name := string(tokenName)
+		if tokenType == html.StartTagToken && name == "tr" {
+			current = semanticHTMLRowSpan{start: tokenStart}
+			continue
+		}
+		if tokenType == html.StartTagToken && name == "th" && current.start >= 0 {
+			current.hasHeader = true
+			continue
+		}
+		if tokenType == html.EndTagToken && name == "tr" && current.start >= 0 {
+			rows = append(rows, current)
+			current = semanticHTMLRowSpan{start: -1}
+		}
+	}
+}
+
+func semanticHTMLTableBlock(kind string, start, end int, tableID string) SemanticBlock {
+	block := newSemanticBlock(semanticBlockSpec{
+		kind: kind, start: start, end: end,
+		confidence: SemanticConfidenceHigh, atomic: true,
+	})
+	block.TableID = tableID
+	return block
 }
 
 func semanticLineRangeText(lines []semanticLine, start, end int) string {

@@ -36,6 +36,13 @@ type SemanticAnalysisOptions struct {
 }
 
 func ValidateSemanticDocument(document SemanticDocument) error {
+	if err := validateSemanticCoverage(document); err != nil {
+		return err
+	}
+	return validateSemanticRelationships(document.Blocks)
+}
+
+func validateSemanticCoverage(document SemanticDocument) error {
 	if document.ContentLength == 0 && len(document.Blocks) == 0 {
 		return nil
 	}

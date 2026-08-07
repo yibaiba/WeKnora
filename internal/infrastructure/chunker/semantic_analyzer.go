@@ -40,7 +40,14 @@ func mergeSemanticHints(
 		return hints[i].End < hints[j].End
 	})
 	lastEnd := -1
+	relations := newSemanticHintRelations()
 	for _, hint := range hints {
+		var code string
+		hint, code = relations.validate(hint)
+		if code != "" {
+			rejectSemanticHint(diagnostics, code)
+			continue
+		}
 		if hint.Start < lastEnd {
 			rejectSemanticHint(diagnostics, "hint_overlap")
 			continue
@@ -57,11 +64,34 @@ func mergeSemanticHints(
 			continue
 		}
 		hint = alignSemanticHintRelations(hint, blocks[start:end])
-		blocks = append(blocks[:start], append([]SemanticBlock{hint}, blocks[end:]...)...)
+		candidate := replaceSemanticBlockRange(blocks, start, end, hint)
+		if !semanticBlockMergeValid(candidate) {
+			rejectSemanticHint(diagnostics, "hint_relation_invalid")
+			continue
+		}
+		blocks = candidate
+		relations.commit(hint)
 		diagnostics.HintsAccepted++
 		lastEnd = hint.End
 	}
 	return blocks
+}
+
+func replaceSemanticBlockRange(blocks []SemanticBlock, start, end int, hint SemanticBlock) []SemanticBlock {
+	result := make([]SemanticBlock, 0, len(blocks)-(end-start)+1)
+	result = append(result, blocks[:start]...)
+	result = append(result, hint)
+	return append(result, blocks[end:]...)
+}
+
+func semanticBlockMergeValid(blocks []SemanticBlock) bool {
+	if len(blocks) == 0 {
+		return false
+	}
+	cloned := append([]SemanticBlock(nil), blocks...)
+	assignSemanticHierarchy(cloned)
+	document := SemanticDocument{ContentLength: cloned[len(cloned)-1].End, Blocks: cloned}
+	return ValidateSemanticDocument(document) == nil
 }
 
 func semanticHintConflictsWithLocalAtom(hint SemanticBlock, covered []SemanticBlock) bool {
@@ -145,32 +175,35 @@ func alignedSemanticBlockRange(blocks []SemanticBlock, start, end int) (int, int
 
 func assignSemanticHierarchy(blocks []SemanticBlock) {
 	oldIDs := make([]string, len(blocks))
-	idMap := make(map[string]string, len(blocks))
 	for index := range blocks {
 		oldIDs[index] = blocks[index].ID
 		blocks[index].ID = fmt.Sprintf("block_%06d", index+1)
-		if oldIDs[index] != "" {
-			idMap[oldIDs[index]] = blocks[index].ID
-		}
 	}
 	stack := make(map[int]string)
+	priorHeadings := make(map[string]string, len(blocks))
 	for index := range blocks {
 		block := &blocks[index]
-		if explicit := idMap[block.ParentID]; explicit != "" {
-			block.ParentID = explicit
-			continue
-		}
+		explicit := priorHeadings[block.ParentID]
 		if block.Kind == SemanticKindHeading {
-			block.ParentID = nearestSemanticHeading(stack, block.SectionDepth-1)
+			if explicit != "" {
+				block.ParentID = explicit
+			} else {
+				block.ParentID = nearestSemanticHeading(stack, block.SectionDepth-1)
+			}
 			for depth := range stack {
 				if depth >= block.SectionDepth {
 					delete(stack, depth)
 				}
 			}
 			stack[block.SectionDepth] = block.ID
-			continue
+		} else if explicit != "" {
+			block.ParentID = explicit
+		} else {
+			block.ParentID = nearestSemanticHeading(stack, 6)
 		}
-		block.ParentID = nearestSemanticHeading(stack, 6)
+		if oldIDs[index] != "" && block.Kind == SemanticKindHeading {
+			priorHeadings[oldIDs[index]] = block.ID
+		}
 	}
 }
 

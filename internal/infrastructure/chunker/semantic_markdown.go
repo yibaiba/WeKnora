@@ -26,6 +26,8 @@ type semanticLine struct {
 type semanticScanner struct {
 	lines     []semanticLine
 	blocks    []SemanticBlock
+	astBlocks map[int]semanticASTBlock
+	pageLines map[int]struct{}
 	tableSeq  int
 	recordSeq int
 }
@@ -35,7 +37,11 @@ func analyzeLocalSemanticBlocks(content string) []SemanticBlock {
 	if len(runes) == 0 {
 		return nil
 	}
-	scanner := semanticScanner{lines: buildSemanticLines(runes)}
+	lines := buildSemanticLines(runes)
+	scanner := semanticScanner{
+		lines: lines, astBlocks: buildSemanticASTBlocks(content, lines),
+		pageLines: detectRepeatedPageRegions(lines),
+	}
 	scanner.scan()
 	markSemanticPreamble(scanner.blocks)
 	return scanner.blocks
@@ -61,8 +67,23 @@ func buildSemanticLines(runes []rune) []semanticLine {
 
 func (scanner *semanticScanner) scan() {
 	for index := 0; index < len(scanner.lines); {
+		_, repeatedPageRegion := scanner.pageLines[index]
+		if repeatedPageRegion || strings.Contains(scanner.lines[index].text, "\f") {
+			block := newSemanticBlock(semanticBlockSpec{
+				kind: SemanticKindPageRegion, start: scanner.lines[index].start,
+				end: scanner.lines[index].end, confidence: SemanticConfidenceSoft,
+			})
+			scanner.blocks = append(scanner.blocks, block)
+			index++
+			continue
+		}
 		if scanner.lines[index].trimmed == "" {
 			index = scanner.addBlank(index)
+			continue
+		}
+		if next, blocks, ok := scanner.consumeASTBlock(index); ok {
+			scanner.blocks = append(scanner.blocks, blocks...)
+			index = next
 			continue
 		}
 		if next, blocks, ok := scanner.consumeHTMLTable(index); ok {
@@ -88,7 +109,8 @@ func (scanner *semanticScanner) consumeSpecial(index int) (int, SemanticBlock, b
 	if isFenceStart(line.trimmed) {
 		return scanner.consumeFence(index)
 	}
-	if strings.Contains(line.text, "\f") || PageFooterPattern.MatchString(line.trimmed) {
+	_, repeatedPageRegion := scanner.pageLines[index]
+	if repeatedPageRegion || strings.Contains(line.text, "\f") || PageFooterPattern.MatchString(line.trimmed) {
 		return index + 1, newSemanticBlock(semanticBlockSpec{
 			kind: SemanticKindPageRegion, start: line.start, end: line.end, confidence: SemanticConfidenceSoft,
 		}), true
@@ -101,14 +123,6 @@ func (scanner *semanticScanner) consumeSpecial(index int) (int, SemanticBlock, b
 	}
 	if semanticListPattern.MatchString(line.trimmed) {
 		return scanner.consumeListItem(index)
-	}
-	if tableRowPattern.MatchString(line.trimmed) {
-		scanner.tableSeq++
-		block := newSemanticBlock(semanticBlockSpec{
-			kind: SemanticKindTableRow, start: line.start, end: line.end, confidence: SemanticConfidenceSoft,
-		})
-		block.TableID = semanticTableID(scanner.tableSeq)
-		return index + 1, block, true
 	}
 	if next, block, ok := scanner.consumeRecord(index); ok {
 		return next, block, true
@@ -153,6 +167,12 @@ func (scanner *semanticScanner) addParagraph(index int) int {
 
 func (scanner *semanticScanner) isStructuralStart(index int) bool {
 	line := scanner.lines[index]
+	if _, ok := scanner.astBlocks[index]; ok {
+		return true
+	}
+	if _, ok := scanner.pageLines[index]; ok || strings.Contains(line.text, "\f") {
+		return true
+	}
 	if isFenceStart(line.trimmed) || strings.Contains(strings.ToLower(line.trimmed), "<table") {
 		return true
 	}
@@ -165,7 +185,7 @@ func (scanner *semanticScanner) isStructuralStart(index int) bool {
 	if tableRowPattern.MatchString(line.trimmed) || semanticKeyValue.MatchString(line.trimmed) {
 		return true
 	}
-	return isExplicitQuestion(line.trimmed)
+	return isExplicitQuestion(semanticUnquote(line.trimmed))
 }
 
 func (scanner *semanticScanner) consumeFence(index int) (int, SemanticBlock, bool) {
@@ -191,6 +211,9 @@ func isFenceStart(value string) bool {
 }
 
 func semanticHeading(value string, lines []semanticLine, index int) (int, string, bool) {
+	if tableRowPattern.MatchString(value) {
+		return 0, "", false
+	}
 	if match := MarkdownHeadingPattern.FindStringSubmatch(value); match != nil {
 		return len(match[1]), SemanticConfidenceHigh, true
 	}

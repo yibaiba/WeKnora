@@ -123,9 +123,42 @@ func sliceSemanticDocument(document SemanticDocument, start, end int) (SemanticD
 		block.End = min(source.End, end) - start
 		blocks = append(blocks, block)
 	}
+	clearExternalSemanticParents(blocks)
+	downgradeSlicedTablesWithoutHeaders(blocks)
 	result := SemanticDocument{ContentLength: end - start, Blocks: blocks}
 	if err := ValidateSemanticDocument(result); err != nil {
 		return SemanticDocument{}, err
 	}
 	return result, nil
+}
+
+func downgradeSlicedTablesWithoutHeaders(blocks []SemanticBlock) {
+	headers := make(map[string]struct{})
+	for _, block := range blocks {
+		if block.Kind == SemanticKindTableHeader {
+			headers[block.TableID] = struct{}{}
+		}
+	}
+	for index := range blocks {
+		if blocks[index].Kind != SemanticKindTableRow {
+			continue
+		}
+		if _, ok := headers[blocks[index].TableID]; ok {
+			continue
+		}
+		blocks[index].Kind = SemanticKindParagraph
+		blocks[index].TableID = ""
+	}
+}
+
+func clearExternalSemanticParents(blocks []SemanticBlock) {
+	ids := make(map[string]struct{}, len(blocks))
+	for _, block := range blocks {
+		ids[block.ID] = struct{}{}
+	}
+	for index := range blocks {
+		if _, ok := ids[blocks[index].ParentID]; !ok {
+			blocks[index].ParentID = ""
+		}
+	}
 }

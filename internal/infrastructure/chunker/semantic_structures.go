@@ -46,14 +46,14 @@ func isMarkdownTableSeparator(value string) bool {
 }
 
 func (scanner *semanticScanner) consumeFAQ(index int) (int, SemanticBlock, bool) {
-	if !isExplicitQuestion(scanner.lines[index].trimmed) || index+1 >= len(scanner.lines) ||
-		!isExplicitAnswer(scanner.lines[index+1].trimmed) {
+	if !isExplicitQuestion(semanticUnquote(scanner.lines[index].trimmed)) || index+1 >= len(scanner.lines) ||
+		!isExplicitAnswer(semanticUnquote(scanner.lines[index+1].trimmed)) {
 		return 0, SemanticBlock{}, false
 	}
 	start := scanner.lines[index].start
 	end := scanner.lines[index+1].end
 	index += 2
-	for index < len(scanner.lines) && scanner.lines[index].trimmed != "" && !scanner.isStructuralStart(index) {
+	for index < len(scanner.lines) && scanner.lines[index].trimmed != "" && !scanner.isHardStructuralStart(index) {
 		end = scanner.lines[index].end
 		index++
 	}
@@ -78,6 +78,14 @@ func isExplicitAnswer(value string) bool {
 		strings.HasPrefix(lower, "回答：")
 }
 
+func semanticUnquote(value string) string {
+	value = strings.TrimSpace(value)
+	for strings.HasPrefix(value, ">") {
+		value = strings.TrimSpace(strings.TrimPrefix(value, ">"))
+	}
+	return value
+}
+
 func (scanner *semanticScanner) consumeImage(index int) (int, SemanticBlock, bool) {
 	start := scanner.lines[index].start
 	end := scanner.lines[index].end
@@ -100,14 +108,19 @@ func (scanner *semanticScanner) consumeImage(index int) (int, SemanticBlock, boo
 
 func (scanner *semanticScanner) isHardStructuralStart(index int) bool {
 	line := scanner.lines[index]
-	if isFenceStart(line.trimmed) || semanticListPattern.MatchString(line.trimmed) ||
+	if block, ok := scanner.astBlocks[index]; ok && block.kind != semanticASTHeading {
+		return true
+	}
+	if isFenceStart(line.trimmed) || imageRefPattern.MatchString(line.trimmed) ||
+		semanticListPattern.MatchString(line.trimmed) ||
 		tableRowPattern.MatchString(line.trimmed) || semanticKeyValue.MatchString(line.trimmed) {
 		return true
 	}
 	if depth, confidence, ok := semanticHeading(line.trimmed, scanner.lines, index); ok {
 		return depth > 0 && confidence == SemanticConfidenceHigh
 	}
-	return isExplicitQuestion(line.trimmed) || strings.Contains(strings.ToLower(line.trimmed), "<table")
+	return isExplicitQuestion(semanticUnquote(line.trimmed)) ||
+		strings.Contains(strings.ToLower(line.trimmed), "<table")
 }
 
 func (scanner *semanticScanner) consumeListItem(index int) (int, SemanticBlock, bool) {
@@ -132,8 +145,14 @@ func (scanner *semanticScanner) consumeRecord(index int) (int, SemanticBlock, bo
 	start := scanner.lines[index].start
 	end := scanner.lines[index].end
 	count := 1
+	keys := map[string]struct{}{semanticRecordKey(scanner.lines[index].trimmed): {}}
 	index++
 	for index < len(scanner.lines) && semanticKeyValue.MatchString(scanner.lines[index].trimmed) {
+		key := semanticRecordKey(scanner.lines[index].trimmed)
+		if _, repeated := keys[key]; repeated && count >= 2 {
+			break
+		}
+		keys[key] = struct{}{}
 		end = scanner.lines[index].end
 		count++
 		index++
@@ -148,4 +167,13 @@ func (scanner *semanticScanner) consumeRecord(index int) (int, SemanticBlock, bo
 	block.RecordID = semanticRecordID(scanner.recordSeq)
 	block.ContextKinds = []string{"record"}
 	return index, block, true
+}
+
+func semanticRecordKey(value string) string {
+	value = strings.TrimSpace(value)
+	separator := strings.IndexAny(value, ":：")
+	if separator < 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(value[:separator]))
 }
