@@ -43,6 +43,8 @@ go test -tags sqlite_fts5 -timeout=60s \
 
 缺少任一必需凭证时，工作流必须在 Job Summary 标记 `NOT_EXECUTED` 并列出缺失的 secret 名称，不得生成模拟指标。提供凭证后，API 或门槛失败会直接使任务失败。
 
+vector、hybrid、rerank 三种模式分别执行同一门槛：结构查询 `Recall@5 >= 0.95`，普通查询 `Recall@5` 不低于该模式的当前分块基线。任一模式失败都会使定时任务失败，不能由其他模式的结果抵消。
+
 ## Shadow 准入门槛
 
 shadow 至少连续运行 7 天并覆盖 500 份文档，其中 PDF、DOCX、PPTX 各不少于 50 份。按 `knowledge.metadata.ingestion_analysis.semantic_diagnostics` 的 `source_format` 聚合样本与指标；该字段只包含计数、比例、枚举和 reason code。

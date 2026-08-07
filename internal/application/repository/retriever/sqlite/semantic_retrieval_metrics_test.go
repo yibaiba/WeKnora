@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const semanticStructureRecallGate = 0.95
+
 type semanticMetricSet struct {
 	RecallAtFive            float64
 	MRR                     float64
@@ -137,6 +139,44 @@ func requireSemanticMetricRange(t *testing.T, report semanticEvaluationReport) {
 			require.LessOrEqual(t, value, 1.0)
 		}
 	}
+}
+
+func validateSemanticRolloutGate(
+	v2 semanticEvaluationReport,
+	baseline semanticEvaluationReport,
+) error {
+	if v2.Structure.RecallAtFive < semanticStructureRecallGate {
+		return fmt.Errorf(
+			"structure Recall@5 %.3f is below %.3f",
+			v2.Structure.RecallAtFive, semanticStructureRecallGate,
+		)
+	}
+	if v2.Ordinary.RecallAtFive < baseline.Ordinary.RecallAtFive {
+		return fmt.Errorf(
+			"ordinary Recall@5 %.3f is below baseline %.3f",
+			v2.Ordinary.RecallAtFive, baseline.Ordinary.RecallAtFive,
+		)
+	}
+	return nil
+}
+
+func TestSemanticRolloutGateRejectsStructureAndOrdinaryRegression(t *testing.T) {
+	baseline := semanticEvaluationReport{
+		Ordinary: semanticMetricSet{RecallAtFive: 0.80},
+	}
+	valid := semanticEvaluationReport{
+		Structure: semanticMetricSet{RecallAtFive: semanticStructureRecallGate},
+		Ordinary:  semanticMetricSet{RecallAtFive: 0.80},
+	}
+	require.NoError(t, validateSemanticRolloutGate(valid, baseline))
+
+	structureRegression := valid
+	structureRegression.Structure.RecallAtFive = semanticStructureRecallGate - 0.01
+	require.ErrorContains(t, validateSemanticRolloutGate(structureRegression, baseline), "structure Recall@5")
+
+	ordinaryRegression := valid
+	ordinaryRegression.Ordinary.RecallAtFive = baseline.Ordinary.RecallAtFive - 0.01
+	require.ErrorContains(t, validateSemanticRolloutGate(ordinaryRegression, baseline), "ordinary Recall@5")
 }
 
 func addSemanticMetricSets(left, right semanticMetricSet) semanticMetricSet {

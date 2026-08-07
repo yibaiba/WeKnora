@@ -81,23 +81,26 @@ func TestExternalSemanticChunkingRetrieval(t *testing.T) {
 		queryVectors: queryVectors, reranker: reranker,
 	}
 	vectorReport := evaluateExternalSemanticMode(t, fixture.Queries, semanticIndex, semanticEvaluator.vector)
+	baselineVector := evaluateExternalSemanticMode(t, fixture.Queries, baselineIndex, baselineEvaluator.vector)
 	hybridReport := evaluateExternalSemanticMode(t, fixture.Queries, semanticIndex, semanticEvaluator.hybrid)
 	baselineHybrid := evaluateExternalSemanticMode(t, fixture.Queries, baselineIndex, baselineEvaluator.hybrid)
 	rerankReport := evaluateExternalSemanticMode(t, fixture.Queries, semanticIndex, semanticEvaluator.reranked)
 	baselineRerank := evaluateExternalSemanticMode(t, fixture.Queries, baselineIndex, baselineEvaluator.reranked)
 
 	for _, report := range []semanticEvaluationReport{
-		vectorReport, hybridReport, baselineHybrid, rerankReport, baselineRerank,
+		vectorReport, baselineVector, hybridReport, baselineHybrid, rerankReport, baselineRerank,
 	} {
 		requireSemanticMetricRange(t, report)
 	}
 	logSemanticEvaluation(t, "external_vector_semantic", vectorReport)
+	logSemanticEvaluation(t, "external_vector_baseline", baselineVector)
 	logSemanticEvaluation(t, "external_hybrid_semantic", hybridReport)
 	logSemanticEvaluation(t, "external_hybrid_baseline", baselineHybrid)
 	logSemanticEvaluation(t, "external_rerank_semantic", rerankReport)
 	logSemanticEvaluation(t, "external_rerank_baseline", baselineRerank)
-	requireSemanticRolloutGate(t, hybridReport, baselineHybrid)
-	requireSemanticRolloutGate(t, rerankReport, baselineRerank)
+	require.NoError(t, validateSemanticRolloutGate(vectorReport, baselineVector), "vector rollout gate")
+	require.NoError(t, validateSemanticRolloutGate(hybridReport, baselineHybrid), "hybrid rollout gate")
+	require.NoError(t, validateSemanticRolloutGate(rerankReport, baselineRerank), "rerank rollout gate")
 }
 
 func loadSemanticExternalConfig(t *testing.T) semanticExternalConfig {
@@ -266,14 +269,4 @@ func orderSemanticEvalRerank(
 		result = append(result, &cloned)
 	}
 	return result, nil
-}
-
-func requireSemanticRolloutGate(
-	t *testing.T,
-	v2 semanticEvaluationReport,
-	baseline semanticEvaluationReport,
-) {
-	t.Helper()
-	require.GreaterOrEqual(t, v2.Structure.RecallAtFive, 0.95)
-	require.GreaterOrEqual(t, v2.Ordinary.RecallAtFive, baseline.Ordinary.RecallAtFive)
 }
