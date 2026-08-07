@@ -33,13 +33,14 @@ type semanticContext struct {
 }
 
 type SemanticContextRequest struct {
-	Content       string
-	Document      SemanticDocument
-	Block         SemanticBlock
-	Continuation  bool
-	TokenLimit    int
-	TokenCounter  TokenCounter
-	PackingPolicy types.SemanticPackingPolicy
+	Content         string
+	Document        SemanticDocument
+	Block           SemanticBlock
+	Continuation    bool
+	TokenLimit      int
+	TokenCounter    TokenCounter
+	EmbeddingPrefix string
+	PackingPolicy   types.SemanticPackingPolicy
 }
 
 type SemanticContextResult struct {
@@ -49,7 +50,10 @@ type SemanticContextResult struct {
 
 func BuildSemanticContext(request SemanticContextRequest) (SemanticContextResult, error) {
 	context, err := newSemanticContextIndex(request.Content, request.Document, request.PackingPolicy).contextFor(
-		request.Block, request.Continuation, request.TokenLimit, request.TokenCounter,
+		request.Block, semanticContextOptions{
+			continuation: request.Continuation, tokenLimit: request.TokenLimit,
+			counter: request.TokenCounter, embeddingPrefix: request.EmbeddingPrefix,
+		},
 	)
 	if err != nil {
 		return SemanticContextResult{}, err
@@ -81,14 +85,25 @@ func newSemanticContextIndex(
 	return index
 }
 
+type semanticContextOptions struct {
+	continuation    bool
+	tokenLimit      int
+	counter         TokenCounter
+	embeddingPrefix string
+}
+
+type semanticContextBudget struct {
+	headerTokenLimit int
+	totalTokenLimit  int
+	embeddingPrefix  string
+}
+
 func (index semanticContextIndex) contextFor(
 	block SemanticBlock,
-	continuation bool,
-	tokenLimit int,
-	counter TokenCounter,
+	options semanticContextOptions,
 ) (semanticContext, error) {
-	items := index.contextItems(block, continuation)
-	if tokenLimit <= 0 {
+	items := index.contextItems(block, options.continuation)
+	if options.tokenLimit <= 0 {
 		return semanticContext{header: joinSemanticContextItems(items)}, nil
 	}
 	percent, cap := semanticContextTokenPercent, semanticContextTokenCap
@@ -98,8 +113,11 @@ func (index semanticContextIndex) contextFor(
 	if index.policy.ContextTokenLimit > 0 {
 		cap = index.policy.ContextTokenLimit
 	}
-	budget := min(cap, tokenLimit*percent/100)
-	return fitSemanticContext(items, budget, tokenCounterOrConservative(counter))
+	budget := semanticContextBudget{
+		headerTokenLimit: min(cap, options.tokenLimit*percent/100),
+		totalTokenLimit:  options.tokenLimit, embeddingPrefix: options.embeddingPrefix,
+	}
+	return fitSemanticContext(items, budget, tokenCounterOrConservative(options.counter))
 }
 
 func (index semanticContextIndex) contextItems(
@@ -124,18 +142,18 @@ func (index semanticContextIndex) contextItems(
 
 func fitSemanticContext(
 	items []semanticContextItem,
-	budget int,
+	budget semanticContextBudget,
 	counter TokenCounter,
 ) (semanticContext, error) {
 	selected := make([]semanticContextItem, 0, len(items))
 	reasons := make([]string, 0, 2)
 	for _, item := range items {
 		candidate := append(append([]semanticContextItem(nil), selected...), item)
-		count, err := counter.Count(joinSemanticContextItems(candidate))
+		fits, err := semanticContextCandidateFits(candidate, budget, counter)
 		if err != nil {
 			return semanticContext{}, err
 		}
-		if count.Count <= budget {
+		if fits {
 			selected = candidate
 			continue
 		}
@@ -147,6 +165,26 @@ func fitSemanticContext(
 		reasons = appendUniqueReason(reasons, SemanticReasonAncestorOmitted)
 	}
 	return semanticContext{header: joinSemanticContextItems(selected), reasonCodes: reasons}, nil
+}
+
+func semanticContextCandidateFits(
+	items []semanticContextItem,
+	budget semanticContextBudget,
+	counter TokenCounter,
+) (bool, error) {
+	header := joinSemanticContextItems(items)
+	count, err := counter.Count(header)
+	if err != nil || count.Count > budget.headerTokenLimit {
+		return false, err
+	}
+	if strings.TrimSpace(budget.embeddingPrefix) == "" {
+		return true, nil
+	}
+	overhead, err := counter.Count(embeddingContentOverhead(budget.embeddingPrefix, header))
+	if err != nil {
+		return false, err
+	}
+	return overhead.Count < budget.totalTokenLimit, nil
 }
 
 func (index semanticContextIndex) headingAncestorsNearestFirst(parentID string) []string {

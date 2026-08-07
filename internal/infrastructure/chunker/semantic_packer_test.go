@@ -145,6 +145,73 @@ func TestSemanticPackingRejectsEmbeddingPrefixThatConsumesBudget(t *testing.T) {
 	require.ErrorContains(t, err, "embedding prefix exceeds chunk budget")
 }
 
+func TestSemanticPackingEmbeddingPrefixDoesNotShrinkContextAllowance(t *testing.T) {
+	heading := "# " + strings.TrimSpace(strings.Repeat("ctx ", 14))
+	content := heading + "\n\nbody evidence remains short"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
+	prefix := strings.TrimSpace(strings.Repeat("title ", 45))
+
+	chunks, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 65, AllowZeroOverlap: true, TokenLimit: 100,
+		Languages: []string{LangEnglish}, TokenCounter: counter,
+		EmbeddingPrefix: prefix,
+	}, document)
+
+	require.NoError(t, err)
+	foundBody := false
+	for _, current := range chunks {
+		count, countErr := counter.Count(PrependEmbeddingPrefix(prefix, current.EmbeddingContent()))
+		require.NoError(t, countErr)
+		require.LessOrEqual(t, count.Count, 100)
+		if !strings.Contains(current.Content, "body evidence") {
+			continue
+		}
+		foundBody = true
+		require.Equal(t, heading, current.ContextHeader)
+		require.NotContains(t, current.ContextReasonCodes, SemanticReasonAncestorOmitted)
+	}
+	require.True(t, foundBody)
+}
+
+func TestSemanticParentChildEmbeddingPrefixPreservesContextAllowance(t *testing.T) {
+	heading := "# " + strings.TrimSpace(strings.Repeat("ctx ", 14))
+	content := heading + "\n\nbody evidence remains short"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+	counter, err := NewTokenCounter(TokenCounterConfig{Encoding: TokenizerEncodingCL100KBase})
+	require.NoError(t, err)
+	prefix := strings.TrimSpace(strings.Repeat("title ", 45))
+
+	result, err := SplitParentChildSemanticDocument(SemanticParentChildRequest{
+		Content: content,
+		ParentConfig: SplitterConfig{
+			ChunkSize: 200, AllowZeroOverlap: true,
+		},
+		ChildConfig: SplitterConfig{
+			ChunkSize: 65, AllowZeroOverlap: true, TokenLimit: 100,
+			Languages: []string{LangEnglish}, TokenCounter: counter, EmbeddingPrefix: prefix,
+		},
+		Document: document,
+	})
+
+	require.NoError(t, err)
+	foundBody := false
+	for _, current := range result.Children {
+		count, countErr := counter.Count(PrependEmbeddingPrefix(prefix, current.EmbeddingContent()))
+		require.NoError(t, countErr)
+		require.LessOrEqual(t, count.Count, 100)
+		if strings.Contains(current.Content, "body evidence") {
+			foundBody = true
+			require.Equal(t, heading, current.ContextHeader)
+			require.NotContains(t, current.ContextReasonCodes, SemanticReasonAncestorOmitted)
+		}
+	}
+	require.True(t, foundBody)
+}
+
 func TestSemanticContextKeepsNearestHeadingAndReportsOmittedAncestor(t *testing.T) {
 	content := "# Outer context heading with many descriptive words\n\n## Inner\n\n" +
 		strings.Repeat("body words remain within the inner section. ", 8)

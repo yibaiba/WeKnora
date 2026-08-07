@@ -64,6 +64,18 @@ func PrependEmbeddingPrefix(prefix, content string) string {
 	return prefix + "\n" + content
 }
 
+func embeddingContentOverhead(prefix, contextHeader string) string {
+	prefix = strings.TrimSpace(prefix)
+	contextHeader = strings.TrimSpace(contextHeader)
+	if contextHeader != "" {
+		return PrependEmbeddingPrefix(prefix, contextHeader+"\n\n")
+	}
+	if prefix != "" {
+		return prefix + "\n"
+	}
+	return ""
+}
+
 // ImageRef is an image reference found within a chunk's content.
 type ImageRef struct {
 	OriginalRef string

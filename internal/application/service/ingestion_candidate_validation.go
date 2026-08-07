@@ -253,7 +253,8 @@ func (validator ingestionStructureValidator) semanticBlockFitsBudget(
 	context, err := chunker.BuildSemanticContext(chunker.SemanticContextRequest{
 		Content: validator.request.content, Document: validator.request.document,
 		Block: block, TokenLimit: validator.request.constraints.TokenLimit,
-		TokenCounter: validator.request.constraints.TokenCounter,
+		TokenCounter:    validator.request.constraints.TokenCounter,
+		EmbeddingPrefix: validator.request.constraints.EmbeddingPrefix,
 	})
 	if err != nil {
 		return false, err
@@ -261,6 +262,7 @@ func (validator ingestionStructureValidator) semanticBlockFitsBudget(
 	if context.Header != "" {
 		body = context.Header + "\n\n" + body
 	}
+	body = chunker.PrependEmbeddingPrefix(validator.request.constraints.EmbeddingPrefix, body)
 	counter := validator.request.constraints.TokenCounter
 	if counter == nil {
 		var err error

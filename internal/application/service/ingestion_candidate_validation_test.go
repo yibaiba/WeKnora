@@ -95,6 +95,39 @@ func TestIngestionCandidateValidationCountsProductionTitlePrefix(t *testing.T) {
 	require.Equal(t, fullCount.Count, result.embeddingTokens)
 }
 
+func TestIngestionCandidateValidationTreatsTitleOversizeAtomicAsIneligible(t *testing.T) {
+	content := "Q: compact question?\nA: compact answer."
+	document := chunker.SemanticDocument{
+		ContentLength: len([]rune(content)),
+		Blocks: []chunker.SemanticBlock{{
+			ID: "faq", Kind: chunker.SemanticKindFAQ, Start: 0, End: len([]rune(content)),
+			Atomic: true, Confidence: chunker.SemanticConfidenceHigh,
+			ContextKinds: []string{"question", "answer"},
+		}},
+	}
+	counter, err := chunker.NewTokenCounter(chunker.TokenCounterConfig{
+		Encoding: chunker.TokenizerEncodingCL100KBase,
+	})
+	require.NoError(t, err)
+	bodyCount, err := counter.Count(content)
+	require.NoError(t, err)
+	cut := len([]rune(content)) / 2
+	request := ingestionValidationTestRequest(content, document, []chunker.Chunk{
+		{Content: string([]rune(content)[:cut]), Start: 0, End: cut},
+		{Content: string([]rune(content)[cut:]), Start: cut, End: len([]rune(content))},
+	})
+	request.constraints = types.IngestionChunkingConstraints{
+		TokenLimit: bodyCount.Count, TokenCounter: counter,
+		EmbeddingPrefix: "Production title makes the complete atom too large",
+	}
+	request.scoreConfig.ChunkSize = len([]rune(content))
+
+	result := requireIngestionCandidateValidation(t, request)
+
+	require.Zero(t, result.quality.SplitAtomicBlocks)
+	require.NotContains(t, result.violations, ingestionViolationAtomicSplit)
+}
+
 func TestIngestionCandidateValidationRejectsRequiredContextOverBudget(t *testing.T) {
 	header := "| Very descriptive column name | Another descriptive column |\n| --- | --- |\n"
 	content := header + "| value | result |\n"
