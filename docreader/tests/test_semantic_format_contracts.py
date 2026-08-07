@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-import pytest
+from function_test_loader import load_function_tests
 
 from docreader.models.document import Document, StructureBlock
 from docreader.structure import structure_blocks_from_document
@@ -28,19 +28,21 @@ def structure_block(contract: dict, raw: dict) -> StructureBlock:
     return StructureBlock(start=start, end=start + len(raw["needle"]), **values)
 
 
-@pytest.mark.parametrize("contract", load_contracts(), ids=lambda item: item["format"])
-def test_format_contract_serializes_optional_structure_blocks(contract: dict):
-    source_blocks = [structure_block(contract, raw) for raw in contract["structure_blocks"]]
-    document = Document(content=contract["markdown"], structure_blocks=source_blocks)
+def test_format_contract_serializes_optional_structure_blocks():
+    for contract in load_contracts():
+        source_blocks = [
+            structure_block(contract, raw) for raw in contract["structure_blocks"]
+        ]
+        document = Document(content=contract["markdown"], structure_blocks=source_blocks)
 
-    transported = structure_blocks_from_document(document)
+        transported = structure_blocks_from_document(document)
 
-    assert len(transported) == len(source_blocks)
-    for source, result in zip(source_blocks, transported, strict=True):
-        assert result.kind == source.kind
-        assert result.start == source.start
-        assert result.end == source.end
-        assert result.context_kinds == source.context_kinds
+        assert len(transported) == len(source_blocks), contract["format"]
+        for source, result in zip(source_blocks, transported, strict=True):
+            assert result.kind == source.kind
+            assert result.start == source.start
+            assert result.end == source.end
+            assert result.context_kinds == source.context_kinds
 
 
 def test_format_contract_covers_all_required_inputs():
@@ -52,3 +54,8 @@ def test_format_contract_covers_all_required_inputs():
         "txt",
         "pptx",
     }
+
+
+def load_tests(loader, tests, pattern):
+    del loader, pattern
+    return load_function_tests(globals(), tests)

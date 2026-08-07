@@ -10,6 +10,7 @@ on:
       - "go.sum"
       - "Makefile"
       - "config/**"
+      - "internal/infrastructure/chunker/testdata/semantic_retrieval_eval.json"
       - "migrations/**"
       - "scripts/**"
       - "skills/preloaded/**"
@@ -23,6 +24,7 @@ on:
       - "go.sum"
       - "Makefile"
       - "config/**"
+      - "internal/infrastructure/chunker/testdata/semantic_retrieval_eval.json"
       - "migrations/**"
       - "scripts/**"
       - "skills/preloaded/**"
@@ -92,7 +94,14 @@ jobs:
         run: |
           mapfile -t pkgs < <(go list ./... | grep -v '/docreader/')
           go vet "${pkgs[@]}"
-          go test "${pkgs[@]}"
+          go test -timeout=60s "${pkgs[@]}"
+
+      - name: Run SQLite FTS5 semantic retrieval evaluation
+        run: >-
+          go test -tags sqlite_fts5 -timeout=60s
+          ./internal/application/repository/retriever/sqlite
+          -run '^TestSemantic'
+          -count=1 -v
 
       - name: Build server
         run: go build ./cmd/server

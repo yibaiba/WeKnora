@@ -1,9 +1,11 @@
 from io import BytesIO
+import unittest
 
 from pptx import Presentation
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches
-import pytest
+
+from function_test_loader import load_function_tests
 
 from docreader.models.document import Document, StructureBlock
 from docreader.parser.base_parser import BaseParser
@@ -98,8 +100,10 @@ def test_invalid_pptx_metadata_preserves_markdown_and_exposes_reason():
 
 
 def test_markitdown_pptx_production_path_emits_final_structure():
-    pytest.importorskip("markitdown", reason="MarkItDown runtime dependencies unavailable")
-    from docreader.parser.markitdown_parser import MarkitdownParser
+    try:
+        from docreader.parser.markitdown_parser import MarkitdownParser
+    except ImportError as error:
+        raise unittest.SkipTest("MarkItDown runtime dependencies unavailable") from error
 
     document = MarkitdownParser(
         file_name="quarterly-review.pptx", file_type="pptx"
@@ -177,10 +181,13 @@ def _block(
     )
 
 
-def test_pipeline_relocates_upstream_hints_and_merges_images_metadata(caplog):
+def test_pipeline_relocates_upstream_hints_and_merges_images_metadata():
     parser_type = PipelineParser.create(_StructuredStage, _RewriteStage)
 
-    document = parser_type(file_type="pptx").parse_into_text(b"presentation")
+    with unittest.TestCase().assertLogs(
+        "docreader.parser.chain_parser", level="WARNING"
+    ) as captured:
+        document = parser_type(file_type="pptx").parse_into_text(b"presentation")
 
     assert [block.id for block in document.structure_blocks] == [
         "heading-1",
@@ -196,7 +203,7 @@ def test_pipeline_relocates_upstream_hints_and_merges_images_metadata(caplog):
         "stored/chart-long-name.png": "stored",
     }
     assert document.metadata == {"source": "first", "stage": "rewrite"}
-    assert "pipeline_hint_source_unmatched" in caplog.text
+    assert "pipeline_hint_source_unmatched" in "\n".join(captured.output)
 
 
 def test_relocation_rejects_ambiguous_normalized_text():
@@ -212,3 +219,8 @@ def test_relocation_rejects_ambiguous_normalized_text():
     assert result.blocks == ()
     assert result.rejected_count == 1
     assert result.reason_codes == ("pipeline_hint_normalized_ambiguous",)
+
+
+def load_tests(loader, tests, pattern):
+    del loader, pattern
+    return load_function_tests(globals(), tests)

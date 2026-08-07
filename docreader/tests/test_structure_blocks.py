@@ -1,3 +1,5 @@
+from function_test_loader import load_function_tests
+
 from docreader.models.document import Document, StructureBlock
 from docreader.structure import structure_blocks_from_document
 
@@ -30,3 +32,8 @@ def test_structure_blocks_map_to_transport_message():
     assert blocks[0].id == "heading-1"
     assert blocks[0].section_depth == 1
     assert blocks[0].context_kinds == ["section"]
+
+
+def load_tests(loader, tests, pattern):
+    del loader, pattern
+    return load_function_tests(globals(), tests)

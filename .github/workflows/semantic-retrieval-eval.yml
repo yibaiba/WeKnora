@@ -1,0 +1,100 @@
+name: Semantic Retrieval Evaluation
+
+on:
+  schedule:
+    - cron: "30 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semantic-retrieval-evaluation
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.26"
+  GOPROXY: https://proxy.golang.org,direct
+
+jobs:
+  evaluate:
+    name: Real embedding and rerank evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check evaluation credentials
+        id: credentials
+        shell: bash
+        env:
+          SEMANTIC_EVAL_EMBEDDING_BASE_URL: ${{ secrets.SEMANTIC_EVAL_EMBEDDING_BASE_URL }}
+          SEMANTIC_EVAL_EMBEDDING_API_KEY: ${{ secrets.SEMANTIC_EVAL_EMBEDDING_API_KEY }}
+          SEMANTIC_EVAL_EMBEDDING_MODEL: ${{ secrets.SEMANTIC_EVAL_EMBEDDING_MODEL }}
+          SEMANTIC_EVAL_RERANK_BASE_URL: ${{ secrets.SEMANTIC_EVAL_RERANK_BASE_URL }}
+          SEMANTIC_EVAL_RERANK_API_KEY: ${{ secrets.SEMANTIC_EVAL_RERANK_API_KEY }}
+          SEMANTIC_EVAL_RERANK_MODEL: ${{ secrets.SEMANTIC_EVAL_RERANK_MODEL }}
+        run: |
+          missing=()
+          for name in \
+            SEMANTIC_EVAL_EMBEDDING_BASE_URL \
+            SEMANTIC_EVAL_EMBEDDING_API_KEY \
+            SEMANTIC_EVAL_EMBEDDING_MODEL \
+            SEMANTIC_EVAL_RERANK_BASE_URL \
+            SEMANTIC_EVAL_RERANK_API_KEY \
+            SEMANTIC_EVAL_RERANK_MODEL; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "## Semantic retrieval evaluation: NOT_EXECUTED" >> "$GITHUB_STEP_SUMMARY"
+            echo "Missing required repository secrets: ${missing[*]}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v6
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download modules
+        if: steps.credentials.outputs.ready == 'true'
+        run: go mod download
+
+      - name: Run real retrieval evaluation
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          SEMANTIC_EVAL_EMBEDDING_BASE_URL: ${{ secrets.SEMANTIC_EVAL_EMBEDDING_BASE_URL }}
+          SEMANTIC_EVAL_EMBEDDING_API_KEY: ${{ secrets.SEMANTIC_EVAL_EMBEDDING_API_KEY }}
+          SEMANTIC_EVAL_EMBEDDING_MODEL: ${{ secrets.SEMANTIC_EVAL_EMBEDDING_MODEL }}
+          SEMANTIC_EVAL_RERANK_BASE_URL: ${{ secrets.SEMANTIC_EVAL_RERANK_BASE_URL }}
+          SEMANTIC_EVAL_RERANK_API_KEY: ${{ secrets.SEMANTIC_EVAL_RERANK_API_KEY }}
+          SEMANTIC_EVAL_RERANK_MODEL: ${{ secrets.SEMANTIC_EVAL_RERANK_MODEL }}
+          SEMANTIC_EVAL_RERANK_PROVIDER: ${{ secrets.SEMANTIC_EVAL_RERANK_PROVIDER }}
+        run: |
+          go test -tags "sqlite_fts5 retrieval_eval_external" -timeout=10m \
+            ./internal/application/repository/retriever/sqlite \
+            -run '^TestExternalSemanticChunkingRetrieval$' -count=1 -v \
+            | tee semantic-retrieval-eval.log
+
+      - name: Publish evaluation summary
+        if: always() && steps.credentials.outputs.ready == 'true'
+        shell: bash
+        run: |
+          echo "## Semantic retrieval evaluation" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          grep 'SEMANTIC_RETRIEVAL_EVAL' semantic-retrieval-eval.log \
+            | sed 's/^.*SEMANTIC_RETRIEVAL_EVAL/SEMANTIC_RETRIEVAL_EVAL/' \
+            >> "$GITHUB_STEP_SUMMARY" || echo "No metric rows produced" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.credentials.outputs.ready == 'true'
+        with:
+          name: semantic-retrieval-evaluation
+          path: semantic-retrieval-eval.log
+          if-no-files-found: error

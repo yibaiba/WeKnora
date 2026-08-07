@@ -60,8 +60,8 @@ jobs:
       - name: Compile Python sources
         run: uv run --project docreader --python ${{ env.PYTHON_VERSION }} python -m compileall -q docreader
 
-      - name: Run Python tests
-        run: uv run --project docreader --python ${{ env.PYTHON_VERSION }} python -m unittest discover -s docreader/tests -p "test_*.py" -v
+      - name: Run DocReader Python test suite
+        run: timeout 20m uv run --project docreader --python ${{ env.PYTHON_VERSION }} python -m unittest discover -s docreader/tests -p "test_*.py" -v
 
       - uses: actions/setup-go@v6
         with:
@@ -86,7 +86,7 @@ jobs:
           exit 1
 
       - name: Run Go client tests
-        run: go test ./docreader/client ./docreader/proto
+        run: go test -timeout=60s ./docreader/client ./docreader/proto
 
       - name: Stop DocReader gRPC server
         if: always()

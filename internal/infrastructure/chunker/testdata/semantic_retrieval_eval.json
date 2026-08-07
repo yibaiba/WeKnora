@@ -1,48 +1,90 @@
 {
   "chunk_size": 120,
   "chunk_overlap": 16,
-  "markdown": "# Release Verification\n\n## Scope\nThe release covers account access, exports, and scheduled maintenance.\nThe calibration interval remains thirty days for all regional sensors.\n\n## Interface Checks\n| Case | Category | Result |\n| --- | --- | --- |\n| TC-LOGIN | Authentication | Pass |\n| TC-EXPORT | Data Export | Pass |\n| TC-AUDIT | Audit Trail | Pass |\n\n## Performance\nRecord ID: PERF-001\nCategory: Throughput\nResult: Pass\nNotes: Sustained throughput remained above the target.\n\nRecord ID: PERF-002\nCategory: Latency\nResult: Pass\nNotes: Tail latency remained below the limit.\n\n## Operations FAQ\nQ: FAQ-ROLLBACK When is rollback approval required?\nA: Approval is required before the rollback window opens.\n\nQ: FAQ-OWNER Who owns the maintenance notice?\nA: The operations lead publishes the notice.\n\n## Retry Example\n```go\nfunc RetryTimeout() error {\n    return errors.New(\"timeout\")\n}\n```\n\n## Retention\nThe retention schedule keeps audit artifacts for ninety days.\nThe archive verification job runs every Friday.\n\n## Closing Notes\nRegional owners confirm the checklist after deployment.\nThe support handoff includes the incident contact matrix.\n",
+  "markdown": "# Release Verification\n\n## Scope\nThe release covers account access, exports, and scheduled maintenance.\nThe calibration interval remains thirty days for all regional sensors.\n\n## Interface Checks\n| Case | Category | Result |\n| --- | --- | --- |\n| TC-LOGIN | Authentication | Pass |\n| TC-EXPORT | Data Export | Pass |\n| TC-AUDIT | Audit Trail | Pass |\n\n## Performance\nRecord ID: PERF-001\nCategory: Throughput\nResult: Pass\nNotes: Sustained throughput remained above the target.\n\nRecord ID: PERF-002\nCategory: Latency\nResult: Pass\nNotes: Tail latency remained below the limit.\n\n## Operations FAQ\nQ: FAQ-ROLLBACK When is rollback approval required?\nA: Approval is required before the rollback window opens.\n\nQ: FAQ-OWNER Who owns the maintenance notice?\nA: The operations lead publishes the notice.\n\n## Retry Example\n```go\nfunc RetryTimeout() error {\n    return errors.New(\"timeout\")\n}\n```\n\n## Retention\nThe retention schedule keeps audit artifacts for ninety days.\nThe archive verification job runs every Friday.\n\n## Closing Notes\nRegional owners confirm the checklist after deployment.\nThe support handoff includes the incident contact matrix.\n\n# 运维手册\n\n## 目录\n- 数据导出恢复流程\n- 中文巡检结果\n- 跨页交付步骤\n\n## 正文：数据导出恢复流程\n恢复编号 BODY-DELIVERY-9。数据导出失败后先核验对象存储校验和，再重新生成下载链接。\n灾备演练每季度执行一次，并由值班负责人归档演练记录。\n\n## 中文巡检结果\n| 编号 | 检查项 | 状态 |\n| --- | --- | --- |\n| CN-TABLE-7 | 密钥轮换 | 已完成 |\n| CN-TABLE-8 | 权限复核 | 已完成 |\n\n## 中文常见问题\nQ: FAQ-CN-BACKUP 备份失败后由谁确认？\nA: 存储管理员确认快照完整性，值班经理批准再次执行。\n\n\fPage 12\n## 跨页交付步骤\n跨页任务 CROSS-PAGE-042 先由发布负责人核对交付清单。\n\fPage 13\n续页要求安全负责人复核签名，最后由项目经理归档。\n",
   "queries": [
     {
       "class": "structure",
+      "kind": "table",
       "query": "Authentication Result",
       "marker": "TC-LOGIN",
       "required_context": "| Case | Category | Result |"
     },
     {
       "class": "structure",
+      "kind": "record",
       "query": "Throughput sustained target",
       "marker": "PERF-001",
       "required_context": "Record ID: PERF-001"
     },
     {
       "class": "structure",
+      "kind": "faq",
       "query": "rollback approval window",
       "marker": "FAQ-ROLLBACK",
       "required_context": "A: Approval is required"
     },
     {
       "class": "structure",
+      "kind": "code",
       "query": "RetryTimeout timeout",
       "marker": "RetryTimeout",
       "required_context": "```go"
     },
     {
+      "class": "structure",
+      "kind": "toc_body",
+      "query": "数据导出恢复流程 恢复编号",
+      "marker": "BODY-DELIVERY-9",
+      "required_context": "## 正文：数据导出恢复流程"
+    },
+    {
+      "class": "structure",
+      "kind": "table",
+      "query": "中文巡检 密钥轮换 状态",
+      "marker": "CN-TABLE-7",
+      "required_context": "| 编号 | 检查项 | 状态 |"
+    },
+    {
+      "class": "structure",
+      "kind": "faq",
+      "query": "FAQ CN BACKUP 备份失败 确认",
+      "marker": "FAQ-CN-BACKUP",
+      "required_context": "A: 存储管理员确认快照完整性"
+    },
+    {
+      "class": "structure",
+      "kind": "cross_page",
+      "query": "CROSS PAGE 042 跨页任务 交付清单",
+      "marker": "CROSS-PAGE-042",
+      "required_context": "## 跨页交付步骤"
+    },
+    {
       "class": "ordinary",
+      "kind": "text",
       "query": "calibration interval sensors",
       "marker": "calibration interval",
       "required_context": ""
     },
     {
       "class": "ordinary",
+      "kind": "text",
       "query": "retention schedule audit artifacts",
       "marker": "retention schedule",
       "required_context": ""
     },
     {
       "class": "ordinary",
+      "kind": "text",
       "query": "support handoff contact matrix",
       "marker": "support handoff",
+      "required_context": ""
+    },
+    {
+      "class": "ordinary",
+      "kind": "text",
+      "query": "灾备演练 每季度 归档",
+      "marker": "灾备演练每季度执行一次",
       "required_context": ""
     }
   ]

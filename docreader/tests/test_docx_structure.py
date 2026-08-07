@@ -1,10 +1,12 @@
 from io import BytesIO
+import unittest
 
 from docx import Document as WordDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from PIL import Image
-import pytest
+
+from function_test_loader import load_function_tests
 
 from docreader.models.document import Document
 from docreader.parser.docx_structure import attach_docx_structure
@@ -90,8 +92,10 @@ def test_docx_native_structure_maps_final_markdown_and_transport():
 
 
 def test_markitdown_docx_production_path_returns_source_aligned_blocks():
-    pytest.importorskip("markitdown", reason="MarkItDown is unavailable on Python 3.14")
-    from docreader.parser.markitdown_parser import MarkitdownParser
+    try:
+        from docreader.parser.markitdown_parser import MarkitdownParser
+    except ImportError as error:
+        raise unittest.SkipTest("MarkItDown runtime dependencies unavailable") from error
 
     document = MarkitdownParser(
         file_name="semantic-structure.docx", file_type="docx"
@@ -133,3 +137,8 @@ def test_invalid_docx_metadata_exposes_reason_without_body_content():
     assert document.structure_blocks == []
     assert document.metadata == {"semantic_structure_status": "docx_metadata_invalid"}
     assert markdown not in document.metadata["semantic_structure_status"]
+
+
+def load_tests(loader, tests, pattern):
+    del loader, pattern
+    return load_function_tests(globals(), tests)
