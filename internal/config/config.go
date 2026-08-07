@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -170,6 +171,8 @@ type KnowledgeBaseConfig struct {
 	ImageProcessing         *ImageProcessingConfig `yaml:"image_processing" json:"image_processing"`
 	DocumentProcessTimeout  time.Duration          `yaml:"document_process_timeout"   json:"document_process_timeout"`
 	IngestionAdvisorTimeout time.Duration          `yaml:"ingestion_advisor_timeout"  json:"ingestion_advisor_timeout"`
+	SemanticChunkingV2Mode  string                 `yaml:"semantic_chunking_v2_mode" json:"semantic_chunking_v2_mode"`
+	ShadowSampleRate        *float64               `yaml:"shadow_sample_rate" json:"shadow_sample_rate"`
 	// DocReaderCallTimeout caps a single DocReader RPC. Without this the
 	// gRPC call inherits the asynq task context (whole DocumentProcessTimeout,
 	// default 2h+), so a hung docreader would block a worker for hours and
@@ -183,7 +186,17 @@ type KnowledgeBaseConfig struct {
 const (
 	DefaultDocumentProcessTimeout  = 2 * time.Hour
 	DefaultIngestionAdvisorTimeout = 8 * time.Minute
+	SemanticChunkingV2ModeOff      = "off"
+	SemanticChunkingV2ModeShadow   = "shadow"
+	SemanticChunkingV2ModeOn       = "on"
+	DefaultSemanticChunkingV2Mode  = SemanticChunkingV2ModeShadow
+	DefaultShadowSampleRate        = 0.10
 )
+
+type SemanticChunkingV2RolloutConfig struct {
+	Mode             string
+	ShadowSampleRate float64
+}
 
 // DocumentProcessTimeout returns the effective document-process task timeout.
 // Partial configs (e.g. unit tests) receive the default when unset.
@@ -200,6 +213,39 @@ func IngestionAdvisorTimeout(cfg *Config) time.Duration {
 		return cfg.KnowledgeBase.IngestionAdvisorTimeout
 	}
 	return DefaultIngestionAdvisorTimeout
+}
+
+// SemanticChunkingV2Rollout returns the validated effective rollout values.
+// Nil and partial configs use the production default of a 10% shadow sample.
+func SemanticChunkingV2Rollout(cfg *Config) (SemanticChunkingV2RolloutConfig, error) {
+	result := SemanticChunkingV2RolloutConfig{
+		Mode: DefaultSemanticChunkingV2Mode, ShadowSampleRate: DefaultShadowSampleRate,
+	}
+	if cfg == nil || cfg.KnowledgeBase == nil {
+		return result, nil
+	}
+	if mode := strings.TrimSpace(cfg.KnowledgeBase.SemanticChunkingV2Mode); mode != "" {
+		result.Mode = mode
+	}
+	if cfg.KnowledgeBase.ShadowSampleRate != nil {
+		result.ShadowSampleRate = *cfg.KnowledgeBase.ShadowSampleRate
+	}
+	if err := validateSemanticChunkingV2Rollout(result); err != nil {
+		return SemanticChunkingV2RolloutConfig{}, err
+	}
+	return result, nil
+}
+
+func validateSemanticChunkingV2Rollout(config SemanticChunkingV2RolloutConfig) error {
+	if config.Mode != SemanticChunkingV2ModeOff &&
+		config.Mode != SemanticChunkingV2ModeShadow && config.Mode != SemanticChunkingV2ModeOn {
+		return fmt.Errorf("knowledge_base.semantic_chunking_v2_mode must be off, shadow, or on")
+	}
+	if math.IsNaN(config.ShadowSampleRate) || math.IsInf(config.ShadowSampleRate, 0) ||
+		config.ShadowSampleRate < 0 || config.ShadowSampleRate > 1 {
+		return fmt.Errorf("knowledge_base.shadow_sample_rate must be between 0 and 1")
+	}
+	return nil
 }
 
 // ImageProcessingConfig 图像处理配置
@@ -681,6 +727,13 @@ func ValidateConfig(cfg *Config) error {
 		if cfg.KnowledgeBase.ChunkOverlap >= cfg.KnowledgeBase.ChunkSize {
 			errs = append(errs, "knowledge_base.chunk_overlap must be less than chunk_size")
 		}
+		rollout, err := SemanticChunkingV2Rollout(cfg)
+		if err != nil {
+			errs = append(errs, err.Error())
+		} else {
+			cfg.KnowledgeBase.SemanticChunkingV2Mode = rollout.Mode
+			cfg.KnowledgeBase.ShadowSampleRate = float64Pointer(rollout.ShadowSampleRate)
+		}
 	}
 
 	if cfg.Server != nil {
@@ -693,6 +746,10 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("config validation errors: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
 }
 
 func applyOIDCEnvOverrides(cfg *Config) {

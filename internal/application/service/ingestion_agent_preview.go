@@ -64,6 +64,8 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 	return types.IngestionChunkingCandidate{
 		ID:                   request.id,
 		Archetype:            request.archetype,
+		TokenCountMode:       validation.tokenCountMode,
+		TokenizerID:          validation.tokenizerID,
 		PackingPolicyVersion: request.policy.Version,
 		Config:               cloneChunkingRecommendation(request.config),
 		ChunkCount:           len(split.chunks),
@@ -76,7 +78,20 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 		Score:                metrics.score,
 		HardValid:            len(validation.violations) == 0,
 		Violations:           validation.violations,
+		ContextTokenRatio:    ingestionContextTokenRatio(validation),
 	}, nil
+}
+
+func ingestionContextTokenRatio(validation ingestionCandidateValidationResult) float64 {
+	sourceTokens := 0
+	for _, count := range validation.sourceTokens {
+		sourceTokens += count
+	}
+	total := sourceTokens + validation.contextTokens
+	if total == 0 {
+		return 0
+	}
+	return float64(validation.contextTokens) / float64(total)
 }
 
 func ingestionContextReasonCodes(chunks []chunker.Chunk) []string {

@@ -33,6 +33,8 @@ type ingestionAgentContext struct {
 type ingestionAgentCandidateView struct {
 	ID                   string                                  `json:"id"`
 	Archetype            string                                  `json:"archetype"`
+	TokenCountMode       string                                  `json:"token_count_mode"`
+	TokenizerID          string                                  `json:"tokenizer_id"`
 	PackingPolicyVersion string                                  `json:"packing_policy_version"`
 	Config               types.IngestionChunkingRecommendation   `json:"config"`
 	ChunkCount           int                                     `json:"chunk_count"`
@@ -44,6 +46,7 @@ type ingestionAgentCandidateView struct {
 	Score                types.IngestionCandidateScore           `json:"score"`
 	HardValid            bool                                    `json:"hard_valid"`
 	Violations           []string                                `json:"violations"`
+	ContextTokenRatio    float64                                 `json:"context_token_ratio"`
 	ComparisonFacts      types.IngestionCandidateComparisonFacts `json:"comparison_facts"`
 }
 
@@ -147,14 +150,16 @@ func ingestionAgentCandidateViews(
 	for index, candidate := range candidates {
 		views[index] = ingestionAgentCandidateView{
 			ID: candidate.ID, Archetype: candidate.Archetype,
+			TokenCountMode: candidate.TokenCountMode, TokenizerID: candidate.TokenizerID,
 			PackingPolicyVersion: candidate.PackingPolicyVersion,
 			Config:               cloneChunkingRecommendation(candidate.Config),
 			ChunkCount:           candidate.ChunkCount, ParentChunkCount: candidate.ParentChunkCount,
 			Lengths: candidate.Lengths, Structure: candidate.Structure,
 			StructureQuality: candidate.StructureQuality, Diagnostics: candidate.Diagnostics,
 			Score: candidate.Score, HardValid: candidate.HardValid,
-			Violations:      append([]string(nil), candidate.Violations...),
-			ComparisonFacts: candidate.ComparisonFacts,
+			Violations:        append([]string(nil), candidate.Violations...),
+			ContextTokenRatio: candidate.ContextTokenRatio,
+			ComparisonFacts:   candidate.ComparisonFacts,
 		}
 	}
 	return views

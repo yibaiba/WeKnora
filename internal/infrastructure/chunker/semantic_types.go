@@ -73,7 +73,21 @@ func CloneSemanticDocument(document SemanticDocument) SemanticDocument {
 	cloned.Diagnostics.ReasonCodes = append(
 		[]string(nil), document.Diagnostics.ReasonCodes...,
 	)
+	cloned.Diagnostics.ReasonCodeCounts = cloneSemanticReasonCounts(
+		document.Diagnostics.ReasonCodeCounts,
+	)
 	return cloned
+}
+
+func cloneSemanticReasonCounts(source map[string]int) map[string]int {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]int, len(source))
+	for code, count := range source {
+		result[code] = count
+	}
+	return result
 }
 
 func semanticKindAllowed(kind string) bool {

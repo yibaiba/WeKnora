@@ -32,5 +32,40 @@ func cloneIngestionAnalysis(analysis *types.IngestionAnalysis) *types.IngestionA
 	cloned.SelectionReasonCodes = append([]string(nil), analysis.SelectionReasonCodes...)
 	cloned.AgentRun = cloneIngestionAgentRun(analysis.AgentRun)
 	cloned.PackingPolicy = cloneSemanticPackingPolicy(analysis.PackingPolicy)
+	cloned.SemanticDiagnostics = cloneIngestionSemanticDiagnostics(analysis.SemanticDiagnostics)
+	cloned.ShadowComparison = cloneIngestionShadowComparison(analysis.ShadowComparison)
 	return &cloned
+}
+
+func cloneIngestionSemanticDiagnostics(
+	diagnostics types.IngestionSemanticDiagnostics,
+) types.IngestionSemanticDiagnostics {
+	diagnostics.HintRejectionReasonCounts = cloneStringIntMap(diagnostics.HintRejectionReasonCounts)
+	diagnostics.StructureViolationCounts = cloneStringIntMap(diagnostics.StructureViolationCounts)
+	diagnostics.TokenCountModeCounts = cloneStringIntMap(diagnostics.TokenCountModeCounts)
+	return diagnostics
+}
+
+func cloneIngestionShadowComparison(
+	comparison *types.IngestionShadowComparison,
+) *types.IngestionShadowComparison {
+	if comparison == nil {
+		return nil
+	}
+	cloned := *comparison
+	cloned.BaselineChunking = cloneChunkingRecommendation(comparison.BaselineChunking)
+	cloned.V2RecommendedChunking = cloneChunkingRecommendation(comparison.V2RecommendedChunking)
+	cloned.ReasonCodes = append([]string(nil), comparison.ReasonCodes...)
+	return &cloned
+}
+
+func cloneStringIntMap(source map[string]int) map[string]int {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]int, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }

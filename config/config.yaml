@@ -44,6 +44,8 @@ knowledge_base:
   split_markers: ["\n\n", "\n", "。"]
   document_process_timeout: 2h
   ingestion_advisor_timeout: 8m
+  semantic_chunking_v2_mode: "shadow"
+  shadow_sample_rate: 0.10
   image_processing:
     enable_multimodal: true
 

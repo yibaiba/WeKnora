@@ -67,6 +67,8 @@ func TestIngestionPreviewUsesNormalizedRealChunkerWithoutMutatingInput(t *testin
 	require.True(t, candidate.HardValid)
 	require.NotEmpty(t, candidate.ID)
 	require.NotZero(t, candidate.ChunkCount)
+	require.Equal(t, chunker.TokenCountModeConservative, candidate.TokenCountMode)
+	require.Equal(t, chunker.TokenizerEncodingByteUpperBound, candidate.TokenizerID)
 	require.Equal(t, originalSeparators, input.Separators)
 	require.Equal(t, chunker.StrategyLegacy, candidate.Diagnostics.SelectedTier)
 

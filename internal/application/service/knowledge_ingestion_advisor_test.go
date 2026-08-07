@@ -365,12 +365,108 @@ func smartIngestionRun(knowledge *types.Knowledge) ingestionAdvisorRun {
 	}
 }
 
+func ingestionAdvisorOnConfig() *appconfig.Config {
+	return &appconfig.Config{KnowledgeBase: &appconfig.KnowledgeBaseConfig{
+		SemanticChunkingV2Mode: appconfig.SemanticChunkingV2ModeOn,
+	}}
+}
+
+func TestApplyIngestionAdvisorOffPreservesCurrentPath(t *testing.T) {
+	advisor := &ingestionAdvisorStub{}
+	service := &knowledgeService{
+		config: ingestionRolloutConfig(appconfig.SemanticChunkingV2ModeOff, nil),
+		repo:   &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
+	}
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "rollout-off"))
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, run.Effective, effective)
+	require.Empty(t, advisor.requests)
+	analysis, parseErr := run.Knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Nil(t, analysis)
+}
+
+func TestApplyIngestionAdvisorShadowPersistsComparisonWithoutApplyingV2(t *testing.T) {
+	one := 1.0
+	result := ingestionAdvisorResultForTest(validIngestionAnalysis())
+	result.Candidates[0].TokenCountMode = chunker.TokenCountModeExact
+	result.Candidates[0].TokenizerID = chunker.TokenizerEncodingO200KBase
+	result.Candidates[0].Lengths.Average = 321
+	result.Candidates[0].ContextTokenRatio = 0.125
+	advisor := &ingestionAdvisorStub{results: []*types.IngestionAdvisorResult{result}}
+	service := &knowledgeService{
+		config: ingestionRolloutConfig(appconfig.SemanticChunkingV2ModeShadow, &one),
+		repo:   &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
+	}
+	knowledge := newSmartIngestionKnowledge(t, "shadow-doc")
+	knowledge.FileType = "application/pdf"
+	knowledge.FileName = "report.pdf"
+	run := smartIngestionRun(knowledge)
+	run.Document.Diagnostics = types.SemanticDiagnostics{
+		HintsProvided: 4, HintsAccepted: 3, HintsRejected: 1,
+		ReasonCodes:      []string{"hint_parent_missing"},
+		ReasonCodeCounts: map[string]int{"hint_parent_missing": 1},
+	}
+	original := run.Effective
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, original, effective)
+	require.Len(t, advisor.requests, 1)
+	persisted, parseErr := knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Equal(t, types.IngestionAppliedModeShadow, persisted.AppliedMode)
+	require.Equal(t, ordinaryChunkingRecommendation(original.ChunkingConfig), persisted.AppliedChunking)
+	require.Equal(t, ingestionCandidateGeneratorVersion, persisted.CandidateGeneratorVersion)
+	require.Equal(t, "pdf", persisted.SemanticDiagnostics.SourceFormat)
+	require.Equal(t, 0.75, persisted.SemanticDiagnostics.HintAcceptanceRate)
+	require.Equal(t, map[string]int{"hint_parent_missing": 1},
+		persisted.SemanticDiagnostics.HintRejectionReasonCounts)
+	require.Equal(t, map[string]int{chunker.TokenCountModeExact: 1},
+		persisted.SemanticDiagnostics.TokenCountModeCounts)
+	require.Equal(t, chunker.TokenizerEncodingO200KBase, persisted.Candidates[0].TokenizerID)
+	require.Equal(t, 321.0, persisted.SemanticDiagnostics.SelectedAverageChunkTokens)
+	require.Equal(t, 0.125, persisted.SemanticDiagnostics.SelectedContextTokenRatio)
+	require.NotNil(t, persisted.ShadowComparison)
+	require.Equal(t, types.IngestionAppliedModeSmart, persisted.ShadowComparison.V2AppliedMode)
+	require.True(t, persisted.ShadowComparison.ChunkingChanged)
+	require.Equal(t, []string{"shadow_v2_not_applied"}, persisted.ShadowComparison.ReasonCodes)
+	persistedJSON, marshalErr := json.Marshal(persisted)
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(persistedJSON), run.Content)
+}
+
+func TestApplyIngestionAdvisorShadowFailureDoesNotDegrade(t *testing.T) {
+	one := 1.0
+	advisorErr := errors.New("token counter failed")
+	service := &knowledgeService{
+		config:           ingestionRolloutConfig(appconfig.SemanticChunkingV2ModeShadow, &one),
+		repo:             &ingestionKnowledgeRepoStub{},
+		ingestionAdvisor: &ingestionAdvisorStub{errors: []error{advisorErr}},
+	}
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "shadow-failure"))
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.ErrorIs(t, err, advisorErr)
+	require.Equal(t, run.Effective, effective)
+	require.Equal(t, types.ParseStatusFailed, run.Knowledge.ParseStatus)
+	require.Empty(t, effective.IngestionAppliedMode)
+}
+
 func TestApplyIngestionAdvisorPersistsAndOnlyOverridesOwnedChunking(t *testing.T) {
 	repo := &ingestionKnowledgeRepoStub{}
 	tracker := newIngestionSpanTrackerStub()
 	original := validIngestionAnalysis()
 	advisor := &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{original}}
-	service := &knowledgeService{repo: repo, ingestionAdvisor: advisor, spanTracker: tracker}
+	service := &knowledgeService{
+		config: ingestionAdvisorOnConfig(), repo: repo,
+		ingestionAdvisor: advisor, spanTracker: tracker,
+	}
 	run := smartIngestionRun(newSmartIngestionKnowledge(t, "doc-1"))
 	overrides, err := run.Knowledge.ProcessOverrides()
 	require.NoError(t, err)
@@ -486,7 +582,10 @@ func TestApplyIngestionAdvisorFallbackPreservesOriginalChunking(t *testing.T) {
 	advisor := &ingestionAdvisorStub{results: []*types.IngestionAdvisorResult{
 		fallbackAdvisorResultForTest(fallback),
 	}}
-	service := &knowledgeService{repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor}
+	service := &knowledgeService{
+		config: ingestionAdvisorOnConfig(),
+		repo:   &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
+	}
 	original := run.Effective.ChunkingConfig
 
 	effective, err := service.applyIngestionAdvisor(context.Background(), run)
@@ -506,6 +605,7 @@ func TestApplyIngestionAdvisorFallbackPreservesOriginalChunking(t *testing.T) {
 	require.Equal(t, []string{
 		"all_candidates_structurally_invalid", "atomic_block_split", "source_coverage_gap",
 	}, persisted.FallbackReasonCodes)
+	require.True(t, persisted.SemanticDiagnostics.FallbackApplied)
 }
 
 func fallbackAdvisorResultForTest(
@@ -539,6 +639,7 @@ func TestApplyIngestionAdvisorUsesConfiguredTotalTimeout(t *testing.T) {
 	service := &knowledgeService{
 		config: &appconfig.Config{KnowledgeBase: &appconfig.KnowledgeBaseConfig{
 			IngestionAdvisorTimeout: 12 * time.Minute,
+			SemanticChunkingV2Mode:  appconfig.SemanticChunkingV2ModeOn,
 		}},
 		repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
 	}
@@ -555,6 +656,7 @@ func TestApplyIngestionAdvisorPreservesExplicitZeroOverlap(t *testing.T) {
 	analysis := validIngestionAnalysis()
 	analysis.RecommendedChunking.ChunkOverlap = 0
 	service := &knowledgeService{
+		config:           ingestionAdvisorOnConfig(),
 		repo:             &ingestionKnowledgeRepoStub{},
 		ingestionAdvisor: &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{analysis}},
 	}
@@ -587,6 +689,7 @@ func TestApplyIngestionAdvisorPersistsTokenNormalizedAppliedValues(t *testing.T)
 	require.NoError(t, normalizeErr)
 	analysis.RecommendedChunking = normalized
 	service := &knowledgeService{
+		config:           ingestionAdvisorOnConfig(),
 		repo:             &ingestionKnowledgeRepoStub{},
 		ingestionAdvisor: &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{analysis}},
 	}
@@ -613,7 +716,8 @@ func TestApplyIngestionAdvisorFailureStopsBeforeDownstreamStages(t *testing.T) {
 		ingestionAdvisorErrorDocumentAnalysis, "文档全文 Map 分析失败：调用超时或已取消",
 	)
 	service := &knowledgeService{
-		repo: repo,
+		config: ingestionAdvisorOnConfig(),
+		repo:   repo,
 		ingestionAdvisor: &ingestionAdvisorStub{
 			errors: []error{advisorErr},
 			analysisProgress: []types.IngestionDocumentAnalysisProgress{withIngestionAnalysisBudgetForTest(types.IngestionDocumentAnalysisProgress{
@@ -666,7 +770,8 @@ func TestApplyIngestionAdvisorDoesNotPersistAgentProviderErrorDetails(t *testing
 	tracker := newIngestionSpanTrackerStub()
 	knowledge := newSmartIngestionKnowledge(t, "private-provider-error")
 	service := &knowledgeService{
-		repo: &ingestionKnowledgeRepoStub{},
+		config: ingestionAdvisorOnConfig(),
+		repo:   &ingestionKnowledgeRepoStub{},
 		ingestionAdvisor: NewIngestionAdvisor(
 			&ingestionAdvisorModelServiceStub{model: model}, nil,
 		),
@@ -691,7 +796,8 @@ func TestApplyIngestionAdvisorClearsStaleAnalysisBeforeFailedRetry(t *testing.T)
 	knowledge := newSmartIngestionKnowledge(t, "doc-stale")
 	require.NoError(t, knowledge.SetIngestionAnalysis(validIngestionAnalysis()))
 	service := &knowledgeService{
-		repo: repo,
+		config: ingestionAdvisorOnConfig(),
+		repo:   repo,
 		ingestionAdvisor: &ingestionAdvisorStub{
 			errors: []error{newIngestionAdvisorRunError(
 				ingestionAdvisorErrorMaxRounds, "six rounds exhausted",
@@ -741,7 +847,10 @@ func TestApplyIngestionAdvisorSkipsLegacyOffAndUnsupportedSources(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			advisor := &ingestionAdvisorStub{}
 			tracker := newIngestionSpanTrackerStub()
-			service := &knowledgeService{repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor, spanTracker: tracker}
+			service := &knowledgeService{
+				config: ingestionAdvisorOnConfig(), repo: &ingestionKnowledgeRepoStub{},
+				ingestionAdvisor: advisor, spanTracker: tracker,
+			}
 			run := smartIngestionRun(test.knowledge(t))
 
 			got, err := service.applyIngestionAdvisor(withAttempt(context.Background(), 1), run)
@@ -760,7 +869,10 @@ func TestApplyIngestionAdvisorRetryRerunsAnalysis(t *testing.T) {
 		errors:    []error{firstErr, nil},
 		responses: []*types.IngestionAnalysis{nil, validIngestionAnalysis()},
 	}
-	service := &knowledgeService{repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor}
+	service := &knowledgeService{
+		config: ingestionAdvisorOnConfig(),
+		repo:   &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
+	}
 	knowledge := newSmartIngestionKnowledge(t, "doc-retry")
 	run := smartIngestionRun(knowledge)
 
@@ -781,7 +893,10 @@ func TestApplyIngestionAdvisorKeepsBatchResultsIndependent(t *testing.T) {
 		errors:    []error{errors.New("first document invalid"), nil},
 		responses: []*types.IngestionAnalysis{nil, validIngestionAnalysis()},
 	}
-	service := &knowledgeService{repo: &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor}
+	service := &knowledgeService{
+		config: ingestionAdvisorOnConfig(),
+		repo:   &ingestionKnowledgeRepoStub{}, ingestionAdvisor: advisor,
+	}
 	first := newSmartIngestionKnowledge(t, "doc-1")
 	second := newSmartIngestionKnowledge(t, "doc-2")
 

@@ -31,10 +31,11 @@ type SemanticBlockHint struct {
 
 // SemanticDiagnostics intentionally contains only aggregate reason codes.
 type SemanticDiagnostics struct {
-	HintsProvided int      `json:"hints_provided"`
-	HintsAccepted int      `json:"hints_accepted"`
-	HintsRejected int      `json:"hints_rejected"`
-	ReasonCodes   []string `json:"reason_codes"`
+	HintsProvided    int            `json:"hints_provided"`
+	HintsAccepted    int            `json:"hints_accepted"`
+	HintsRejected    int            `json:"hints_rejected"`
+	ReasonCodes      []string       `json:"reason_codes"`
+	ReasonCodeCounts map[string]int `json:"reason_code_counts,omitempty"`
 }
 
 type SemanticDocument struct {

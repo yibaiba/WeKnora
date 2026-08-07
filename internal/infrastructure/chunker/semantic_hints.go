@@ -268,6 +268,10 @@ func validateSemanticHintFields(block SemanticBlock) string {
 
 func rejectSemanticHint(diagnostics *SemanticDiagnostics, code string) {
 	diagnostics.HintsRejected++
+	if diagnostics.ReasonCodeCounts == nil {
+		diagnostics.ReasonCodeCounts = make(map[string]int)
+	}
+	diagnostics.ReasonCodeCounts[code]++
 	appendSemanticReason(diagnostics, code)
 }
 

@@ -32,10 +32,45 @@ func (s *knowledgeService) applyIngestionAdvisor(
 		s.skipStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, "disabled or unsupported source")
 		return run.Effective, nil
 	}
+	rollout, err := resolveIngestionRollout(s.config, ingestionRunTenantID(run))
+	if err != nil {
+		s.beginStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, nil)
+		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
+	}
+	if !rollout.runV2 {
+		s.skipStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, "semantic chunking v2 rollout excluded")
+		return run.Effective, nil
+	}
 
+	advisorResult, err := s.analyzeIngestionForRollout(ctx, run, config, rollout)
+	if err != nil {
+		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
+	}
+	analysis := ingestionAnalysisFromAdvisorResult(advisorResult)
+	enrichIngestionAnalysis(analysis, advisorResult, run)
+
+	run.Effective = applyIngestionRolloutResult(run.Effective, analysis, rollout)
+	if rollout.applyV2 {
+		analysis.AppliedChunking = appliedChunkingRecommendation(run.Effective)
+	}
+	analysis.ModelID = run.KB.SummaryModelID
+	if err := s.persistIngestionAnalysis(ctx, run.Knowledge, analysis); err != nil {
+		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
+	}
+
+	s.endStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, ingestionAnalysisOutput(analysis))
+	return run.Effective, nil
+}
+
+func (s *knowledgeService) analyzeIngestionForRollout(
+	ctx context.Context,
+	run ingestionAdvisorRun,
+	config *types.IngestionAdvisorConfig,
+	rollout ingestionRolloutDecision,
+) (*types.IngestionAdvisorResult, error) {
 	s.beginStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, types.JSONMap{
-		"model_id":    run.KB.SummaryModelID,
-		"text_length": len([]rune(run.Content)),
+		"model_id": run.KB.SummaryModelID, "text_length": len([]rune(run.Content)),
+		"rollout_mode": rollout.mode,
 	})
 	stage := s.tracker().LookupStage(
 		ctx, run.Knowledge.ID, attemptFromCtx(ctx), types.StageDocumentAnalysis,
@@ -43,31 +78,39 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	progress := newIngestionAgentSpanProgress(ctx, s.tracker(), stage)
 	progress.RecordProfile(len([]rune(run.Content)))
 	if err := s.clearPreviousIngestionAnalysis(ctx, run.Knowledge); err != nil {
-		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
+		return nil, err
 	}
-	advisorResult, err := s.analyzeIngestionContent(ctx, ingestionContentAnalysisRequest{
+	result, err := s.analyzeIngestionContent(ctx, ingestionContentAnalysisRequest{
 		Run: run, Config: config,
 		AgentProgress: progress.Handle, AnalysisProgress: progress.HandleAnalysis,
 	})
-	progress.RecordEvaluation(advisorResult)
-	if err != nil {
-		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, err)
-	}
-	analysis := ingestionAnalysisFromAdvisorResult(advisorResult)
+	progress.RecordEvaluation(result)
+	return result, err
+}
 
-	run.Effective = applyIngestionAnalysis(run.Effective, analysis)
-	analysis.AppliedChunking = appliedChunkingRecommendation(run.Effective)
-	analysis.ModelID = run.KB.SummaryModelID
-	if err := run.Knowledge.SetIngestionAnalysis(analysis); err != nil {
-		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, fmt.Errorf("保存文档分析结果失败: %w", err))
+func (s *knowledgeService) persistIngestionAnalysis(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	analysis *types.IngestionAnalysis,
+) error {
+	if err := knowledge.SetIngestionAnalysis(analysis); err != nil {
+		return fmt.Errorf("保存文档分析结果失败: %w", err)
 	}
-	run.Knowledge.UpdatedAt = time.Now()
-	if err := s.repo.UpdateKnowledge(ctx, run.Knowledge); err != nil {
-		return run.Effective, s.failIngestionAdvisor(ctx, run.Knowledge, fmt.Errorf("持久化文档分析结果失败: %w", err))
+	knowledge.UpdatedAt = time.Now()
+	if err := s.repo.UpdateKnowledge(ctx, knowledge); err != nil {
+		return fmt.Errorf("持久化文档分析结果失败: %w", err)
 	}
+	return nil
+}
 
-	s.endStage(ctx, run.Knowledge.ID, types.StageDocumentAnalysis, ingestionAnalysisOutput(analysis))
-	return run.Effective, nil
+func ingestionRunTenantID(run ingestionAdvisorRun) uint64 {
+	if run.KB != nil && run.KB.TenantID != 0 {
+		return run.KB.TenantID
+	}
+	if run.Knowledge != nil {
+		return run.Knowledge.TenantID
+	}
+	return 0
 }
 
 type ingestionContentAnalysisRequest struct {
@@ -309,19 +352,22 @@ func chunkingRecommendationFromConfig(config types.ChunkingConfig) types.Ingesti
 
 func ingestionAnalysisOutput(analysis *types.IngestionAnalysis) types.JSONMap {
 	return types.JSONMap{
-		"applied_mode":             ingestionAppliedMode(analysis),
-		"fallback_reason_codes":    analysis.FallbackReasonCodes,
-		"document_kind":            analysis.DocumentKind,
-		"confidence":               analysis.Confidence,
-		"recommended_content_mode": analysis.RecommendedContentMode,
-		"reason_codes":             analysis.ReasonCodes,
-		"summary":                  analysis.Summary,
-		"recommended_chunking":     analysis.RecommendedChunking,
-		"applied_chunking":         analysis.AppliedChunking,
-		"model_id":                 analysis.ModelID,
-		"candidates":               analysis.Candidates,
-		"selected_candidate_id":    analysis.SelectedCandidateID,
-		"selection_reason_codes":   analysis.SelectionReasonCodes,
-		"agent_run":                analysis.AgentRun,
+		"applied_mode":                analysis.AppliedMode,
+		"fallback_reason_codes":       analysis.FallbackReasonCodes,
+		"document_kind":               analysis.DocumentKind,
+		"confidence":                  analysis.Confidence,
+		"recommended_content_mode":    analysis.RecommendedContentMode,
+		"reason_codes":                analysis.ReasonCodes,
+		"summary":                     analysis.Summary,
+		"recommended_chunking":        analysis.RecommendedChunking,
+		"applied_chunking":            analysis.AppliedChunking,
+		"model_id":                    analysis.ModelID,
+		"candidates":                  analysis.Candidates,
+		"selected_candidate_id":       analysis.SelectedCandidateID,
+		"selection_reason_codes":      analysis.SelectionReasonCodes,
+		"agent_run":                   analysis.AgentRun,
+		"semantic_diagnostics":        analysis.SemanticDiagnostics,
+		"candidate_generator_version": analysis.CandidateGeneratorVersion,
+		"shadow_comparison":           analysis.ShadowComparison,
 	}
 }

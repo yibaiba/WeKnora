@@ -27,6 +27,7 @@ const (
 const (
 	IngestionAppliedModeSmart    = "smart"
 	IngestionAppliedModeFallback = "fallback"
+	IngestionAppliedModeShadow   = "shadow"
 )
 
 // IngestionAdvisorConfig opts a file upload or reparse into document analysis.
@@ -208,6 +209,8 @@ type IngestionChunkerDiagnostics struct {
 type IngestionChunkingCandidate struct {
 	ID                   string                               `json:"id"`
 	Archetype            string                               `json:"archetype"`
+	TokenCountMode       string                               `json:"token_count_mode"`
+	TokenizerID          string                               `json:"tokenizer_id"`
 	PackingPolicyVersion string                               `json:"packing_policy_version"`
 	Config               IngestionChunkingRecommendation      `json:"config"`
 	ChunkCount           int                                  `json:"chunk_count"`
@@ -220,6 +223,7 @@ type IngestionChunkingCandidate struct {
 	Score                IngestionCandidateScore              `json:"score"`
 	HardValid            bool                                 `json:"hard_valid"`
 	Violations           []string                             `json:"violations"`
+	ContextTokenRatio    float64                              `json:"context_token_ratio"`
 	ComparisonFacts      IngestionCandidateComparisonFacts    `json:"comparison_facts"`
 }
 
@@ -245,54 +249,22 @@ type SemanticPackingPolicy struct {
 
 // IngestionAnalysis is persisted in knowledge.metadata.ingestion_analysis.
 type IngestionAnalysis struct {
-	AppliedMode            string                          `json:"applied_mode"`
-	FallbackReasonCodes    []string                        `json:"fallback_reason_codes"`
-	DocumentKind           string                          `json:"document_kind"`
-	Confidence             float64                         `json:"confidence"`
-	RecommendedContentMode string                          `json:"recommended_content_mode"`
-	ReasonCodes            []string                        `json:"reason_codes"`
-	Summary                string                          `json:"summary"`
-	RecommendedChunking    IngestionChunkingRecommendation `json:"recommended_chunking"`
-	AppliedChunking        IngestionChunkingRecommendation `json:"applied_chunking"`
-	ModelID                string                          `json:"model_id"`
-	Candidates             []IngestionChunkingCandidate    `json:"candidates"`
-	SelectedCandidateID    string                          `json:"selected_candidate_id"`
-	SelectionReasonCodes   []string                        `json:"selection_reason_codes"`
-	AgentRun               IngestionAgentRun               `json:"agent_run"`
-	PackingPolicy          SemanticPackingPolicy           `json:"packing_policy"`
-}
-
-// DocumentStructureStats describes the complete extracted document, even when
-// only sampled windows fit in the model prompt.
-type DocumentStructureStats struct {
-	CharacterCount        int                `json:"character_count"`
-	LineCount             int                `json:"line_count"`
-	NonEmptyLineCount     int                `json:"non_empty_line_count"`
-	HeadingLevelCounts    HeadingLevelCounts `json:"heading_level_counts"`
-	ParagraphCount        int                `json:"paragraph_count"`
-	AverageParagraphChars int                `json:"average_paragraph_chars"`
-	MaxParagraphChars     int                `json:"max_paragraph_chars"`
-	ListLineCount         int                `json:"list_line_count"`
-	ListDensity           float64            `json:"list_density"`
-	TableLineCount        int                `json:"table_line_count"`
-	TableDensity          float64            `json:"table_density"`
-	QuestionAnswerPairs   int                `json:"question_answer_pairs"`
-	Language              LanguageStats      `json:"language"`
-}
-
-type HeadingLevelCounts struct {
-	H1 int `json:"h1"`
-	H2 int `json:"h2"`
-	H3 int `json:"h3"`
-	H4 int `json:"h4"`
-	H5 int `json:"h5"`
-	H6 int `json:"h6"`
-}
-
-type LanguageStats struct {
-	CJKCharacters   int     `json:"cjk_characters"`
-	LatinCharacters int     `json:"latin_characters"`
-	DigitCharacters int     `json:"digit_characters"`
-	CJKRatio        float64 `json:"cjk_ratio"`
-	LatinRatio      float64 `json:"latin_ratio"`
+	AppliedMode               string                          `json:"applied_mode"`
+	FallbackReasonCodes       []string                        `json:"fallback_reason_codes"`
+	DocumentKind              string                          `json:"document_kind"`
+	Confidence                float64                         `json:"confidence"`
+	RecommendedContentMode    string                          `json:"recommended_content_mode"`
+	ReasonCodes               []string                        `json:"reason_codes"`
+	Summary                   string                          `json:"summary"`
+	RecommendedChunking       IngestionChunkingRecommendation `json:"recommended_chunking"`
+	AppliedChunking           IngestionChunkingRecommendation `json:"applied_chunking"`
+	ModelID                   string                          `json:"model_id"`
+	Candidates                []IngestionChunkingCandidate    `json:"candidates"`
+	SelectedCandidateID       string                          `json:"selected_candidate_id"`
+	SelectionReasonCodes      []string                        `json:"selection_reason_codes"`
+	AgentRun                  IngestionAgentRun               `json:"agent_run"`
+	PackingPolicy             SemanticPackingPolicy           `json:"packing_policy"`
+	SemanticDiagnostics       IngestionSemanticDiagnostics    `json:"semantic_diagnostics"`
+	CandidateGeneratorVersion string                          `json:"candidate_generator_version"`
+	ShadowComparison          *IngestionShadowComparison      `json:"shadow_comparison,omitempty"`
 }

@@ -14,6 +14,7 @@ const (
 	ingestionCandidateArchetypeBalanced            = "balanced"
 	ingestionCandidateArchetypeStructurePreserving = "structure_preserving"
 	ingestionPackingPolicyVersion                  = "semantic-packing-v2"
+	ingestionCandidateGeneratorVersion             = "semantic-candidates-v2"
 	ingestionContextTokenPercent                   = 20
 	ingestionContextTokenLimit                     = 128
 )
