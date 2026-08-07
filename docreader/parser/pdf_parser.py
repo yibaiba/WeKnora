@@ -28,6 +28,7 @@ from docreader.config import CONFIG
 from docreader.models.document import Document
 from docreader.parser.base_parser import BaseParser
 from docreader.parser.concurrency import parser_worker_limit
+from docreader.parser.pdf_structure import PDFPage, assemble_pdf_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -969,8 +970,8 @@ def _should_prefer_plain(plain: str, layout: str) -> bool:
 def _extract_layout_text(page, raw) -> str:
     """Layout-aware extraction: reading order + headings + hidden-text filter.
 
-    Falls back to plain extraction on any failure so a single odd page never
-    breaks the document.
+    Errors are surfaced because silently substituting a different extraction
+    path can hide malformed layout metadata and change document semantics.
     """
     textpage = None
     try:
@@ -981,9 +982,6 @@ def _extract_layout_text(page, raw) -> str:
         heights = [c["y1"] - c["y0"] for c in chars if c["y1"] - c["y0"] > 0]
         scale = (statistics.median(heights) if heights else 1.0) or 1.0
         return _chars_to_layout_markdown(chars, scale, width)
-    except Exception:
-        logger.debug("layout extraction failed; using plain text", exc_info=True)
-        return _extract_page_text(page)
     finally:
         _close_pdfium_resource(textpage)
 
@@ -1267,19 +1265,19 @@ def _extract_embedded_images(pdf, classes, raw, base_name: str, quality: int) ->
     return result
 
 
-def _strip_repeating_lines(texts: list, classes: list) -> list:
-    """Remove running headers/footers that repeat across most text pages.
+def _find_repeating_edge_lines(texts: list, classes: list) -> frozenset[str]:
+    """Find running headers/footers without removing them from source text.
 
     Conservative: only the first/last non-empty line of each text page is a
     candidate, the line must be short, and it must appear on at least 60% of the
-    text pages (and there must be enough pages to judge). Mirrors DeepDoc's
-    cross-page "garbage set" idea without risking removal of real content.
+    text pages (and there must be enough pages to judge). The returned values
+    are marked as ``page_region`` by the structure mapper.
     """
     from collections import Counter
 
     text_indices = [i for i, c in enumerate(classes) if c == "text"]
     if len(text_indices) < 4:
-        return list(texts)
+        return frozenset()
 
     counter: Counter = Counter()
     for i in text_indices:
@@ -1291,18 +1289,7 @@ def _strip_repeating_lines(texts: list, classes: list) -> list:
                 counter[edge] += 1
 
     threshold = max(2, int(len(text_indices) * 0.6))
-    repeating = {line for line, count in counter.items() if count >= threshold}
-    if not repeating:
-        return list(texts)
-
-    cleaned = []
-    for i, text in enumerate(texts):
-        if classes[i] != "text":
-            cleaned.append(text)
-            continue
-        kept = [ln for ln in text.splitlines() if ln.strip() not in repeating]
-        cleaned.append("\n".join(kept))
-    return cleaned
+    return frozenset(line for line, count in counter.items() if count >= threshold)
 
 
 class PDFScannedParser(BaseParser):
@@ -1353,10 +1340,15 @@ class PDFScannedParser(BaseParser):
                 markdown_lines.append(f"![{page_filename}]({ref_path})")
                 images[ref_path] = base64.b64encode(rendered[i]).decode("utf-8")
 
-            text = "\n\n".join(markdown_lines)
+            pages = [
+                PDFPage(number=index + 1, content=value, source_kind="scanned")
+                for index, value in enumerate(markdown_lines)
+            ]
+            text, structure_blocks = assemble_pdf_markdown(pages)
             return Document(
                 content=text,
                 images=images,
+                structure_blocks=structure_blocks,
                 metadata={
                     "image_source_type": "scanned_pdf",
                     "page_count": page_count,
@@ -1364,7 +1356,7 @@ class PDFScannedParser(BaseParser):
             )
         except Exception as e:
             logger.exception("PDFScannedParser failed to parse PDF: %s", e)
-            raise e
+            raise
 
 
 class PDFParser(BaseParser):
@@ -1375,8 +1367,8 @@ class PDFParser(BaseParser):
       * scanned page      -> render to JPEG, tag ``image_source_type=scanned_pdf``
                              so the Go App OCRs it
 
-    Hybrid documents interleave both in reading order. On any unexpected error
-    the parser falls back to rendering all pages as images (safe last resort).
+    Hybrid documents interleave both in reading order. Unexpected parser errors
+    are surfaced to the caller; full-page rendering is only an explicit mode.
 
     Force-scanned mode (``pdf_force_scanned=true`` override or
     ``DOCREADER_PDF_FORCE_SCANNED=true`` env) skips classification and
@@ -1416,17 +1408,7 @@ class PDFParser(BaseParser):
             })
             return doc
 
-        try:
-            return self._route(content)
-        except Exception:
-            logger.exception(
-                "PDFParser: per-page routing failed for %s; "
-                "falling back to full image rendering",
-                self.file_name,
-            )
-            return PDFScannedParser(
-                file_name=self.file_name, file_type=self.file_type
-            ).parse_into_text(content)
+        return self._route(content)
 
     def _route(self, content: bytes) -> Document:
         # Serialize all pdfium work: see _PDFIUM_LOCK. Holding it for the whole
@@ -1497,7 +1479,7 @@ class PDFParser(BaseParser):
                 texts.append(text)
                 classes.append(cls)
 
-            texts = _strip_repeating_lines(texts, classes)
+            repeating_lines = _find_repeating_edge_lines(texts, classes)
             scanned_indices = [i for i, c in enumerate(classes) if c == "scanned"]
 
             # Pass 2: render only the scanned pages (heavy work, rate-limited).
@@ -1531,24 +1513,32 @@ class PDFParser(BaseParser):
         # Assemble markdown in reading order.
         embedded_count = 0
         vector_figure_count = 0
-        blocks = []
+        pages = []
         for i in range(page_count):
+            page_blocks = []
             if classes[i] == "scanned":
                 page_filename = f"{base_name}_page_{i+1}.jpg"
-                blocks.append(f"![{page_filename}](images/{page_filename})")
+                page_blocks.append(f"![{page_filename}](images/{page_filename})")
             else:
                 stripped = texts[i].strip()
                 if stripped:
-                    blocks.append(stripped)
+                    page_blocks.append(stripped)
                 vector_figure_count += len(vector_clips.get(i, []))
                 page_images = list(embedded.get(i, []))
                 page_images.sort(key=lambda item: item[2], reverse=True)
                 for ref_path, _b64, _y in page_images:
                     fname = os.path.basename(ref_path)
-                    blocks.append(f"![{fname}]({ref_path})")
+                    page_blocks.append(f"![{fname}]({ref_path})")
                     embedded_count += 1
+            pages.append(PDFPage(
+                number=i + 1,
+                content="\n\n".join(page_blocks),
+                source_kind=classes[i],
+            ))
 
-        content_text = "\n\n".join(blocks).strip()
+        content_text, structure_blocks = assemble_pdf_markdown(
+            pages, repeating_lines
+        )
 
         metadata = {
             "page_count": page_count,
@@ -1556,6 +1546,12 @@ class PDFParser(BaseParser):
             "text_page_count": page_count - len(scanned_indices),
             "embedded_image_count": embedded_count,
             "vector_figure_count": vector_figure_count,
+            "repeated_page_region_count": sum(
+                1
+                for block in structure_blocks
+                if block.kind == "page_region"
+                and not block.id.startswith("pdf-page-")
+            ),
             "image_source_type": "scanned_pdf" if scanned_indices else "pdf_text_layer",
         }
 
@@ -1569,4 +1565,9 @@ class PDFParser(BaseParser):
             embedded_count,
             len(content_text),
         )
-        return Document(content=content_text, images=images, metadata=metadata)
+        return Document(
+            content=content_text,
+            images=images,
+            structure_blocks=structure_blocks,
+            metadata=metadata,
+        )

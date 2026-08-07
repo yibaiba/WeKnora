@@ -1,5 +1,6 @@
 import io
 import unittest
+from unittest import mock
 
 from PIL import Image
 
@@ -16,8 +17,10 @@ from docreader.parser.pdf_parser import (
     _select_embedded_images,
     _should_prefer_plain,
     _split_columns,
-    _strip_repeating_lines,
+    _find_repeating_edge_lines,
 )
+from docreader.parser.pdf_structure import PDFPage, assemble_pdf_markdown
+from docreader.structure import structure_blocks_from_document
 
 
 def _char(ch, x0, x1, y0, y1):
@@ -34,6 +37,54 @@ def _make_image_only_pdf(num_pages: int = 2) -> bytes:
     pages = (pages * ((num_pages // 2) + 1))[:num_pages]
     pages[0].save(buf, format="PDF", save_all=True, append_images=pages[1:])
     return buf.getvalue()
+
+
+def _make_text_pdf(page_lines: list[list[str]]) -> bytes:
+    """Build a small real text-layer PDF using only standard PDF objects."""
+    page_ids = [4 + index * 2 for index in range(len(page_lines))]
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        (
+            f"<< /Type /Pages /Kids [{' '.join(f'{value} 0 R' for value in page_ids)}] "
+            f"/Count {len(page_ids)} >>"
+        ).encode(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    for page_id, lines in zip(page_ids, page_lines, strict=True):
+        content_id = page_id + 1
+        stream_lines = ["BT", "/F1 12 Tf", "72 730 Td", "16 TL"]
+        for line in lines:
+            escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            stream_lines.extend((f"({escaped}) Tj", "T*"))
+        stream_lines.append("ET")
+        stream = "\n".join(stream_lines).encode()
+        objects.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
+            ).encode()
+        )
+        objects.append(
+            f"<< /Length {len(stream)} >>\nstream\n".encode()
+            + stream
+            + b"\nendstream"
+        )
+    output = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for number, value in enumerate(objects, start=1):
+        offsets.append(len(output))
+        output.extend(f"{number} 0 obj\n".encode())
+        output.extend(value)
+        output.extend(b"\nendobj\n")
+    xref = len(output)
+    output.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    output.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        output.extend(f"{offset:010d} 00000 n \n".encode())
+    output.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    )
+    return bytes(output)
 
 
 class ClassifyPageTest(unittest.TestCase):
@@ -55,23 +106,69 @@ class ClassifyPageTest(unittest.TestCase):
         self.assertEqual(_classify_page(0.0, 0), "text")
 
 
-class StripRepeatingLinesTest(unittest.TestCase):
-    def test_removes_repeated_header_footer(self):
+class RepeatingPageRegionTest(unittest.TestCase):
+    def test_detects_repeated_header_footer_without_removing_source(self):
         header = "ACME CONFIDENTIAL"
-        texts = [f"{header}\nbody page {i}\npage {i} footer" for i in range(6)]
-        # Make the footer identical across pages so it is detected.
         texts = [f"{header}\nbody page {i}\nshared footer" for i in range(6)]
         classes = ["text"] * 6
-        cleaned = _strip_repeating_lines(texts, classes)
-        for page in cleaned:
-            self.assertNotIn(header, page)
-            self.assertNotIn("shared footer", page)
-        self.assertIn("body page 0", cleaned[0])
+        repeating = _find_repeating_edge_lines(texts, classes)
+
+        self.assertEqual(repeating, {header, "shared footer"})
+        self.assertTrue(all(header in page for page in texts))
 
     def test_keeps_lines_when_too_few_pages(self):
         texts = ["HEADER\nbody"] * 2
         classes = ["text"] * 2
-        self.assertEqual(_strip_repeating_lines(texts, classes), texts)
+        self.assertEqual(_find_repeating_edge_lines(texts, classes), frozenset())
+
+    def test_native_structure_marks_pages_layout_table_and_ocr(self):
+        pages = [
+            PDFPage(
+                number=1,
+                source_kind="text",
+                content=(
+                    "RUNNING HEADER\n# Verification\n- Checked\n"
+                    "| Name | State |\n| --- | --- |\n| Alpha | Ready |\nRUNNING FOOTER"
+                ),
+            ),
+            PDFPage(
+                number=2,
+                source_kind="scanned",
+                content="![scan_page_2.jpg](images/scan_page_2.jpg)",
+            ),
+        ]
+
+        markdown, blocks = assemble_pdf_markdown(
+            pages, frozenset({"RUNNING HEADER", "RUNNING FOOTER"})
+        )
+
+        self.assertEqual(
+            [block.kind for block in blocks],
+            [
+                "page_region",
+                "page_region",
+                "heading",
+                "list_item",
+                "table_header",
+                "table_row",
+                "page_region",
+                "page_region",
+                "image_caption",
+            ],
+        )
+        self.assertEqual(len({block.id for block in blocks}), len(blocks))
+        self.assertTrue(all(markdown[block.start : block.end] for block in blocks))
+        self.assertTrue(blocks[-2].id.endswith("-ocr"))
+        self.assertEqual(blocks[-1].context_kinds, ["image"])
+        self.assertEqual(blocks[4].table_id, blocks[5].table_id)
+
+    def test_blank_text_page_does_not_create_marker_only_content(self):
+        markdown, blocks = assemble_pdf_markdown(
+            [PDFPage(number=1, content="", source_kind="text")]
+        )
+
+        self.assertEqual(markdown, "")
+        self.assertEqual(blocks, [])
 
 
 class SelectEmbeddedImagesTest(unittest.TestCase):
@@ -403,6 +500,46 @@ class ScanEnglishDictLayoutTest(unittest.TestCase):
 
 
 class PDFRouterIntegrationTest(unittest.TestCase):
+    def test_text_pdf_preserves_and_marks_native_page_structure(self):
+        page_lines = []
+        for page_number in range(1, 5):
+            body = ["RUNNING HEADER"]
+            if page_number == 1:
+                body.extend(
+                    [
+                        "# Verification Report",
+                        "| Name | State |",
+                        "| --- | --- |",
+                        "| Alpha | Ready |",
+                    ]
+                )
+            body.extend((f"Body page {page_number}", "RUNNING FOOTER"))
+            page_lines.append(body)
+
+        with mock.patch("docreader.parser.pdf_parser.LAYOUT_ORDERING", False):
+            document = PDFParser(
+                file_name="report.pdf", file_type="pdf"
+            ).parse_into_text(_make_text_pdf(page_lines))
+
+        self.assertEqual(document.metadata["text_page_count"], 4)
+        self.assertEqual(document.content.count("RUNNING HEADER"), 4)
+        self.assertEqual(document.content.count("RUNNING FOOTER"), 4)
+        self.assertEqual(document.metadata["repeated_page_region_count"], 8)
+        self.assertEqual(
+            sum(block.id.startswith("pdf-page-") for block in document.structure_blocks),
+            4,
+        )
+        kinds = {block.kind for block in document.structure_blocks}
+        self.assertTrue({"page_region", "heading", "table_header", "table_row"} <= kinds)
+        self.assertTrue(
+            all(
+                document.content[block.start : block.end]
+                for block in document.structure_blocks
+            )
+        )
+        transported = structure_blocks_from_document(document)
+        self.assertEqual(len(transported), len(document.structure_blocks))
+
     def test_image_only_pdf_routes_to_scanned(self):
         pdf_bytes = _make_image_only_pdf(2)
         doc = PDFParser(file_name="imgonly.pdf", file_type="pdf").parse_into_text(
@@ -415,6 +552,12 @@ class PDFRouterIntegrationTest(unittest.TestCase):
         self.assertEqual(len(doc.images), 2)
         self.assertIn("images/imgonly_page_1.jpg", doc.images)
         self.assertIn("![imgonly_page_1.jpg](images/imgonly_page_1.jpg)", doc.content)
+        self.assertIn("\fPage 1", doc.content)
+        self.assertEqual(
+            [block.kind for block in doc.structure_blocks],
+            ["page_region", "image_caption", "page_region", "image_caption"],
+        )
+        self.assertEqual(len(structure_blocks_from_document(doc)), 4)
         # JPEG magic bytes after decoding.
         import base64
 
@@ -424,13 +567,21 @@ class PDFRouterIntegrationTest(unittest.TestCase):
             )
         )
 
-    def test_malformed_pdf_raises_after_fallback(self):
-        # Routing fails to open the PDF, falls back to full rendering which also
-        # fails on garbage input; the error surfaces to the caller.
+    def test_malformed_pdf_surfaces_routing_error(self):
         with self.assertRaises(Exception):
             PDFParser(file_name="broken.pdf", file_type="pdf").parse_into_text(
                 b"not a pdf"
             )
+
+    def test_route_error_does_not_invoke_scanned_fallback(self):
+        parser = PDFParser(file_name="broken.pdf", file_type="pdf")
+        expected = RuntimeError("layout metadata is invalid")
+        with mock.patch.object(parser, "_route", side_effect=expected), mock.patch(
+            "docreader.parser.pdf_parser.PDFScannedParser.parse_into_text"
+        ) as scanned:
+            with self.assertRaisesRegex(RuntimeError, "layout metadata is invalid"):
+                parser.parse_into_text(b"pdf")
+        scanned.assert_not_called()
 
 
 class ForceScannedTest(unittest.TestCase):

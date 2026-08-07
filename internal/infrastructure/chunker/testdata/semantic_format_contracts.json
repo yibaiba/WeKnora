@@ -81,8 +81,16 @@
     {
       "format": "pdf",
       "report_regression": true,
-      "markdown": "# Verification Report\n\n## Contents\n1. Overview\n2. Interface Checks\n3. Performance\n\n\fPage 2\n\n## Overview\nThe release was verified against the approved scope.\n\n## Interface Checks\n| Case | Category | Result |\n| --- | --- | --- |\n| TC-LOGIN | Authentication | Pass |\n| TC-EXPORT | Data Export | Pass |\n\n## Performance\nRecord ID: PERF-001\nCategory: Throughput\nResult: Pass\nNotes: Sustained load remained within the target.\n",
+      "hint_source": "\fPage 1\n\n# Verification Report\n\n## Contents\n1. Overview\n2. Interface Checks\n3. Performance\n\n\fPage 2\n\n## Overview\nThe release was verified against the approved scope.\n\n## Interface Checks\n| Case | Category | Result |\n| --- | --- | --- |\n| TC-LOGIN | Authentication | Pass |\n| TC-EXPORT | Data Export | Pass |\n\n## Performance\nRecord ID: PERF-001\nCategory: Throughput\nResult: Pass\nNotes: Sustained load remained within the target.\n\n\fPage 3\n\n![report_page_3.jpg](images/report_page_3.jpg)\n",
+      "markdown": "\fPage 1\n\n# Verification Report\n\n## Contents\n1. Overview\n2. Interface Checks\n3. Performance\n\n\fPage 2\n\n## Overview\nThe release was verified against the approved scope.\n\n## Interface Checks\n| Case | Category | Result |\n| --- | --- | --- |\n| TC-LOGIN | Authentication | Pass |\n| TC-EXPORT | Data Export | Pass |\n\n## Performance\nRecord ID: PERF-001\nCategory: Throughput\nResult: Pass\nNotes: Sustained load remained within the target.\n\n\fPage 3\n\n![report_page_3.jpg](stored/report-page-3.jpg)\n",
       "structure_blocks": [
+        {
+          "id": "pdf-page-1",
+          "kind": "page_region",
+          "needle": "\fPage 1\n",
+          "atomic": false,
+          "confidence": "high"
+        },
         {
           "id": "pdf-heading",
           "kind": "heading",
@@ -92,23 +100,85 @@
           "confidence": "high"
         },
         {
-          "id": "pdf-table-row",
-          "kind": "table_row",
-          "needle": "| TC-LOGIN | Authentication | Pass |\n",
-          "table_id": "docreader-table-7",
+          "id": "pdf-page-2",
+          "kind": "page_region",
+          "needle": "\fPage 2\n",
+          "atomic": false,
+          "confidence": "high"
+        },
+        {
+          "id": "pdf-overview",
+          "kind": "heading",
+          "needle": "## Overview\n",
+          "parent_id": "pdf-heading",
+          "section_depth": 2,
           "atomic": true,
           "confidence": "high"
         },
         {
-          "id": "pdf-damaged",
-          "kind": "unsupported_kind",
-          "needle": "| TC-EXPORT | Data Export | Pass |\n",
+          "id": "pdf-interface",
+          "kind": "heading",
+          "needle": "## Interface Checks\n",
+          "parent_id": "pdf-heading",
+          "section_depth": 2,
           "atomic": true,
           "confidence": "high"
+        },
+        {
+          "id": "pdf-table-header",
+          "kind": "table_header",
+          "needle": "| Case | Category | Result |\n| --- | --- | --- |\n",
+          "parent_id": "pdf-interface",
+          "table_id": "pdf-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pdf-table-row-1",
+          "kind": "table_row",
+          "needle": "| TC-LOGIN | Authentication | Pass |\n",
+          "parent_id": "pdf-interface",
+          "table_id": "pdf-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pdf-table-row-2",
+          "kind": "table_row",
+          "needle": "| TC-EXPORT | Data Export | Pass |\n",
+          "parent_id": "pdf-interface",
+          "table_id": "pdf-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pdf-performance",
+          "kind": "heading",
+          "needle": "## Performance\n",
+          "parent_id": "pdf-heading",
+          "section_depth": 2,
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "pdf-page-3",
+          "kind": "page_region",
+          "needle": "\fPage 3\n",
+          "atomic": false,
+          "confidence": "high"
+        },
+        {
+          "id": "pdf-ocr-image",
+          "kind": "image_caption",
+          "needle": "![report_page_3.jpg](images/report_page_3.jpg)\n",
+          "parent_id": "pdf-performance",
+          "atomic": true,
+          "confidence": "high",
+          "context_kinds": ["image"]
         }
       ],
-      "expected_kinds": ["heading", "list_item", "page_region", "paragraph", "table_header", "table_row", "record"],
-      "expected_hints_accepted": 2,
+      "expected_kinds": ["heading", "list_item", "page_region", "paragraph", "table_header", "table_row", "record", "image_caption"],
+      "expected_hints_accepted": 10,
       "expected_hints_rejected": 1
     },
     {
