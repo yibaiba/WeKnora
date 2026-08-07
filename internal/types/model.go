@@ -58,10 +58,18 @@ const (
 
 // EmbeddingParameters represents the embedding parameters for a model
 type EmbeddingParameters struct {
-	Dimension                 int  `yaml:"dimension"                   json:"dimension"`
-	TruncatePromptTokens      int  `yaml:"truncate_prompt_tokens"      json:"truncate_prompt_tokens"`
-	SupportsDimensionOverride bool `yaml:"supports_dimension_override" json:"supports_dimension_override"`
+	Dimension                 int    `yaml:"dimension"                   json:"dimension"`
+	TruncatePromptTokens      int    `yaml:"truncate_prompt_tokens"      json:"truncate_prompt_tokens"`
+	SupportsDimensionOverride bool   `yaml:"supports_dimension_override" json:"supports_dimension_override"`
+	TokenizerEncoding         string `yaml:"tokenizer_encoding,omitempty" json:"tokenizer_encoding,omitempty"`
 }
+
+const (
+	TokenizerEncodingAuto           = "auto"
+	TokenizerEncodingCL100KBase     = "cl100k_base"
+	TokenizerEncodingO200KBase      = "o200k_base"
+	TokenizerEncodingByteUpperBound = "byte_upper_bound"
+)
 
 const (
 	DefaultModelContextWindowTokens = 8192
@@ -112,6 +120,21 @@ func (c ModelParameters) ValidateContextWindowTokens() error {
 	return fmt.Errorf(
 		"context_window_tokens must be 0 or between %d and %d",
 		MinModelContextWindowTokens, MaxModelContextWindowTokens,
+	)
+}
+
+func (c ModelParameters) Validate() error {
+	if err := c.ValidateContextWindowTokens(); err != nil {
+		return err
+	}
+	encoding := c.EmbeddingParameters.TokenizerEncoding
+	if encoding == "" || encoding == TokenizerEncodingAuto ||
+		encoding == TokenizerEncodingCL100KBase || encoding == TokenizerEncodingO200KBase ||
+		encoding == TokenizerEncodingByteUpperBound {
+		return nil
+	}
+	return fmt.Errorf(
+		"tokenizer_encoding must be one of auto, cl100k_base, o200k_base, or byte_upper_bound",
 	)
 }
 

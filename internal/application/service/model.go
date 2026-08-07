@@ -96,7 +96,7 @@ func (s *modelService) resolveWeKnoraCloudCredentials(ctx context.Context, param
 // For local models, it initiates an asynchronous download process
 // Remote models are immediately set to active status
 func (s *modelService) CreateModel(ctx context.Context, model *types.Model) error {
-	if err := model.Parameters.ValidateContextWindowTokens(); err != nil {
+	if err := model.Parameters.Validate(); err != nil {
 		return err
 	}
 	logger.Infof(ctx, "Creating model: %s, type: %s, source: %s", model.Name, model.Type, model.Source)
@@ -227,7 +227,7 @@ func (s *modelService) ListModels(ctx context.Context) ([]*types.Model, error) {
 
 // UpdateModel updates an existing model in the repository
 func (s *modelService) UpdateModel(ctx context.Context, model *types.Model) error {
-	if err := model.Parameters.ValidateContextWindowTokens(); err != nil {
+	if err := model.Parameters.Validate(); err != nil {
 		return err
 	}
 	logger.Info(ctx, "Start updating model")

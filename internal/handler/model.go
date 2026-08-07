@@ -74,7 +74,7 @@ func (h *ModelHandler) CreateModel(c *gin.Context) {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
-	if err := req.Parameters.ValidateContextWindowTokens(); err != nil {
+	if err := req.Parameters.Validate(); err != nil {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
@@ -567,7 +567,7 @@ func (h *ModelHandler) UpdateModel(c *gin.Context) {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
-	if err := req.Parameters.ValidateContextWindowTokens(); err != nil {
+	if err := req.Parameters.Validate(); err != nil {
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
