@@ -206,18 +206,32 @@ type IngestionChunkerDiagnostics struct {
 }
 
 type IngestionChunkingCandidate struct {
-	ID                string                               `json:"id"`
-	Config            IngestionChunkingRecommendation      `json:"config"`
-	ChunkCount        int                                  `json:"chunk_count"`
-	ParentChunkCount  int                                  `json:"parent_chunk_count"`
-	Lengths           IngestionLengthDistribution          `json:"lengths"`
-	Structure         IngestionStructureMetrics            `json:"structure"`
-	StructureQuality  IngestionStructureQuality            `json:"structure_quality"`
-	BlockDescriptions []IngestionChunkStructureDescription `json:"block_descriptions"`
-	Diagnostics       IngestionChunkerDiagnostics          `json:"diagnostics"`
-	Score             IngestionCandidateScore              `json:"score"`
-	HardValid         bool                                 `json:"hard_valid"`
-	Violations        []string                             `json:"violations"`
+	ID                   string                               `json:"id"`
+	Archetype            string                               `json:"archetype"`
+	PackingPolicyVersion string                               `json:"packing_policy_version"`
+	Config               IngestionChunkingRecommendation      `json:"config"`
+	ChunkCount           int                                  `json:"chunk_count"`
+	ParentChunkCount     int                                  `json:"parent_chunk_count"`
+	Lengths              IngestionLengthDistribution          `json:"lengths"`
+	Structure            IngestionStructureMetrics            `json:"structure"`
+	StructureQuality     IngestionStructureQuality            `json:"structure_quality"`
+	BlockDescriptions    []IngestionChunkStructureDescription `json:"block_descriptions"`
+	Diagnostics          IngestionChunkerDiagnostics          `json:"diagnostics"`
+	Score                IngestionCandidateScore              `json:"score"`
+	HardValid            bool                                 `json:"hard_valid"`
+	Violations           []string                             `json:"violations"`
+}
+
+// SemanticPackingPolicy is derived from validated full-document evidence.
+// Callers receive value copies so an Agent cannot alter packing behavior.
+type SemanticPackingPolicy struct {
+	Version                     string   `json:"version"`
+	TrustSoftHeadings           bool     `json:"trust_soft_headings"`
+	StrongBoundaryOrder         []string `json:"strong_boundary_order"`
+	SeparateRecords             bool     `json:"separate_records"`
+	PreserveRepeatedPageRegions bool     `json:"preserve_repeated_page_regions"`
+	ContextTokenPercent         int      `json:"context_token_percent"`
+	ContextTokenLimit           int      `json:"context_token_limit"`
 }
 
 // IngestionAnalysis is persisted in knowledge.metadata.ingestion_analysis.
@@ -236,6 +250,7 @@ type IngestionAnalysis struct {
 	SelectedCandidateID    string                          `json:"selected_candidate_id"`
 	SelectionReasonCodes   []string                        `json:"selection_reason_codes"`
 	AgentRun               IngestionAgentRun               `json:"agent_run"`
+	PackingPolicy          SemanticPackingPolicy           `json:"packing_policy"`
 }
 
 // DocumentStructureStats describes the complete extracted document, even when

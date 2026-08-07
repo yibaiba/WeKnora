@@ -31,5 +31,6 @@ func cloneIngestionAnalysis(analysis *types.IngestionAnalysis) *types.IngestionA
 	cloned.Candidates = cloneIngestionCandidates(analysis.Candidates)
 	cloned.SelectionReasonCodes = append([]string(nil), analysis.SelectionReasonCodes...)
 	cloned.AgentRun = cloneIngestionAgentRun(analysis.AgentRun)
+	cloned.PackingPolicy = cloneSemanticPackingPolicy(analysis.PackingPolicy)
 	return &cloned
 }

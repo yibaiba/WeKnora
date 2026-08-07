@@ -254,21 +254,23 @@ func buildParentChildConfigs(cc types.ChunkingConfig, base chunker.SplitterConfi
 		childSize = 384
 	}
 	parent = chunker.SplitterConfig{
-		ChunkSize:        parentSize,
-		ChunkOverlap:     base.ChunkOverlap, // reuse configured overlap for parents
-		Separators:       base.Separators,
-		Strategy:         base.Strategy,
-		AllowZeroOverlap: base.AllowZeroOverlap,
+		ChunkSize:             parentSize,
+		ChunkOverlap:          base.ChunkOverlap, // reuse configured overlap for parents
+		Separators:            base.Separators,
+		Strategy:              base.Strategy,
+		AllowZeroOverlap:      base.AllowZeroOverlap,
+		SemanticPackingPolicy: cloneSemanticPackingPolicy(base.SemanticPackingPolicy),
 	}
 	child = chunker.SplitterConfig{
-		ChunkSize:        childSize,
-		ChunkOverlap:     childSize / 5, // ~20% overlap for child chunks
-		Separators:       base.Separators,
-		Strategy:         base.Strategy,
-		TokenLimit:       base.TokenLimit,
-		Languages:        append([]string(nil), base.Languages...),
-		TokenCounter:     base.TokenCounter,
-		AllowZeroOverlap: base.AllowZeroOverlap,
+		ChunkSize:             childSize,
+		ChunkOverlap:          childSize / 5, // ~20% overlap for child chunks
+		Separators:            base.Separators,
+		Strategy:              base.Strategy,
+		TokenLimit:            base.TokenLimit,
+		Languages:             append([]string(nil), base.Languages...),
+		TokenCounter:          base.TokenCounter,
+		SemanticPackingPolicy: cloneSemanticPackingPolicy(base.SemanticPackingPolicy),
+		AllowZeroOverlap:      base.AllowZeroOverlap,
 	}
 	return
 }

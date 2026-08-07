@@ -22,6 +22,7 @@ type EffectiveProcessConfig struct {
 	ChunkingConfig           ChunkingConfig
 	IngestionAdvisorApplied  bool
 	IngestionAppliedMode     string
+	SemanticPackingPolicy    SemanticPackingPolicy
 	EnableMultimodel         bool
 	VLMConfig                VLMConfig
 	ASRConfig                ASRConfig

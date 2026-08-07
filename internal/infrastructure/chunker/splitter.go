@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // Chunk represents a piece of split text with position tracking.
@@ -78,6 +79,9 @@ type SplitterConfig struct {
 	// TokenCounter is injected by ingestion from the selected embedding model.
 	// Nil uses the explicit conservative byte upper bound.
 	TokenCounter TokenCounter
+	// SemanticPackingPolicy is a backend-derived value object. It affects only
+	// semantic packing and is never populated from Agent tool arguments.
+	SemanticPackingPolicy types.SemanticPackingPolicy
 }
 
 // Default chunk sizing constants. Single source of truth for the entire

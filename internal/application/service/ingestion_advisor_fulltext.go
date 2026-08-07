@@ -35,6 +35,11 @@ func prepareIngestionAgent(
 	if err != nil {
 		return ingestionAgentPreparation{}, err
 	}
+	if err := request.Session.generateCandidates(evidence); err != nil {
+		return ingestionAgentPreparation{}, newIngestionAdvisorRunError(
+			ingestionAdvisorErrorCandidateGeneration, "生成确定性分块候选失败：%s", err,
+		)
+	}
 	query, err := buildIngestionAgentQuery(request.Session.statistics, evidence)
 	if err != nil {
 		return ingestionAgentPreparation{}, newIngestionAdvisorRunError(

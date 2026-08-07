@@ -34,7 +34,7 @@ func SplitSemanticDocument(
 	}
 	packer := semanticPacker{
 		runes: []rune(content), config: config,
-		context: newSemanticContextIndex(content, document),
+		context: newSemanticContextIndex(content, document, config.SemanticPackingPolicy),
 	}
 	units, err := packer.expand(document.Blocks)
 	if err != nil {

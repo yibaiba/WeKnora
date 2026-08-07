@@ -32,6 +32,7 @@ func splitKnowledgeDocument(
 ) (knowledgeDocumentSplitResult, error) {
 	base := buildSplitterConfigFromEffective(request.effective)
 	base.TokenCounter = request.tokenCounter
+	base.SemanticPackingPolicy = cloneSemanticPackingPolicy(request.effective.SemanticPackingPolicy)
 	set, err := buildKnowledgeChunkSet(request, base)
 	if err != nil {
 		return knowledgeDocumentSplitResult{}, err

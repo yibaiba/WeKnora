@@ -6,14 +6,15 @@ import (
 )
 
 const (
-	ingestionAdvisorErrorModelUnavailable = "INGESTION_MODEL_UNAVAILABLE"
-	ingestionAdvisorErrorToolCalling      = "INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED"
-	ingestionAdvisorErrorCoreTool         = "INGESTION_CORE_TOOL_FAILED"
-	ingestionAdvisorErrorCandidate        = "INGESTION_CANDIDATE_INVALID"
-	ingestionAdvisorErrorMaxRounds        = "INGESTION_AGENT_MAX_ROUNDS"
-	ingestionAdvisorErrorNotSubmitted     = "INGESTION_DECISION_NOT_SUBMITTED"
-	ingestionAdvisorErrorExecution        = "INGESTION_AGENT_EXECUTION_FAILED"
-	ingestionAdvisorErrorDocumentAnalysis = "INGESTION_DOCUMENT_ANALYSIS_FAILED"
+	ingestionAdvisorErrorModelUnavailable    = "INGESTION_MODEL_UNAVAILABLE"
+	ingestionAdvisorErrorToolCalling         = "INGESTION_MODEL_TOOL_CALLING_UNSUPPORTED"
+	ingestionAdvisorErrorCoreTool            = "INGESTION_CORE_TOOL_FAILED"
+	ingestionAdvisorErrorCandidate           = "INGESTION_CANDIDATE_INVALID"
+	ingestionAdvisorErrorMaxRounds           = "INGESTION_AGENT_MAX_ROUNDS"
+	ingestionAdvisorErrorNotSubmitted        = "INGESTION_DECISION_NOT_SUBMITTED"
+	ingestionAdvisorErrorExecution           = "INGESTION_AGENT_EXECUTION_FAILED"
+	ingestionAdvisorErrorDocumentAnalysis    = "INGESTION_DOCUMENT_ANALYSIS_FAILED"
+	ingestionAdvisorErrorCandidateGeneration = "INGESTION_CANDIDATE_GENERATION_FAILED"
 )
 
 type ingestionAdvisorRunError struct {

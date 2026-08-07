@@ -1,6 +1,10 @@
 package chunker
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 const (
 	semanticContextTokenPercent = 20
@@ -15,6 +19,7 @@ type semanticContextIndex struct {
 	byID         map[string]SemanticBlock
 	tableHeaders map[string]SemanticBlock
 	records      map[string]SemanticBlock
+	policy       types.SemanticPackingPolicy
 }
 
 type semanticContextItem struct {
@@ -28,12 +33,13 @@ type semanticContext struct {
 }
 
 type SemanticContextRequest struct {
-	Content      string
-	Document     SemanticDocument
-	Block        SemanticBlock
-	Continuation bool
-	TokenLimit   int
-	TokenCounter TokenCounter
+	Content       string
+	Document      SemanticDocument
+	Block         SemanticBlock
+	Continuation  bool
+	TokenLimit    int
+	TokenCounter  TokenCounter
+	PackingPolicy types.SemanticPackingPolicy
 }
 
 type SemanticContextResult struct {
@@ -42,7 +48,7 @@ type SemanticContextResult struct {
 }
 
 func BuildSemanticContext(request SemanticContextRequest) (SemanticContextResult, error) {
-	context, err := newSemanticContextIndex(request.Content, request.Document).contextFor(
+	context, err := newSemanticContextIndex(request.Content, request.Document, request.PackingPolicy).contextFor(
 		request.Block, request.Continuation, request.TokenLimit, request.TokenCounter,
 	)
 	if err != nil {
@@ -53,10 +59,15 @@ func BuildSemanticContext(request SemanticContextRequest) (SemanticContextResult
 	}, nil
 }
 
-func newSemanticContextIndex(content string, document SemanticDocument) semanticContextIndex {
+func newSemanticContextIndex(
+	content string,
+	document SemanticDocument,
+	policy types.SemanticPackingPolicy,
+) semanticContextIndex {
 	index := semanticContextIndex{
 		content: []rune(content), byID: make(map[string]SemanticBlock, len(document.Blocks)),
 		tableHeaders: make(map[string]SemanticBlock), records: make(map[string]SemanticBlock),
+		policy: policy,
 	}
 	for _, block := range document.Blocks {
 		index.byID[block.ID] = block
@@ -80,7 +91,14 @@ func (index semanticContextIndex) contextFor(
 	if tokenLimit <= 0 {
 		return semanticContext{header: joinSemanticContextItems(items)}, nil
 	}
-	budget := min(semanticContextTokenCap, tokenLimit*semanticContextTokenPercent/100)
+	percent, cap := semanticContextTokenPercent, semanticContextTokenCap
+	if index.policy.ContextTokenPercent > 0 {
+		percent = index.policy.ContextTokenPercent
+	}
+	if index.policy.ContextTokenLimit > 0 {
+		cap = index.policy.ContextTokenLimit
+	}
+	budget := min(cap, tokenLimit*percent/100)
 	return fitSemanticContext(items, budget, tokenCounterOrConservative(counter))
 }
 
@@ -143,7 +161,8 @@ func (index semanticContextIndex) headingAncestorsNearestFirst(parentID string) 
 		if !ok {
 			break
 		}
-		if parent.Kind == SemanticKindHeading && parent.Confidence == SemanticConfidenceHigh {
+		trustedHeading := parent.Confidence == SemanticConfidenceHigh || index.policy.TrustSoftHeadings
+		if parent.Kind == SemanticKindHeading && trustedHeading {
 			result = appendUniqueContext(result, index.blockText(parent))
 		}
 		parentID = parent.ParentID

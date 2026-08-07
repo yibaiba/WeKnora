@@ -16,6 +16,8 @@ type ingestionCandidateBuildRequest struct {
 	id          string
 	document    chunker.SemanticDocument
 	documentErr error
+	archetype   string
+	policy      types.SemanticPackingPolicy
 }
 
 func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error) {
@@ -32,6 +34,7 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 	config := ingestionChunkingConfig(request.config, request.constraints)
 	base := normalizeSplitterConfig(config, true)
 	base.TokenCounter = request.constraints.TokenCounter
+	base.SemanticPackingPolicy = cloneSemanticPackingPolicy(request.policy)
 	split, err := splitIngestionPreview(ingestionPreviewSplitRequest{
 		content: request.content, config: config, base: base, document: request.document,
 	})
@@ -54,23 +57,25 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 		content: request.content, document: request.document, chunks: split.chunks,
 		parents: split.parents, parentIndexes: split.parentIndexes,
 		config: request.config, scoreConfig: split.scoreConfig, validation: validation,
-		tokenLimit: request.constraints.TokenLimit,
+		tokenLimit: request.constraints.TokenLimit, policy: request.policy,
 	})
 	diagnostics := convertIngestionDiagnostics(split.diagnostics)
 	diagnostics.ContextReasonCodes = ingestionContextReasonCodes(split.chunks)
 	return types.IngestionChunkingCandidate{
-		ID:                request.id,
-		Config:            cloneChunkingRecommendation(request.config),
-		ChunkCount:        len(split.chunks),
-		ParentChunkCount:  len(split.parents),
-		Lengths:           metrics.lengths,
-		Structure:         metrics.structure,
-		StructureQuality:  validation.quality,
-		BlockDescriptions: validation.descriptions,
-		Diagnostics:       diagnostics,
-		Score:             metrics.score,
-		HardValid:         len(validation.violations) == 0,
-		Violations:        validation.violations,
+		ID:                   request.id,
+		Archetype:            request.archetype,
+		PackingPolicyVersion: request.policy.Version,
+		Config:               cloneChunkingRecommendation(request.config),
+		ChunkCount:           len(split.chunks),
+		ParentChunkCount:     len(split.parents),
+		Lengths:              metrics.lengths,
+		Structure:            metrics.structure,
+		StructureQuality:     validation.quality,
+		BlockDescriptions:    validation.descriptions,
+		Diagnostics:          diagnostics,
+		Score:                metrics.score,
+		HardValid:            len(validation.violations) == 0,
+		Violations:           validation.violations,
 	}, nil
 }
 

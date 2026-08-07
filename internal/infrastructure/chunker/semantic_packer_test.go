@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -168,6 +169,27 @@ func TestSemanticPackingDoesNotRepeatSoftHeadingAsContext(t *testing.T) {
 	for _, current := range chunks {
 		require.NotContains(t, current.ContextHeader, "Potential heading")
 	}
+}
+
+func TestSemanticPackingPolicyCanTrustSoftHeadingContext(t *testing.T) {
+	content := "Potential heading\n\nBody text remains searchable with evidence-backed context.\n"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+
+	chunks, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 40, ChunkOverlap: 0, AllowZeroOverlap: true,
+		SemanticPackingPolicy: types.SemanticPackingPolicy{TrustSoftHeadings: true},
+	}, document)
+
+	require.NoError(t, err)
+	found := false
+	for _, current := range chunks {
+		if strings.Contains(current.Content, "Body text") {
+			found = true
+			require.Contains(t, current.ContextHeader, "Potential heading")
+		}
+	}
+	require.True(t, found)
 }
 
 func TestSemanticParentChildReusesRanges(t *testing.T) {

@@ -32,6 +32,7 @@ type ingestionCandidateMetricsRequest struct {
 	scoreConfig   chunker.SplitterConfig
 	validation    ingestionCandidateValidationResult
 	tokenLimit    int
+	policy        types.SemanticPackingPolicy
 }
 
 func ingestionPreviewMetrics(request ingestionCandidateMetricsRequest) ingestionCandidateMetrics {
@@ -227,20 +228,60 @@ func scoreBoundaryQuality(request ingestionCandidateMetricsRequest) float64 {
 	if len(request.chunks) <= 1 {
 		return 1
 	}
-	boundaries := make(map[int]struct{}, len(request.document.Blocks)*2)
-	for _, block := range request.document.Blocks {
-		boundaries[block.Start] = struct{}{}
-		boundaries[block.End] = struct{}{}
-	}
+	boundaries := ingestionBoundaryWeights(request.document.Blocks, request.policy)
 	runes := []rune(request.content)
-	hits := 0
+	hits, maximum := 0, max(1, len(request.policy.StrongBoundaryOrder))
 	for _, current := range request.chunks[:len(request.chunks)-1] {
-		_, semanticBoundary := boundaries[current.End]
-		if semanticBoundary || separatorEndsAt(runes, current.End, request.config.Separators) {
+		if weight := boundaries[current.End]; weight > 0 {
+			hits += weight
+			continue
+		}
+		if separatorEndsAt(runes, current.End, request.config.Separators) {
 			hits++
 		}
 	}
-	return float64(hits) / float64(len(request.chunks)-1)
+	return float64(hits) / float64((len(request.chunks)-1)*maximum)
+}
+
+func ingestionBoundaryWeights(
+	blocks []chunker.SemanticBlock,
+	policy types.SemanticPackingPolicy,
+) map[int]int {
+	maximum := max(1, len(policy.StrongBoundaryOrder))
+	priorities := make(map[string]int, len(policy.StrongBoundaryOrder))
+	for index, kind := range policy.StrongBoundaryOrder {
+		priorities[kind] = maximum - index
+	}
+	result := make(map[int]int, len(blocks)*2)
+	for _, block := range blocks {
+		weight := maximum
+		if len(priorities) > 0 {
+			weight = priorities[ingestionBoundaryKind(block.Kind)]
+		}
+		if weight > result[block.End] {
+			result[block.End] = weight
+		}
+	}
+	return result
+}
+
+func ingestionBoundaryKind(kind string) string {
+	switch kind {
+	case chunker.SemanticKindHeading:
+		return "section"
+	case chunker.SemanticKindRecord:
+		return "record"
+	case chunker.SemanticKindTableHeader, chunker.SemanticKindTableRow:
+		return "table_row"
+	case chunker.SemanticKindListItem:
+		return "list_item"
+	case chunker.SemanticKindFAQ:
+		return "faq_pair"
+	case chunker.SemanticKindCodeBlock:
+		return "code_block"
+	default:
+		return "paragraph"
+	}
 }
 
 func separatorEndsAt(content []rune, boundary int, separators []string) bool {

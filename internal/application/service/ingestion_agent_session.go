@@ -26,6 +26,7 @@ type ingestionAgentSession struct {
 	document    chunker.SemanticDocument
 	documentErr error
 	fallback    types.IngestionChunkingRecommendation
+	policy      types.SemanticPackingPolicy
 
 	mu             sync.RWMutex
 	candidates     map[string]types.IngestionChunkingCandidate
@@ -129,7 +130,7 @@ func (s *ingestionAgentSession) preview(
 	}
 	candidate, err = s.buildCandidate(ingestionCandidateBuildRequest{
 		content: s.content, config: normalized, constraints: s.constraints, id: id,
-		document: s.document, documentErr: s.documentErr,
+		document: s.document, documentErr: s.documentErr, policy: cloneSemanticPackingPolicy(s.policy),
 	})
 	s.completePreview(id, flight, ingestionCandidateBuildResult{candidate: candidate, err: err})
 	return cloneIngestionCandidate(candidate), err
@@ -195,6 +196,7 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 		ReasonCodes:            append([]string(nil), input.ReasonCodes...),
 		Summary:                input.Summary,
 		RecommendedChunking:    cloneChunkingRecommendation(candidate.Config),
+		PackingPolicy:          cloneSemanticPackingPolicy(s.policy),
 	}
 	if err := validateIngestionAnalysisWithConstraints(analysis, s.constraints); err != nil {
 		return nil, err
@@ -265,5 +267,10 @@ func cloneIngestionCandidate(value types.IngestionChunkingCandidate) types.Inges
 		[]string(nil), value.Diagnostics.ContextReasonCodes...,
 	)
 	value.Violations = append([]string(nil), value.Violations...)
+	return value
+}
+
+func cloneSemanticPackingPolicy(value types.SemanticPackingPolicy) types.SemanticPackingPolicy {
+	value.StrongBoundaryOrder = append([]string(nil), value.StrongBoundaryOrder...)
 	return value
 }
