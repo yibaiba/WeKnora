@@ -2,7 +2,7 @@
   "contracts": [
     {
       "format": "docx",
-      "markdown": "# Operations Guide\n\n## Preparation\nComplete the prerequisites before deployment.\n\n- Install package\n- Verify access\n\n## Results\n| Check | Result |\n| --- | --- |\n| Connectivity | Pass |\n",
+      "markdown": "# Operations Guide\n\n## Preparation\nComplete the prerequisites before deployment.\n\n- Install package\n- Verify access\n\n## Results\n| Check | Result |\n| --- | --- |\n| Connectivity | Pass |\n\n![Deployment result](images/result.png)\nFigure 1: Deployment result\n\n\fPage 2\n",
       "structure_blocks": [
         {
           "id": "docx-heading",
@@ -13,15 +13,69 @@
           "confidence": "high"
         },
         {
+          "id": "docx-preparation",
+          "kind": "heading",
+          "needle": "## Preparation\n",
+          "parent_id": "docx-heading",
+          "section_depth": 2,
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
           "id": "docx-list-item",
           "kind": "list_item",
           "needle": "- Install package\n",
+          "parent_id": "docx-preparation",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "docx-results",
+          "kind": "heading",
+          "needle": "## Results\n",
+          "parent_id": "docx-heading",
+          "section_depth": 2,
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "docx-table-header",
+          "kind": "table_header",
+          "needle": "| Check | Result |\n| --- | --- |\n",
+          "parent_id": "docx-results",
+          "table_id": "docx-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "docx-table-row",
+          "kind": "table_row",
+          "needle": "| Connectivity | Pass |\n",
+          "parent_id": "docx-results",
+          "table_id": "docx-table-0001",
+          "atomic": true,
+          "confidence": "high"
+        },
+        {
+          "id": "docx-image-caption",
+          "kind": "image_caption",
+          "needle": "![Deployment result](images/result.png)\nFigure 1: Deployment result\n",
+          "parent_id": "docx-results",
+          "atomic": true,
+          "confidence": "high",
+          "context_kinds": ["image", "caption"]
+        },
+        {
+          "id": "docx-page-region",
+          "kind": "page_region",
+          "needle": "\fPage 2\n",
+          "parent_id": "docx-results",
           "atomic": true,
           "confidence": "high"
         }
       ],
-      "expected_kinds": ["heading", "paragraph", "list_item", "table_header", "table_row"],
-      "expected_hints_accepted": 2,
+      "expected_kinds": ["heading", "paragraph", "list_item", "table_header", "table_row", "image_caption", "page_region"],
+      "expected_hints_accepted": 8,
       "expected_hints_rejected": 0
     },
     {

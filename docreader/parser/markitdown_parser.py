@@ -8,6 +8,7 @@ from docreader.models.document import Document
 from docreader.parser.base_parser import BaseParser
 from docreader.parser.chain_parser import PipelineParser
 from docreader.parser.concurrency import parser_worker_limit
+from docreader.parser.docx_structure import attach_docx_structure
 from docreader.parser.markdown_parser import MarkdownParser
 from docreader.parser.ppt_convert import normalize_ppt_bytes
 from docreader.parser.pptx_media import (
@@ -76,3 +77,9 @@ class StdMarkitdownParser(BaseParser):
 
 class MarkitdownParser(PipelineParser):
     _parser_cls = (StdMarkitdownParser, MarkdownParser)
+
+    def parse_into_text(self, content: bytes) -> Document:
+        document = super().parse_into_text(content)
+        if (self.file_type or "").lstrip(".").lower() != "docx":
+            return document
+        return attach_docx_structure(content, document)

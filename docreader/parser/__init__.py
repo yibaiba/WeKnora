@@ -1,28 +1,21 @@
-"""
-Parser module for WeKnora document processing system.
+"""Public parser exports, loaded only when a format is requested."""
 
-This module provides document parsers for various file formats including:
-- Microsoft Word documents (.doc, .docx)
-- PDF documents
-- Markdown files
-- Plain text files
-- Images with text content
-- Web pages
+from importlib import import_module
 
-The parsers extract content from documents and can split them into
-meaningful chunks for further processing and indexing.
-"""
 
-from .doc_parser import DocParser
-from .docx2_parser import Docx2Parser
-from .excel_parser import ExcelParser
-from .html_parser import HTMLParser
-from .image_parser import ImageParser
-from .markdown_parser import MarkdownParser
-from .parser import Parser
-from .pdf_parser import PDFParser
-from .registry import ParserEngineRegistry, registry
-from .web_parser import WebParser
+_EXPORTS = {
+    "Docx2Parser": ("docx2_parser", "Docx2Parser"),
+    "DocParser": ("doc_parser", "DocParser"),
+    "PDFParser": ("pdf_parser", "PDFParser"),
+    "MarkdownParser": ("markdown_parser", "MarkdownParser"),
+    "ImageParser": ("image_parser", "ImageParser"),
+    "WebParser": ("web_parser", "WebParser"),
+    "Parser": ("parser", "Parser"),
+    "ExcelParser": ("excel_parser", "ExcelParser"),
+    "HTMLParser": ("html_parser", "HTMLParser"),
+    "ParserEngineRegistry": ("registry", "ParserEngineRegistry"),
+    "registry": ("registry", "registry"),
+}
 
 # Export public classes and modules
 __all__ = [
@@ -38,3 +31,14 @@ __all__ = [
     "ParserEngineRegistry",
     "registry",
 ]
+
+
+def __getattr__(name: str):
+    """Resolve public classes lazily so one format does not import every backend."""
+    target = _EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = target
+    value = getattr(import_module(f"{__name__}.{module_name}"), attribute)
+    globals()[name] = value
+    return value

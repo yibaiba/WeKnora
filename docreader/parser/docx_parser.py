@@ -44,6 +44,7 @@ from PIL import Image
 from docreader.config import CONFIG
 from docreader.models.document import Document as DocumentModel
 from docreader.parser.base_parser import BaseParser
+from docreader.parser.docx_structure import attach_docx_structure
 from docreader.utils import endecode
 
 logger = logging.getLogger(__name__)
@@ -201,7 +202,9 @@ class DocxParser(BaseParser):
             )
 
             image_parts.update(inline_images)
-            return DocumentModel(content=text, images=image_parts)
+            return attach_docx_structure(
+                content, DocumentModel(content=text, images=image_parts)
+            )
         except Exception as e:
             logger.error(f"Error parsing DOCX document: {str(e)}")
             logger.error(f"Detailed stack trace: {traceback.format_exc()}")
@@ -280,7 +283,7 @@ class DocxParser(BaseParser):
                 logger.warning("No text extracted using simplified method")
                 return DocumentModel()
 
-            return DocumentModel(content=result_text)
+            return attach_docx_structure(content, DocumentModel(content=result_text))
         except Exception as backup_error:
             processing_time = time.time() - start_time
             logger.error(
