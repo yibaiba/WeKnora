@@ -14,7 +14,7 @@ func (s *ingestionAgentSession) fallbackReady() bool {
 }
 
 func (s *ingestionAgentSession) fallbackReadyLocked() bool {
-	if s.decision != nil || len(s.candidates) != maxIngestionCandidates || len(s.inFlight) > 0 {
+	if s.decision != nil || len(s.candidates) != maxIngestionCandidates {
 		return false
 	}
 	for _, candidate := range s.candidates {

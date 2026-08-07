@@ -13,7 +13,6 @@ const (
 	ingestionFailureTool               = "INGESTION_TOOL_FAILED"
 	ingestionFailureArgumentsInvalid   = "INGESTION_TOOL_ARGUMENTS_INVALID"
 	ingestionFailureCandidatePreview   = "INGESTION_CANDIDATE_PREVIEW_FAILED"
-	ingestionFailureCandidateLimit     = "INGESTION_CANDIDATE_LIMIT_REACHED"
 	ingestionFailureDecisionInvalid    = "INGESTION_DECISION_INVALID"
 	ingestionFailureStrategyInvalid    = ingestionFailureArgumentsInvalid
 	ingestionFailureChunkSizeInvalid   = ingestionFailureArgumentsInvalid
@@ -89,7 +88,7 @@ func safeIngestionFailureCode(code string) string {
 	}
 	switch code {
 	case ingestionFailureTool, ingestionFailureArgumentsInvalid, ingestionFailureCandidatePreview,
-		ingestionFailureCandidateLimit, ingestionFailureDecisionInvalid:
+		ingestionFailureDecisionInvalid:
 		return code
 	default:
 		return ingestionFailureTool
@@ -127,7 +126,7 @@ func safeIngestionFailureConstraint(constraint string) string {
 		"at_most_half_chunk_size", "parent_chunk_size_range", "child_chunk_size_range",
 		"not_greater_than_parent_chunk_size", "non_empty_supported_separators",
 		"source_rune_positions", "strictly_increasing_end_positions", "valid_parent_child_mapping",
-		"serializable_candidate", "candidate_limit", "previewed_hard_valid_candidate", "persisted_candidate",
+		"backend_selection_eligible_candidate", "persisted_candidate",
 		"all_candidates_structurally_invalid":
 		return constraint
 	default:

@@ -3,12 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -84,6 +82,10 @@ func TestIngestionFallbackAcceptsLegacyCustomSeparators(t *testing.T) {
 func TestIngestionFallbackAndSmartSubmissionAreAtomic(t *testing.T) {
 	valid := types.IngestionChunkingCandidate{
 		ID: "cand_valid", Config: ingestionTestConfig(300), HardValid: true,
+		ComparisonFacts: types.IngestionCandidateComparisonFacts{
+			ReferenceCandidateID: "cand_valid", SelectionEligible: true,
+			ReasonCodes: []string{"highest_total_score"},
+		},
 	}
 	session := newFallbackTestSession(
 		valid,
@@ -122,7 +124,7 @@ func TestSubmitIngestionFallbackToolUsesStateDerivedReasons(t *testing.T) {
 		ingestionInvalidCandidate("cand_2", "source_coverage_gap"),
 		ingestionInvalidCandidate("cand_3", "token_limit_exceeded"),
 	)
-	require.Equal(t, submitIngestionFallbackTool, ingestionPreviewNextAction(session))
+	require.True(t, session.fallbackReady())
 	arguments, err := json.Marshal(validIngestionFallbackInput())
 	require.NoError(t, err)
 
@@ -136,26 +138,13 @@ func TestSubmitIngestionFallbackToolUsesStateDerivedReasons(t *testing.T) {
 
 func TestModelIngestionAdvisorTerminatesWithFallbackAfterThreeInvalidCandidates(t *testing.T) {
 	request := validIngestionAdvisorRequest()
-	request.Content = strings.Repeat("unbroken", 3000)
-	request.FallbackChunking = ingestionTestConfig(300)
-	configs := []types.IngestionChunkingRecommendation{
-		invalidParentCandidateConfig(300),
-		invalidParentCandidateConfig(400),
-		invalidParentCandidateConfig(500),
-	}
-	previewCalls := make([]types.LLMToolCall, 0, len(configs))
-	for index, config := range configs {
-		arguments, err := jsonMarshalForTest(config)
-		require.NoError(t, err)
-		previewCalls = append(previewCalls, types.LLMToolCall{
-			ID:       fmt.Sprintf("preview-%d", index),
-			Function: types.FunctionCall{Name: previewIngestionChunkingTool, Arguments: arguments},
-		})
-	}
+	request.Content = "| " + strings.Repeat("very-long-header ", 2) + "| value |\n" +
+		"| --- | --- |\n" + strings.Repeat("| row-with-long-value | answer text |\n", 6)
+	request.ChunkingConstraints.TokenLimit = 100
+	request.FallbackChunking = ingestionTestConfig(100)
 	fallbackArgs, err := json.Marshal(validIngestionFallbackInput())
 	require.NoError(t, err)
 	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolCallsResponse(previewCalls...),
 		toolResponse("fallback-1", submitIngestionFallbackTool, string(fallbackArgs)),
 	}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
@@ -170,8 +159,9 @@ func TestModelIngestionAdvisorTerminatesWithFallbackAfterThreeInvalidCandidates(
 		require.False(t, candidate.HardValid)
 	}
 	require.Equal(t, "termination_tool", result.AgentRun.StopReason)
-	require.Equal(t, 2, result.AgentRun.ActualRounds)
+	require.Equal(t, 1, result.AgentRun.ActualRounds)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionFallbackTool)
+	require.NotContains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.NoError(t, ValidateIngestionAdvisorResult(result))
 }
 
@@ -187,7 +177,7 @@ func TestValidateIngestionAgentOutcomeRejectsFallbackAfterCoreToolFailure(t *tes
 		TerminatedByTool: submitIngestionFallbackTool,
 		RoundSteps: []types.AgentStep{{ToolCalls: []types.ToolCall{
 			{
-				Name: previewIngestionChunkingTool,
+				Name: submitIngestionDecisionTool,
 				Result: &types.ToolResult{Success: false, Failure: &types.ToolFailure{
 					Code: ingestionFailureArgumentsInvalid, Constraint: "json_schema",
 				}},
@@ -246,13 +236,4 @@ func validIngestionDecisionInput(candidateID string) submitIngestionDecisionInpu
 		Confidence: 0.9, RecommendedContentMode: types.IngestionContentModeDocument,
 		ReasonCodes: []string{"valid_candidate"}, Summary: "使用有效候选",
 	}
-}
-
-func invalidParentCandidateConfig(size int) types.IngestionChunkingRecommendation {
-	config := ingestionTestConfig(size)
-	config.Strategy = chunker.StrategyHeading
-	config.EnableParentChild = true
-	config.ParentChunkSize = minimumAdvisorParentSize
-	config.ChildChunkSize = 256
-	return config
 }

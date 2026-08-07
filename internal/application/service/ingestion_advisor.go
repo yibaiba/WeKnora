@@ -96,7 +96,7 @@ func (a *modelIngestionAdvisor) analyze(
 	}
 	state, executeErr := executeIngestionAgent(ctx, executeIngestionAgentRequest{
 		Engine: engine, Request: request, Query: preparation.Query,
-		SystemPrompt: preparation.SystemPrompt,
+		SystemPrompt: preparation.SystemPrompt, TerminationTools: preparation.TerminationTools,
 	})
 	run = buildIngestionAgentRun(run, state)
 	result := buildIngestionAdvisorResult(session, run)
@@ -142,10 +142,11 @@ func cleanupIngestionWebSearch(
 }
 
 type executeIngestionAgentRequest struct {
-	Engine       interfaces.AgentEngine
-	Request      types.IngestionAdvisorRequest
-	Query        string
-	SystemPrompt string
+	Engine           interfaces.AgentEngine
+	Request          types.IngestionAdvisorRequest
+	Query            string
+	SystemPrompt     string
+	TerminationTools []string
 }
 
 func executeIngestionAgent(ctx context.Context, request executeIngestionAgentRequest) (*types.AgentState, error) {
@@ -158,7 +159,7 @@ func executeIngestionAgent(ctx context.Context, request executeIngestionAgentReq
 		Options: interfaces.AgentTaskOptions{
 			SystemPrompt:      request.SystemPrompt,
 			MaxIterations:     ingestionAdvisorMaxRounds,
-			TerminationTools:  []string{submitIngestionDecisionTool, submitIngestionFallbackTool},
+			TerminationTools:  append([]string(nil), request.TerminationTools...),
 			SkipFinalAnswer:   true,
 			StructuredEventFn: ingestionProgressReceiver(request.Request.ProgressFn),
 		},
@@ -181,9 +182,10 @@ func validateIngestionAdvisorRequest(a *modelIngestionAdvisor, request types.Ing
 }
 
 func registerIngestionDecisionTools(registry *agenttools.ToolRegistry, session *ingestionAgentSession) {
-	registry.RegisterTool(newPreviewIngestionChunking(session))
 	registry.RegisterTool(newSubmitIngestionDecision(session))
-	registry.RegisterTool(newSubmitIngestionFallback(session))
+	if session.fallbackReady() {
+		registry.RegisterTool(newSubmitIngestionFallback(session))
+	}
 }
 
 func buildIngestionAgentConfig(request types.IngestionAdvisorRequest) *types.AgentConfig {

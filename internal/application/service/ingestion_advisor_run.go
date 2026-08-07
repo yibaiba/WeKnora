@@ -133,7 +133,7 @@ func buildIngestionAdvisorResult(
 	analysis := session.decisionSnapshot()
 	reasons := []string(nil)
 	if analysis != nil {
-		reasons = append(reasons, analysis.ReasonCodes...)
+		reasons = session.selectionReasons()
 		if ingestionAppliedMode(analysis) == types.IngestionAppliedModeFallback {
 			reasons = append([]string(nil), analysis.FallbackReasonCodes...)
 		}

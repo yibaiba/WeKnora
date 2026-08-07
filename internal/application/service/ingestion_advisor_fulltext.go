@@ -10,9 +10,10 @@ import (
 )
 
 type ingestionAgentPreparation struct {
-	Query        string
-	SystemPrompt string
-	Registry     *agenttools.ToolRegistry
+	Query            string
+	SystemPrompt     string
+	Registry         *agenttools.ToolRegistry
+	TerminationTools []string
 }
 
 type ingestionAgentPreparationRequest struct {
@@ -22,8 +23,28 @@ type ingestionAgentPreparationRequest struct {
 }
 
 type ingestionAgentContext struct {
-	Statistics         types.DocumentStructureStats `json:"statistics"`
-	AggregatedEvidence ingestionDocumentEvidence    `json:"aggregated_evidence"`
+	Statistics         types.DocumentStructureStats  `json:"statistics"`
+	AggregatedEvidence ingestionDocumentEvidence     `json:"aggregated_evidence"`
+	PackingPolicy      types.SemanticPackingPolicy   `json:"packing_policy"`
+	Candidates         []ingestionAgentCandidateView `json:"candidates"`
+	DefaultCandidateID string                        `json:"default_candidate_id,omitempty"`
+}
+
+type ingestionAgentCandidateView struct {
+	ID                   string                                  `json:"id"`
+	Archetype            string                                  `json:"archetype"`
+	PackingPolicyVersion string                                  `json:"packing_policy_version"`
+	Config               types.IngestionChunkingRecommendation   `json:"config"`
+	ChunkCount           int                                     `json:"chunk_count"`
+	ParentChunkCount     int                                     `json:"parent_chunk_count"`
+	Lengths              types.IngestionLengthDistribution       `json:"lengths"`
+	Structure            types.IngestionStructureMetrics         `json:"structure"`
+	StructureQuality     types.IngestionStructureQuality         `json:"structure_quality"`
+	Diagnostics          types.IngestionChunkerDiagnostics       `json:"diagnostics"`
+	Score                types.IngestionCandidateScore           `json:"score"`
+	HardValid            bool                                    `json:"hard_valid"`
+	Violations           []string                                `json:"violations"`
+	ComparisonFacts      types.IngestionCandidateComparisonFacts `json:"comparison_facts"`
 }
 
 func prepareIngestionAgent(
@@ -40,15 +61,20 @@ func prepareIngestionAgent(
 			ingestionAdvisorErrorCandidateGeneration, "生成确定性分块候选失败：%s", err,
 		)
 	}
-	query, err := buildIngestionAgentQuery(request.Session.statistics, evidence)
+	query, err := buildIngestionAgentQuery(request.Session, evidence)
 	if err != nil {
 		return ingestionAgentPreparation{}, newIngestionAdvisorRunError(
 			ingestionAdvisorErrorDocumentAnalysis, "构建文档全文聚合证据请求失败",
 		)
 	}
 	registerIngestionDecisionTools(registry, request.Session)
+	terminationTools := []string{submitIngestionDecisionTool}
+	if request.Session.fallbackReady() {
+		terminationTools = append(terminationTools, submitIngestionFallbackTool)
+	}
 	return ingestionAgentPreparation{
 		Query: query, SystemPrompt: ingestionAgentSystemPrompt, Registry: registry,
+		TerminationTools: terminationTools,
 	}, nil
 }
 
@@ -99,25 +125,48 @@ func analyzeFullIngestionDocument(
 }
 
 func buildIngestionAgentQuery(
-	statistics types.DocumentStructureStats,
+	session *ingestionAgentSession,
 	evidence ingestionDocumentEvidence,
 ) (string, error) {
 	payload, err := json.Marshal(ingestionAgentContext{
-		Statistics: statistics, AggregatedEvidence: evidence,
+		Statistics: session.statistics, AggregatedEvidence: evidence,
+		PackingPolicy:      cloneSemanticPackingPolicy(session.policy),
+		Candidates:         ingestionAgentCandidateViews(session.candidateSnapshot()),
+		DefaultCandidateID: session.defaultCandidateID(),
 	})
 	if err != nil {
 		return "", err
 	}
-	return "请根据以下全文统计与 Map-Reduce 聚合证据，预览候选并提交入库切分决策：\n" + string(payload), nil
+	return "请根据以下全文统计、Map-Reduce 聚合证据和后端候选比较事实提交入库切分决策：\n" + string(payload), nil
 }
 
-const ingestionAgentSystemPrompt = `你是智能文档入库 Agent。全文正文已经由严格的 Map-Reduce 分析完成；你的唯一目标是根据全文统计、聚合证据和真实切分预览选择候选。
+func ingestionAgentCandidateViews(
+	candidates []types.IngestionChunkingCandidate,
+) []ingestionAgentCandidateView {
+	views := make([]ingestionAgentCandidateView, len(candidates))
+	for index, candidate := range candidates {
+		views[index] = ingestionAgentCandidateView{
+			ID: candidate.ID, Archetype: candidate.Archetype,
+			PackingPolicyVersion: candidate.PackingPolicyVersion,
+			Config:               cloneChunkingRecommendation(candidate.Config),
+			ChunkCount:           candidate.ChunkCount, ParentChunkCount: candidate.ParentChunkCount,
+			Lengths: candidate.Lengths, Structure: candidate.Structure,
+			StructureQuality: candidate.StructureQuality, Diagnostics: candidate.Diagnostics,
+			Score: candidate.Score, HardValid: candidate.HardValid,
+			Violations:      append([]string(nil), candidate.Violations...),
+			ComparisonFacts: candidate.ComparisonFacts,
+		}
+	}
+	return views
+}
+
+const ingestionAgentSystemPrompt = `你是智能文档入库 Agent。全文正文已经由严格的 Map-Reduce 分析完成；你的唯一目标是根据全文统计、聚合证据和后端候选比较事实选择候选。
 
 必须遵循：
 1. 你不会获得正文读取工具；不得索要或猜测抽样正文。查询中的 aggregated_evidence 覆盖完整提取正文。
-2. 必须调用 preview_ingestion_chunking 生成并比较候选；最多可保存 3 个不同候选，重复配置会复用结果。工具成功输出中的 candidate_id 是提交决策所需的唯一标识。
-3. 可并行预览候选。观察真实 diagnostics、块长度、结构保持与五维评分后再修正。saved_candidate_count 达到 candidate_limit 后严禁继续预览，下一轮必须按 next_action 提交。
-4. 有硬校验有效候选时必须调用 submit_ingestion_decision，candidate_id 必须来自成功预览的有效候选；已有有效候选时不必凑满 3 个。只有三个已保存候选全部 HardValid=false 且 next_action 明确为 submit_ingestion_fallback 时，才可调用该回退工具；不得因模型、Schema、工具、取消或超时错误请求回退。
-5. 可以选择非最高分候选，但 reason_codes 和 summary 必须明确解释与全文证据相关的取舍。
+2. 后端已生成并完整评估三个候选。不得创建、修改或搜索分块参数，只能提交查询中已存在且 comparison_facts.selection_eligible=true 的 candidate_id。
+3. 默认提交 default_candidate_id。只有 comparison_facts 已明确给出 evidence_advantages 和后端 reason_codes 时，才可选择其他候选；不得自行解释为可选。
+4. 有硬校验有效候选时必须调用 submit_ingestion_decision。只有工具列表实际出现 submit_ingestion_fallback 时，才表示三个候选全部 HardValid=false；不得因模型、Schema、工具、取消或超时错误请求回退。
+5. reason_codes 和 summary 只描述文档画像；候选选择原因由后端比较事实生成。
 6. 不要输出聊天式最终答案；成功提交工具会立即结束运行。
 7. Web 或 MCP 工具均为外部系统。只有在工具列表中出现时才表示用户已允许向其传输你提供的查询内容。`

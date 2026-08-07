@@ -52,6 +52,8 @@ func (s *ingestionAgentSession) generateCandidates(evidence ingestionDocumentEvi
 		}
 		candidates = append(candidates, candidate)
 	}
+	dimensions := ingestionEvidenceScoreDimensions(evidence)
+	attachIngestionComparisonFacts(candidates, dimensions)
 	return s.installGeneratedCandidates(policy, candidates)
 }
 
@@ -64,7 +66,7 @@ func (s *ingestionAgentSession) installGeneratedCandidates(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.candidates) > 0 || len(s.inFlight) > 0 {
+	if len(s.candidates) > 0 {
 		return fmt.Errorf("候选会话已经包含预览结果")
 	}
 	for _, candidate := range candidates {

@@ -9,106 +9,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-type previewIngestionChunking struct {
-	agenttools.BaseTool
-	session *ingestionAgentSession
-}
-
-type previewIngestionChunkingOutput struct {
-	CandidateID         string                           `json:"candidate_id"`
-	SavedCandidateCount int                              `json:"saved_candidate_count"`
-	CandidateLimit      int                              `json:"candidate_limit"`
-	NextAction          string                           `json:"next_action"`
-	Candidate           types.IngestionChunkingCandidate `json:"candidate"`
-}
-
-func newPreviewIngestionChunking(session *ingestionAgentSession) *previewIngestionChunking {
-	return &previewIngestionChunking{
-		BaseTool: agenttools.NewBaseTool(
-			previewIngestionChunkingTool,
-			"Run the production chunker with a validated candidate configuration. chunk_overlap must not exceed half of chunk_size, and child_chunk_size must not exceed parent_chunk_size. Success returns candidate_id, deterministic metrics, and next_action; submit immediately when next_action is submit_ingestion_decision.",
-			previewIngestionChunkingSchema(),
-		),
-		session: session,
-	}
-}
-
-func previewIngestionChunkingSchema() json.RawMessage {
-	properties := map[string]any{
-		"strategy": map[string]any{
-			"type": "string", "enum": allowedChunkingStrategyValues[:],
-		},
-		"chunk_size": map[string]any{
-			"type": "integer", "minimum": minimumAdvisorChunkSize, "maximum": maximumAdvisorChunkSize,
-		},
-		"chunk_overlap": map[string]any{
-			"type": "integer", "minimum": 0, "maximum": maximumAdvisorOverlap,
-			"description": "Must be at most half of chunk_size.",
-		},
-		"enable_parent_child": map[string]any{"type": "boolean"},
-		"parent_chunk_size": map[string]any{
-			"type": "integer", "minimum": minimumAdvisorParentSize, "maximum": maximumAdvisorParentSize,
-		},
-		"child_chunk_size": map[string]any{
-			"type": "integer", "minimum": minimumAdvisorChildSize, "maximum": maximumAdvisorChildSize,
-			"description": "Must not exceed parent_chunk_size.",
-		},
-		"separators": map[string]any{
-			"type": "array", "minItems": 1,
-			"items": map[string]any{"type": "string", "enum": allowedIngestionSeparatorValues[:]},
-		},
-	}
-	schema, err := json.Marshal(map[string]any{
-		"type": "object", "properties": properties,
-		"required": []string{
-			"strategy", "chunk_size", "chunk_overlap", "enable_parent_child",
-			"parent_chunk_size", "child_chunk_size", "separators",
-		},
-		"additionalProperties": false,
-	})
-	if err != nil {
-		panic(fmt.Sprintf("marshal ingestion preview schema: %v", err))
-	}
-	return schema
-}
-
-func (t *previewIngestionChunking) Execute(
-	_ context.Context,
-	raw json.RawMessage,
-) (*types.ToolResult, error) {
-	var input types.IngestionChunkingRecommendation
-	if err := decodeIngestionToolInput(raw, &input); err != nil {
-		return ingestionToolFailure(wrapIngestionToolError(
-			err, ingestionFailureArgumentsInvalid, "", "json_schema", "候选参数无效",
-		))
-	}
-	candidate, err := t.session.preview(input)
-	if err != nil {
-		return ingestionToolFailure(err)
-	}
-	candidateCount := t.session.candidateCount()
-	return ingestionToolJSON(previewIngestionChunkingOutput{
-		CandidateID:         candidate.ID,
-		SavedCandidateCount: candidateCount,
-		CandidateLimit:      maxIngestionCandidates,
-		NextAction:          ingestionPreviewNextAction(t.session),
-		Candidate:           candidate,
-	}, map[string]interface{}{
-		"candidate_id": candidate.ID,
-		"score":        candidate.Score.Total,
-	})
-}
-
-func ingestionPreviewNextAction(session *ingestionAgentSession) string {
-	if session.fallbackReady() {
-		return submitIngestionFallbackTool
-	}
-	if session.candidateCount() >= maxIngestionCandidates {
-		return submitIngestionDecisionTool
-	}
-	return "preview_or_submit"
-}
-
 type submitIngestionFallbackInput struct {
 	DocumentKind           string   `json:"document_kind"`
 	Confidence             float64  `json:"confidence"`
@@ -126,7 +26,7 @@ func newSubmitIngestionFallback(session *ingestionAgentSession) *submitIngestion
 	return &submitIngestionFallback{
 		BaseTool: agenttools.NewBaseTool(
 			submitIngestionFallbackTool,
-			"Submit the document profile and use the knowledge base's original ordinary chunking configuration. This is accepted only after exactly three saved candidates are all structurally invalid.",
+			"Submit the document profile and use the knowledge base's original ordinary chunking configuration. This tool is available only when all three backend-generated candidates are structurally invalid.",
 			json.RawMessage(`{
   "type":"object",
   "properties":{
@@ -183,7 +83,7 @@ type submitIngestionDecision struct {
 
 func newSubmitIngestionDecision(session *ingestionAgentSession) *submitIngestionDecision {
 	return &submitIngestionDecision{
-		BaseTool: agenttools.NewBaseTool(submitIngestionDecisionTool, "Submit one already-previewed hard-valid candidate with the final document profile and structured selection reasons. The first successful call ends the run.", json.RawMessage(`{
+		BaseTool: agenttools.NewBaseTool(submitIngestionDecisionTool, "Submit one backend-generated candidate whose comparison_facts.selection_eligible is true, together with the final document profile. The first successful call ends the run.", json.RawMessage(`{
   "type":"object",
   "properties":{
     "candidate_id":{"type":"string","minLength":1},
@@ -213,7 +113,7 @@ func (t *submitIngestionDecision) Execute(
 	analysis, err := t.session.submit(input)
 	if err != nil {
 		return ingestionToolFailure(wrapIngestionToolError(
-			err, ingestionFailureDecisionInvalid, "candidate_id", "previewed_hard_valid_candidate",
+			err, ingestionFailureDecisionInvalid, "candidate_id", "backend_selection_eligible_candidate",
 			"提交的候选决策无效",
 		))
 	}

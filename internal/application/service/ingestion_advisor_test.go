@@ -27,6 +27,8 @@ type ingestionAdvisorScriptedModel struct {
 	streamErr error
 }
 
+const defaultCandidatePlaceholder = "__default_candidate__"
+
 type ingestionWebSearchServiceSpy struct {
 	mu            sync.Mutex
 	compressCalls int
@@ -197,10 +199,31 @@ func (m *ingestionAdvisorScriptedModel) ChatStream(
 	m.options = append(m.options, options)
 	result := make(chan types.StreamResponse, len(m.responses[index]))
 	for _, response := range m.responses[index] {
+		for callIndex := range response.ToolCalls {
+			response.ToolCalls[callIndex].Function.Arguments = strings.ReplaceAll(
+				response.ToolCalls[callIndex].Function.Arguments,
+				defaultCandidatePlaceholder,
+				defaultCandidateIDFromMessages(messages),
+			)
+		}
 		result <- response
 	}
 	close(result)
 	return result, nil
+}
+
+func defaultCandidateIDFromMessages(messages []chat.Message) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		var context ingestionAgentContext
+		payload := messages[index].Content
+		if jsonStart := strings.LastIndex(payload, "\n{"); jsonStart >= 0 {
+			payload = payload[jsonStart+1:]
+		}
+		if json.Unmarshal([]byte(payload), &context) == nil {
+			return context.DefaultCandidateID
+		}
+	}
+	return ""
 }
 
 func (m *ingestionAdvisorScriptedModel) GetModelName() string { return "advisor-script" }
@@ -274,31 +297,19 @@ func naturalResponse(content string) []types.StreamResponse {
 	}}
 }
 
-func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
+func TestModelIngestionAdvisorSubmitsBackendGeneratedCandidate(t *testing.T) {
 	request := validIngestionAdvisorRequest()
 	request.ChunkingConstraints = types.IngestionChunkingConstraints{
 		TokenLimit: 100,
 		Languages:  []string{chunker.LangEnglish},
 	}
-	config := validIngestionRecommendation()
-	config.ChunkSize = 4000
-	config.ChunkOverlap = 500
-	normalized, err := normalizeIngestionPreviewConfig(
-		config, request.ChunkingConstraints,
-	)
-	require.NoError(t, err)
-	candidateID, err := ingestionCandidateID(normalized)
-	require.NoError(t, err)
-	previewArgs, err := jsonMarshalForTest(config)
-	require.NoError(t, err)
 	submitArgs := fmt.Sprintf(
 		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.92,`+
 			`"recommended_content_mode":"document","reason_codes":["heading_rich","balanced_chunks"],`+
 			`"summary":"层级清晰的制度类文档"}`,
-		candidateID,
+		defaultCandidatePlaceholder,
 	)
 	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolResponse("preview-1", previewIngestionChunkingTool, previewArgs),
 		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
 	}}
 	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
@@ -309,27 +320,20 @@ func TestModelIngestionAdvisorRunsPreviewThenTerminalSubmission(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, result.Analysis)
-	require.Equal(t, candidateID, result.SelectedCandidateID)
+	require.NotEmpty(t, result.SelectedCandidateID)
 	require.Equal(t, "termination_tool", result.AgentRun.StopReason)
-	require.Equal(t, 2, result.AgentRun.ActualRounds)
-	require.Len(t, result.Candidates, 1)
-	require.Equal(t, normalized, result.Analysis.RecommendedChunking)
+	require.Equal(t, 1, result.AgentRun.ActualRounds)
+	require.Len(t, result.Candidates, maxIngestionCandidates)
+	require.Equal(t, []string{"highest_total_score"}, result.SelectionReasonCodes)
 	require.Equal(t, float64(0), model.options[0].Temperature)
 	require.Contains(t, model.calls[0][0].Content, "submit_ingestion_decision")
-	require.Contains(t, model.calls[0][0].Content, "工具成功输出中的 candidate_id")
-	require.Contains(t, model.calls[0][0].Content, "不必凑满 3 个")
+	require.Contains(t, model.calls[0][0].Content, "不得创建、修改或搜索分块参数")
+	require.Contains(t, model.calls[0][1].Content, `"candidates"`)
+	require.Contains(t, model.calls[0][1].Content, `"default_candidate_id"`)
 	require.NotContains(t, model.calls[0][1].Content, "First section")
-	previewContext := ""
-	for _, message := range model.calls[1] {
-		if message.Role == "tool" && message.Name == previewIngestionChunkingTool {
-			previewContext = message.Content
-			break
-		}
-	}
-	require.Contains(t, previewContext, `"candidate_id":"`)
-	require.Contains(t, previewContext, `"next_action":"preview_or_submit"`)
-	require.Contains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
+	require.NotContains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionDecisionTool)
+	require.NotContains(t, result.AgentRun.AvailableTools, submitIngestionFallbackTool)
 	require.Contains(t, result.AgentRun.Warnings, types.IngestionAgentWarning{
 		Code: "readonly_tools_unavailable", Message: "只读 Agent 工具工厂未配置",
 	})
@@ -340,18 +344,11 @@ func TestModelIngestionAdvisorCompressesWebResultsAndCleansTemporaryKnowledge(t 
 	request.VectorEnabled = false
 	request.KeywordEnabled = false
 	request.AllowWebAccess = true
-	config := validIngestionRecommendation()
-	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
-	require.NoError(t, err)
-	candidateID, err := ingestionCandidateID(normalized)
-	require.NoError(t, err)
-	previewArgs, err := jsonMarshalForTest(config)
-	require.NoError(t, err)
 	submitArgs := fmt.Sprintf(
 		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.9,`+
 			`"recommended_content_mode":"document","reason_codes":["web_validated"],`+
 			`"summary":"结合 Web 检索验证切分方案"}`,
-		candidateID,
+		defaultCandidatePlaceholder,
 	)
 	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
 		toolCallsResponse(
@@ -362,7 +359,6 @@ func TestModelIngestionAdvisorCompressesWebResultsAndCleansTemporaryKnowledge(t 
 				Name: agenttools.ToolWebSearch, Arguments: `{"query":"second query"}`,
 			}},
 		),
-		toolResponse("preview-1", previewIngestionChunkingTool, previewArgs),
 		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
 	}}
 	webSearch := &ingestionWebSearchServiceSpy{}
@@ -395,7 +391,7 @@ func TestModelIngestionAdvisorCompressesWebResultsAndCleansTemporaryKnowledge(t 
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, candidateID, result.SelectedCandidateID)
+	require.NotEmpty(t, result.SelectedCandidateID)
 	require.Equal(t, 2, webSearch.compressCalls)
 	require.Equal(t, 1, kb.created)
 	require.Equal(t, []string{"temp-doc-1", "temp-doc-2"}, knowledge.deleted)
@@ -500,63 +496,29 @@ func TestIngestionProgressReceiverCarriesCallIDAndSanitizesFailure(t *testing.T)
 	require.Empty(t, received.FailureConstraint)
 }
 
-func TestModelIngestionAdvisorInspectsParallelCandidatesAndMaySelectLowerScore(t *testing.T) {
-	request := validIngestionAdvisorRequest()
-	request.Content = ingestionTestContent()
-	roughBoundaryConfig := ingestionTestConfig(100)
-	roughBoundaryConfig.ChunkOverlap = 0
-	roughBoundaryConfig.Separators = []string{" "}
-	configs := []types.IngestionChunkingRecommendation{
-		roughBoundaryConfig, ingestionTestConfig(420), ingestionTestConfig(960),
+func TestIngestionSelectionAllowsEvidenceBackedNearScoreCandidate(t *testing.T) {
+	candidates := []types.IngestionChunkingCandidate{
+		{ID: "highest", Config: ingestionTestConfig(300), HardValid: true,
+			Score: types.IngestionCandidateScore{Total: 90, BoundaryQuality: 10}},
+		{ID: "boundary", Config: ingestionTestConfig(320), HardValid: true,
+			Score: types.IngestionCandidateScore{Total: 86, BoundaryQuality: 15}},
+		{ID: "far", Config: ingestionTestConfig(340), HardValid: true,
+			Score: types.IngestionCandidateScore{Total: 80, BoundaryQuality: 20}},
 	}
-	probe := newIngestionAgentSession(request.Content, request.ChunkingConstraints)
-	probed := make([]types.IngestionChunkingCandidate, 0, len(configs))
-	for _, config := range configs {
-		candidate, err := probe.preview(config)
-		require.NoError(t, err)
-		probed = append(probed, candidate)
-	}
-	selected, highest := probed[0], probed[0]
-	for _, candidate := range probed[1:] {
-		if candidate.Score.Total < selected.Score.Total {
-			selected = candidate
-		}
-		if candidate.Score.Total > highest.Score.Total {
-			highest = candidate
-		}
-	}
-	require.Less(t, selected.Score.Total, highest.Score.Total, "fixture must provide a deliberate lower-score choice")
+	attachIngestionComparisonFacts(candidates, []string{"boundary_quality"})
+	session := newFallbackTestSession(candidates...)
 
-	calls := make([]types.LLMToolCall, 0, len(configs))
-	for index, config := range configs {
-		arguments, err := jsonMarshalForTest(config)
-		require.NoError(t, err)
-		calls = append(calls, types.LLMToolCall{
-			ID:       fmt.Sprintf("preview-%d", index+1),
-			Function: types.FunctionCall{Name: previewIngestionChunkingTool, Arguments: arguments},
-		})
-	}
-	submitArgs := fmt.Sprintf(
-		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.83,`+
-			`"recommended_content_mode":"document","reason_codes":["deliberate_structure_tradeoff"],`+
-			`"summary":"选择分数较低但边界更符合当前文档结构的已预览候选"}`,
-		selected.ID,
-	)
-	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolCallsResponse(calls...),
-		toolResponse("submit-1", submitIngestionDecisionTool, submitArgs),
-	}}
-	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
-
-	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
+	analysis, err := session.submit(validIngestionDecisionInput("boundary"))
 
 	require.NoError(t, err)
-	require.Equal(t, selected.ID, result.SelectedCandidateID)
-	require.Equal(t, []string{"deliberate_structure_tradeoff"}, result.SelectionReasonCodes)
-	require.Len(t, result.Candidates, 3)
-	require.Len(t, result.AgentRun.Steps, 4)
-	require.NotNil(t, model.options[0].ParallelToolCalls)
-	require.True(t, *model.options[0].ParallelToolCalls)
+	require.Equal(t, "boundary", session.selectedCandidateID())
+	require.Equal(t, analysis.ReasonCodes, []string{"valid_candidate"})
+	require.Equal(t, []string{"evidence_boundary_quality_advantage"}, session.selectionReasons())
+	require.False(t, candidates[2].ComparisonFacts.SelectionEligible)
+	require.Equal(t, []string{"total_score_gap_exceeded"}, candidates[2].ComparisonFacts.ReasonCodes)
+	rejected := newFallbackTestSession(candidates...)
+	_, err = rejected.submit(validIngestionDecisionInput("far"))
+	require.ErrorContains(t, err, "不满足后端选择约束")
 }
 
 func TestModelIngestionAdvisorRejectsNaturalAnswerWithoutTools(t *testing.T) {
@@ -580,8 +542,6 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 		args     string
 		code     string
 	}{
-		{name: "invalid preview arguments", toolName: previewIngestionChunkingTool,
-			args: `{"strategy":"legacy","chunk_size":"bad"}`, code: ingestionAdvisorErrorCandidate},
 		{name: "unknown candidate", toolName: submitIngestionDecisionTool,
 			args: `{"candidate_id":"cand_unknown","document_kind":"policy_manual","confidence":0.8,"recommended_content_mode":"document","reason_codes":["unknown"],"summary":"unknown"}`,
 			code: ingestionAdvisorErrorCandidate},
@@ -608,47 +568,31 @@ func TestModelIngestionAdvisorClassifiesFailedCoreTools(t *testing.T) {
 }
 
 func TestModelIngestionAdvisorFailsAtMaxRoundsWithoutSubmission(t *testing.T) {
-	arguments, err := jsonMarshalForTest(ingestionTestConfig(300))
-	require.NoError(t, err)
-	responses := make([][]types.StreamResponse, 0, ingestionAdvisorMaxRounds)
-	for round := 1; round <= ingestionAdvisorMaxRounds; round++ {
-		responses = append(responses, toolResponse(
-			fmt.Sprintf("preview-%d", round), previewIngestionChunkingTool, arguments,
-		))
+	steps := make([]types.AgentStep, ingestionAdvisorMaxRounds)
+	for index := range steps {
+		steps[index] = types.AgentStep{Iteration: index, ToolCalls: []types.ToolCall{{
+			Name: agenttools.ToolWebSearch, Result: &types.ToolResult{Success: true},
+		}}}
 	}
-	model := &ingestionAdvisorScriptedModel{responses: responses}
-	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
-
-	result, err := advisor.Analyze(
-		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
-	)
+	session := newTestIngestionAgentSession(ingestionTestContent())
+	err := validateIngestionAgentOutcome(&types.AgentState{
+		StopReason: "max_iterations", RoundSteps: steps,
+	}, session)
 
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorMaxRounds, ingestionAdvisorRunErrorCode(err))
-	require.Equal(t, ingestionAdvisorMaxRounds, result.AgentRun.ActualRounds)
-	require.Equal(t, "max_iterations", result.AgentRun.StopReason)
-	persistable, marshalErr := json.Marshal(result.AgentRun)
-	require.NoError(t, marshalErr)
-	require.NotContains(t, string(persistable), "First section")
 }
 
-func TestModelIngestionAdvisorRejectsPreviewWithoutSubmission(t *testing.T) {
-	arguments, err := jsonMarshalForTest(ingestionTestConfig(300))
-	require.NoError(t, err)
-	model := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolResponse("preview-1", previewIngestionChunkingTool, arguments),
-		naturalResponse("I am done"),
-	}}
-	advisor := NewIngestionAdvisor(&ingestionAdvisorModelServiceStub{model: model}, nil)
-
-	result, err := advisor.Analyze(
-		context.Background(), validIngestionAdvisorRequest(), interfaces.IngestionAdvisorRuntime{},
-	)
+func TestValidateIngestionAgentOutcomeRejectsOptionalToolWithoutSubmission(t *testing.T) {
+	session := newTestIngestionAgentSession(ingestionTestContent())
+	err := validateIngestionAgentOutcome(&types.AgentState{
+		StopReason: "completed", RoundSteps: []types.AgentStep{{ToolCalls: []types.ToolCall{{
+			Name: agenttools.ToolWebSearch, Result: &types.ToolResult{Success: true},
+		}}}},
+	}, session)
 
 	require.Error(t, err)
 	require.Equal(t, ingestionAdvisorErrorNotSubmitted, ingestionAdvisorRunErrorCode(err))
-	require.NotEmpty(t, result.Candidates)
-	require.Nil(t, result.Analysis)
 }
 
 func TestModelIngestionAdvisorClassifiesProviderToolCallingFailure(t *testing.T) {

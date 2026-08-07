@@ -67,7 +67,6 @@ func newIngestionAgentSessionWithDocument(
 		documentErr:    analysis.err,
 		fallback:       cloneChunkingRecommendation(analysis.fallback),
 		candidates:     make(map[string]types.IngestionChunkingCandidate),
-		inFlight:       make(map[string]*ingestionCandidateFlight),
 		buildCandidate: buildIngestionCandidate,
 	}
 }

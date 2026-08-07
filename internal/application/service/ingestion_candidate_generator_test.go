@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -124,4 +126,66 @@ func TestBoundaryScoreUsesEvidencePriority(t *testing.T) {
 
 	require.Equal(t, 1, weights[10])
 	require.Equal(t, 2, weights[20])
+}
+
+func TestAgentQueryCarriesDefaultBackendCandidateWithoutSourceText(t *testing.T) {
+	request := validIngestionAdvisorRequest()
+	request.FallbackChunking = ingestionTestConfig(512)
+	session := newIngestionAgentSessionFromRequest(request)
+	evidence := ingestionDocumentEvidence{
+		Summary: "aggregate", DocumentKindCandidates: []string{types.IngestionDocumentKindReport},
+		ContentModeCandidates: []string{types.IngestionContentModeDocument},
+		DominantStructures:    []string{"section_body"}, BoundaryPriorities: []string{"section"},
+	}
+	require.NoError(t, session.generateCandidates(evidence))
+
+	query, err := buildIngestionAgentQuery(session, evidence)
+
+	require.NoError(t, err)
+	require.NotEmpty(t, session.defaultCandidateID())
+	require.Equal(t, session.defaultCandidateID(), defaultCandidateIDFromMessages([]chat.Message{{
+		Role: "user", Content: query,
+	}}))
+	require.NotContains(t, query, request.Content)
+	require.NotContains(t, query, "block_descriptions")
+}
+
+func TestDecisionToolRegistrationNeverExposesArbitraryPreview(t *testing.T) {
+	valid := types.IngestionChunkingCandidate{
+		ID: "valid", Config: ingestionTestConfig(300), HardValid: true,
+		ComparisonFacts: types.IngestionCandidateComparisonFacts{
+			ReferenceCandidateID: "valid", SelectionEligible: true,
+		},
+	}
+	registry := agenttools.NewToolRegistry()
+	registerIngestionDecisionTools(registry, newFallbackTestSession(valid))
+
+	require.Contains(t, registry.ListTools(), submitIngestionDecisionTool)
+	require.NotContains(t, registry.ListTools(), previewIngestionChunkingTool)
+	require.NotContains(t, registry.ListTools(), submitIngestionFallbackTool)
+
+	registry = agenttools.NewToolRegistry()
+	registerIngestionDecisionTools(registry, newFallbackTestSession(
+		ingestionInvalidCandidate("one", "invalid"),
+		ingestionInvalidCandidate("two", "invalid"),
+		ingestionInvalidCandidate("three", "invalid"),
+	))
+	require.Contains(t, registry.ListTools(), submitIngestionFallbackTool)
+	require.NotContains(t, registry.ListTools(), previewIngestionChunkingTool)
+}
+
+func TestNearScoreCandidateStillRequiresEvidenceDimensionAdvantage(t *testing.T) {
+	candidates := []types.IngestionChunkingCandidate{
+		{ID: "highest", HardValid: true, Score: types.IngestionCandidateScore{
+			Total: 90, BoundaryQuality: 15,
+		}},
+		{ID: "near", HardValid: true, Score: types.IngestionCandidateScore{
+			Total: 87, BoundaryQuality: 18,
+		}},
+	}
+
+	attachIngestionComparisonFacts(candidates, []string{"boundary_quality"})
+
+	require.False(t, candidates[1].ComparisonFacts.SelectionEligible)
+	require.Equal(t, []string{"no_evidence_dimension_advantage"}, candidates[1].ComparisonFacts.ReasonCodes)
 }

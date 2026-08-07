@@ -28,26 +28,15 @@ type ingestionAgentSession struct {
 	fallback    types.IngestionChunkingRecommendation
 	policy      types.SemanticPackingPolicy
 
-	mu             sync.RWMutex
-	candidates     map[string]types.IngestionChunkingCandidate
-	inFlight       map[string]*ingestionCandidateFlight
-	buildCandidate ingestionCandidateBuilder
-	decision       *types.IngestionAnalysis
-	selectedID     string
+	mu                   sync.RWMutex
+	candidates           map[string]types.IngestionChunkingCandidate
+	buildCandidate       ingestionCandidateBuilder
+	decision             *types.IngestionAnalysis
+	selectedID           string
+	selectionReasonCodes []string
 }
 
 type ingestionCandidateBuilder func(ingestionCandidateBuildRequest) (types.IngestionChunkingCandidate, error)
-
-type ingestionCandidateFlight struct {
-	done      chan struct{}
-	candidate types.IngestionChunkingCandidate
-	err       error
-}
-
-type ingestionCandidateBuildResult struct {
-	candidate types.IngestionChunkingCandidate
-	err       error
-}
 
 func (s *ingestionAgentSession) candidateSnapshot() []types.IngestionChunkingCandidate {
 	s.mu.RLock()
@@ -64,12 +53,6 @@ func (s *ingestionAgentSession) candidateSnapshot() []types.IngestionChunkingCan
 	return result
 }
 
-func (s *ingestionAgentSession) candidateCount() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.candidates)
-}
-
 func (s *ingestionAgentSession) decisionSnapshot() *types.IngestionAnalysis {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -80,6 +63,7 @@ func (s *ingestionAgentSession) decisionSnapshot() *types.IngestionAnalysis {
 	result.ReasonCodes = append([]string(nil), s.decision.ReasonCodes...)
 	result.FallbackReasonCodes = append([]string(nil), s.decision.FallbackReasonCodes...)
 	result.RecommendedChunking = cloneChunkingRecommendation(s.decision.RecommendedChunking)
+	result.PackingPolicy = cloneSemanticPackingPolicy(s.decision.PackingPolicy)
 	return &result
 }
 
@@ -87,6 +71,24 @@ func (s *ingestionAgentSession) selectedCandidateID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.selectedID
+}
+
+func (s *ingestionAgentSession) selectionReasons() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.selectionReasonCodes...)
+}
+
+func (s *ingestionAgentSession) defaultCandidateID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, candidate := range s.candidates {
+		facts := candidate.ComparisonFacts
+		if facts.SelectionEligible && facts.ReferenceCandidateID == candidate.ID {
+			return candidate.ID
+		}
+	}
+	return ""
 }
 
 func (s *ingestionAgentSession) semanticDocumentSnapshot() *types.SemanticDocument {
@@ -103,78 +105,6 @@ func (s *ingestionAgentSession) candidate(id string) (types.IngestionChunkingCan
 	return cloneIngestionCandidate(candidate), ok
 }
 
-func (s *ingestionAgentSession) preview(
-	config types.IngestionChunkingRecommendation,
-) (types.IngestionChunkingCandidate, error) {
-	normalized, err := normalizeIngestionPreviewConfig(config, s.constraints)
-	if err != nil {
-		return types.IngestionChunkingCandidate{}, err
-	}
-	id, err := ingestionCandidateID(normalized)
-	if err != nil {
-		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
-			err, ingestionFailureCandidatePreview, "", "serializable_candidate", "生成候选标识失败",
-		)
-	}
-
-	candidate, flight, owner, err := s.reservePreview(id)
-	if err != nil {
-		return types.IngestionChunkingCandidate{}, err
-	}
-	if candidate.ID != "" {
-		return candidate, nil
-	}
-	if !owner {
-		<-flight.done
-		return cloneIngestionCandidate(flight.candidate), flight.err
-	}
-	candidate, err = s.buildCandidate(ingestionCandidateBuildRequest{
-		content: s.content, config: normalized, constraints: s.constraints, id: id,
-		document: s.document, documentErr: s.documentErr, policy: cloneSemanticPackingPolicy(s.policy),
-	})
-	s.completePreview(id, flight, ingestionCandidateBuildResult{candidate: candidate, err: err})
-	return cloneIngestionCandidate(candidate), err
-}
-
-func (s *ingestionAgentSession) reservePreview(
-	id string,
-) (types.IngestionChunkingCandidate, *ingestionCandidateFlight, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if candidate, ok := s.candidates[id]; ok {
-		return cloneIngestionCandidate(candidate), nil, false, nil
-	}
-	if flight, ok := s.inFlight[id]; ok {
-		return types.IngestionChunkingCandidate{}, flight, false, nil
-	}
-	if len(s.candidates)+len(s.inFlight) >= maxIngestionCandidates {
-		return types.IngestionChunkingCandidate{}, nil, false,
-			newIngestionToolError(
-				ingestionFailureCandidateLimit, "", "candidate_limit",
-				fmt.Sprintf("每个文档最多预览 %d 个不同候选", maxIngestionCandidates),
-			)
-	}
-	flight := &ingestionCandidateFlight{done: make(chan struct{})}
-	s.inFlight[id] = flight
-	return types.IngestionChunkingCandidate{}, flight, true, nil
-}
-
-func (s *ingestionAgentSession) completePreview(
-	id string,
-	flight *ingestionCandidateFlight,
-	result ingestionCandidateBuildResult,
-) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.inFlight, id)
-	if result.err == nil {
-		s.candidates[id] = result.candidate
-	}
-	flight.candidate = result.candidate
-	flight.err = result.err
-	close(flight.done)
-}
-
 func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*types.IngestionAnalysis, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -183,10 +113,13 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 	}
 	candidate, ok := s.candidates[input.CandidateID]
 	if !ok {
-		return nil, fmt.Errorf("候选 %q 未预览或不存在", input.CandidateID)
+		return nil, fmt.Errorf("后端候选 %q 不存在", input.CandidateID)
 	}
 	if !candidate.HardValid {
 		return nil, fmt.Errorf("候选 %q 未通过硬校验", input.CandidateID)
+	}
+	if !candidate.ComparisonFacts.SelectionEligible {
+		return nil, fmt.Errorf("候选 %q 不满足后端选择约束", input.CandidateID)
 	}
 	analysis := &types.IngestionAnalysis{
 		AppliedMode:            types.IngestionAppliedModeSmart,
@@ -203,6 +136,9 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 	}
 	s.decision = analysis
 	s.selectedID = input.CandidateID
+	s.selectionReasonCodes = append(
+		[]string(nil), candidate.ComparisonFacts.ReasonCodes...,
+	)
 	return analysis, nil
 }
 
@@ -267,6 +203,12 @@ func cloneIngestionCandidate(value types.IngestionChunkingCandidate) types.Inges
 		[]string(nil), value.Diagnostics.ContextReasonCodes...,
 	)
 	value.Violations = append([]string(nil), value.Violations...)
+	value.ComparisonFacts.EvidenceAdvantages = append(
+		[]string(nil), value.ComparisonFacts.EvidenceAdvantages...,
+	)
+	value.ComparisonFacts.ReasonCodes = append(
+		[]string(nil), value.ComparisonFacts.ReasonCodes...,
+	)
 	return value
 }
 

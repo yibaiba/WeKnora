@@ -33,7 +33,7 @@ func TestIngestionPreviewReturnsInvalidStructuralCandidateWithoutToolError(t *te
 	config := ingestionTestConfig(100)
 	config.ChunkOverlap = 0
 
-	candidate, err := session.preview(config)
+	candidate, err := buildIngestionCandidateForTest(session, config)
 
 	require.NoError(t, err)
 	require.False(t, candidate.HardValid)
@@ -105,7 +105,7 @@ func TestIngestionPreviewSurfacesInjectedTokenCounterFailure(t *testing.T) {
 	config := ingestionTestConfig(100)
 	config.Strategy = chunker.StrategyAuto
 
-	_, err := session.preview(config)
+	_, err := buildIngestionCandidateForTest(session, config)
 
 	require.ErrorContains(t, err, "counter failed")
 	require.Empty(t, session.candidateSnapshot())
@@ -145,7 +145,7 @@ func TestIngestionPreviewSurfacesInvalidSemanticDocumentAsExecutionError(t *test
 	config := ingestionTestConfig(100)
 	config.Strategy = chunker.StrategyAuto
 
-	candidate, err := session.preview(config)
+	candidate, err := buildIngestionCandidateForTest(session, config)
 
 	require.ErrorContains(t, err, "文档结构校验失败")
 	require.Empty(t, candidate.ID)
@@ -238,7 +238,7 @@ func TestIngestionCandidatePreviewDescriptionsAreContentFree(t *testing.T) {
 	config := ingestionTestConfig(200)
 	config.Strategy = chunker.StrategyAuto
 
-	candidate, err := session.preview(config)
+	candidate, err := buildIngestionCandidateForTest(session, config)
 	require.NoError(t, err)
 	payload, err := json.Marshal(candidate.BlockDescriptions)
 	require.NoError(t, err)

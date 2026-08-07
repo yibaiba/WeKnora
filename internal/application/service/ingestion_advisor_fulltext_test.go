@@ -90,23 +90,15 @@ func (m *ingestionAdvisorFullTextModel) ContextWindowTokens() int {
 	return m.contextWindowTokens
 }
 
-func TestModelIngestionAdvisorMapsFullTextBeforePreviewAndSubmission(t *testing.T) {
+func TestModelIngestionAdvisorMapsFullTextBeforeCandidateSubmission(t *testing.T) {
 	request := validIngestionAdvisorRequest()
-	config := validIngestionRecommendation()
-	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
-	require.NoError(t, err)
-	candidateID, err := ingestionCandidateID(normalized)
-	require.NoError(t, err)
-	previewArgs, err := jsonMarshalForTest(config)
-	require.NoError(t, err)
 	submitArgs := fmt.Sprintf(
 		`{"candidate_id":%q,"document_kind":"policy_manual","confidence":0.92,`+
 			`"recommended_content_mode":"document","reason_codes":["full_text_evidence"],`+
 			`"summary":"根据全文证据选择标题切分"}`,
-		candidateID,
+		defaultCandidatePlaceholder,
 	)
 	agentModel := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolResponse("preview-full-text", previewIngestionChunkingTool, previewArgs),
 		toolResponse("submit-full-text", submitIngestionDecisionTool, submitArgs),
 	}}
 	model := &ingestionAdvisorFullTextModel{agent: agentModel, logSensitivePayload: true}
@@ -118,15 +110,15 @@ func TestModelIngestionAdvisorMapsFullTextBeforePreviewAndSubmission(t *testing.
 	result, err := advisor.Analyze(context.Background(), request, interfaces.IngestionAdvisorRuntime{})
 
 	require.NoError(t, err)
-	require.Equal(t, candidateID, result.SelectedCandidateID)
-	require.Equal(t, 2, result.AgentRun.ActualRounds)
-	require.Contains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
+	require.NotEmpty(t, result.SelectedCandidateID)
+	require.Equal(t, 1, result.AgentRun.ActualRounds)
+	require.NotContains(t, result.AgentRun.AvailableTools, previewIngestionChunkingTool)
 	require.Contains(t, result.AgentRun.AvailableTools, submitIngestionDecisionTool)
 	require.Len(t, model.mapCalls, 1)
 	require.Contains(t, model.mapCalls[0][1].Content, request.Content)
 	require.Equal(t, ingestionDocumentAnalysisCompletionTokens, model.mapOptions[0].MaxTokens)
 	require.Zero(t, model.mapOptions[0].MaxCompletionTokens)
-	require.Len(t, agentModel.calls, 2)
+	require.Len(t, agentModel.calls, 1)
 	require.Contains(t, agentModel.calls[0][0].Content, "Map-Reduce")
 	require.Contains(t, agentModel.calls[0][1].Content, `"aggregated_evidence"`)
 	require.Contains(t, agentModel.calls[0][1].Content, "完整正文的聚合证据")
@@ -144,22 +136,13 @@ func TestModelIngestionAdvisorUsesEvidenceOutsideFormerSampleWindows(t *testing.
 	const evidenceMarker = "faq_marker_outside_sample"
 	request := validIngestionAdvisorRequest()
 	request.Content = strings.Repeat("常", 5000) + evidenceMarker + strings.Repeat("规", 19000)
-	config := validIngestionRecommendation()
-	config.Strategy = "auto"
-	normalized, err := normalizeIngestionPreviewConfig(config, request.ChunkingConstraints)
-	require.NoError(t, err)
-	candidateID, err := ingestionCandidateID(normalized)
-	require.NoError(t, err)
-	previewArgs, err := jsonMarshalForTest(config)
-	require.NoError(t, err)
 	submitArgs := fmt.Sprintf(
 		`{"candidate_id":%q,"document_kind":"faq","confidence":0.95,`+
 			`"recommended_content_mode":"faq_candidate","reason_codes":["full_text_faq_signal"],`+
 			`"summary":"全文证据包含 FAQ 信号"}`,
-		candidateID,
+		defaultCandidatePlaceholder,
 	)
 	agentModel := &ingestionAdvisorScriptedModel{responses: [][]types.StreamResponse{
-		toolResponse("preview-faq", previewIngestionChunkingTool, previewArgs),
 		toolResponse("submit-faq", submitIngestionDecisionTool, submitArgs),
 	}}
 	model := &ingestionAdvisorFullTextModel{

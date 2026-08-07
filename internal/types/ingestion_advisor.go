@@ -220,6 +220,15 @@ type IngestionChunkingCandidate struct {
 	Score                IngestionCandidateScore              `json:"score"`
 	HardValid            bool                                 `json:"hard_valid"`
 	Violations           []string                             `json:"violations"`
+	ComparisonFacts      IngestionCandidateComparisonFacts    `json:"comparison_facts"`
+}
+
+type IngestionCandidateComparisonFacts struct {
+	ReferenceCandidateID string   `json:"reference_candidate_id"`
+	TotalScoreGap        float64  `json:"total_score_gap"`
+	EvidenceAdvantages   []string `json:"evidence_advantages"`
+	SelectionEligible    bool     `json:"selection_eligible"`
+	ReasonCodes          []string `json:"reason_codes"`
 }
 
 // SemanticPackingPolicy is derived from validated full-document evidence.
