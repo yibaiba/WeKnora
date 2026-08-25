@@ -178,6 +178,15 @@ func (r *sessionRepository) QueryPaged(
 	applyBase := func(db *gorm.DB) *gorm.DB {
 		db = db.Where("s.tenant_id = ? AND s.deleted_at IS NULL", q.TenantID)
 		db = applyAliasedSessionUserScope(db, q.UserID)
+		// Skill image maintenance runs in a real session so its transcript can
+		// be read back, but it is not a conversation. Excluding it here rather
+		// than in applySource is deliberate: a source branch only covers its
+		// own bucket, and this row must be absent from all of them, including
+		// the unfiltered listing.
+		db = db.Where(
+			"(s.description IS NULL OR s.description NOT LIKE ?)",
+			types.SkillMaintenanceSessionMarker+"%",
+		)
 		if kw := strings.TrimSpace(q.Keyword); kw != "" {
 			db = db.Where(titleLikeExpr, "%"+escapeLikeKeyword(kw)+"%")
 		}

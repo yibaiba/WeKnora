@@ -854,12 +854,67 @@ func (s *DataSourceService) applyFetchedItem(
 	processOverrides *types.KnowledgeProcessOverrides,
 ) {
 	if item.IsDeleted {
-		if ds.SyncDeletions {
-			// Count only — actual KB deletion is intentionally not performed.
-			// Users manage knowledge removal explicitly via the KB UI to avoid
-			// accidental data loss from connector misdetection or reconfiguration.
-			result.Deleted++
+		if !ds.SyncDeletions {
+			// Sync deletion disabled: neither count nor delete.
+			return
 		}
+		if item.ExternalID == "" {
+			logger.Warnf(ctx, "skipping deletion for item %q: empty external_id", item.Title)
+			result.Skipped++
+			return
+		}
+		// Perform real KB deletion, scoped to items owned by this data source
+		// so identical external IDs from different data sources cannot collide.
+		repo := s.knowledgeService.GetRepository()
+		existing, lookupErr := repo.FindByDataSourceExternalID(
+			ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, item.ExternalID,
+		)
+		if lookupErr != nil {
+			logger.Errorf(ctx, "failed to find deleted knowledge for external_id=%s (ds=%s, kb=%s): %v",
+				item.ExternalID, ds.ID, ds.KnowledgeBaseID, lookupErr)
+			result.Failed++
+			result.DeletionFailed++
+			recordSyncError(result, types.SyncItemError{
+				Title:   item.Title,
+				Code:    "deletion_lookup_failed",
+				Message: "Failed to look up the item before deletion; see server logs",
+			})
+			return
+		}
+		if existing == nil {
+			// Deletion is idempotent: the source item may already have been
+			// removed manually or by an earlier sync.
+			result.Skipped++
+			return
+		}
+		if deleteErr := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); deleteErr != nil {
+			// The cursor is already past this item, so a failed deletion normally
+			// retries only on a later full sync. Counted separately so the
+			// sync-log message can warn the operator about this gap.
+			result.Failed++
+			result.DeletionFailed++
+			logger.Errorf(ctx, "failed to delete knowledge %s for external_id=%s (ds=%s): %v",
+				existing.ID, item.ExternalID, ds.ID, deleteErr)
+			recordSyncError(result, types.SyncItemError{
+				Title:   item.Title,
+				Code:    "deletion_failed",
+				Message: "Deletion failed; see server logs",
+			})
+			return
+		}
+		if herr := repo.HardDeleteKnowledge(ctx, ds.TenantID, existing.ID); herr != nil {
+			result.Failed++
+			result.DeletionFailed++
+			logger.Errorf(ctx, "failed to hard-delete knowledge %s for external_id=%s (ds=%s): %v",
+				existing.ID, item.ExternalID, ds.ID, herr)
+			recordSyncError(result, types.SyncItemError{
+				Title:   item.Title,
+				Code:    "deletion_failed",
+				Message: "Deletion failed; see server logs",
+			})
+			return
+		}
+		result.Deleted++
 		return
 	}
 
@@ -1049,13 +1104,18 @@ func (s *DataSourceService) processSyncStreaming(
 	// Surface per-document failures as a partial sync (not silent success), so
 	// the sync-log drawer's failure detail explains which docs didn't make it —
 	// the visibility gap behind "status normal but not everything syncs"
-	// (Tencent/WeKnora#2136). Failed nodes were not advanced in the cursor, so
-	// the next run retries them.
+	// (Tencent/WeKnora#2136). Fetch failures abort the stream before the failed
+	// page is checkpointed, so the next run retries them; deletion failures are
+	// past the cursor and only retry on a full sync in the normal case (see
+	// applyFetchedItem).
 	status := types.SyncLogStatusSuccess
 	errMsg := ""
 	if result.Failed > 0 {
 		status = types.SyncLogStatusPartial
 		errMsg = fmt.Sprintf("%d document(s) failed to sync", result.Failed)
+		if result.DeletionFailed > 0 {
+			errMsg += fmt.Sprintf("; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed)
+		}
 	}
 	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, status, errMsg, wasPaused)
 	logger.Infof(ctx, "streaming sync completed: ds=%s created=%d updated=%d deleted=%d skipped=%d failed=%d",
@@ -1181,13 +1241,25 @@ func decodeProcessConfigBytes(data []byte) (*types.KnowledgeProcessOverrides, er
 }
 
 func syncStatusFromResult(result *types.SyncResult, fetchWarnings []string) (string, string) {
+	var parts []string
 	if len(fetchWarnings) > 0 {
-		return types.SyncLogStatusPartial, fmt.Sprintf("Some resources failed: %s", strings.Join(fetchWarnings, "; "))
+		parts = append(parts, fmt.Sprintf("Some resources failed: %s", strings.Join(fetchWarnings, "; ")))
 	}
-	if result != nil && result.Failed > 0 && syncHasCompletedItem(result) {
-		return types.SyncLogStatusPartial, fmt.Sprintf("Some items failed: %d", result.Failed)
+	if result != nil && result.Failed > 0 {
+		if result.DeletionFailed > 0 {
+			parts = append(parts, fmt.Sprintf("%d document(s) failed to sync", result.Failed))
+			parts = append(parts, fmt.Sprintf(
+				"%d deletion failure(s) will only retry on the next full sync", result.DeletionFailed))
+		} else if syncHasCompletedItem(result) {
+			parts = append(parts, fmt.Sprintf("Some items failed: %d", result.Failed))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d document(s) failed to sync", result.Failed))
+		}
 	}
-	return types.SyncLogStatusSuccess, ""
+	if len(parts) == 0 {
+		return types.SyncLogStatusSuccess, ""
+	}
+	return types.SyncLogStatusPartial, strings.Join(parts, "; ")
 }
 
 func syncHasCompletedItem(result *types.SyncResult) bool {
@@ -1200,12 +1272,10 @@ func (s *DataSourceService) ValidateCredentials(ctx context.Context, connectorTy
 	if err != nil {
 		return err
 	}
-
 	config := &types.DataSourceConfig{
 		Type:        connectorType,
 		Credentials: credentials,
 	}
-
 	if err := connector.Validate(ctx, config); err != nil {
 		return err
 	}
@@ -1244,7 +1314,17 @@ func (s *DataSourceService) ingestItem(
 	tagIDs []string,
 	processOverrides *types.KnowledgeProcessOverrides,
 ) (bool, error) {
+	// Channel decides the knowledge "source" label shown in the UI. Prefer the
+	// connector-supplied metadata["channel"] (e.g. Feishu Drive sets it to
+	// "feishu" so Drive docs share the wiki's "飞书" label instead of showing
+	// "unknown" for the raw ds.Type "feishu_drive"). Fall back to ds.Type so
+	// connectors that don't set metadata.channel still get a meaningful label.
 	channel := ds.Type // e.g. "feishu", "notion"
+	if item.Metadata != nil {
+		if mc, ok := item.Metadata["channel"]; ok && mc != "" {
+			channel = mc
+		}
+	}
 
 	metadata := map[string]string{
 		"external_id":        item.ExternalID,
@@ -1262,7 +1342,10 @@ func (s *DataSourceService) ingestItem(
 	isUpdate := false
 	if item.ExternalID != "" {
 		repo := s.knowledgeService.GetRepository()
-		existing, err := repo.FindByMetadataKey(ctx, ds.TenantID, ds.KnowledgeBaseID, "external_id", item.ExternalID)
+		// Scope the lookup to items owned by this data source so identical
+		// external IDs from two data sources cannot collide or overwrite each
+		// other during updates.
+		existing, err := repo.FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, item.ExternalID)
 		if err != nil {
 			logger.Warnf(ctx, "failed to check existing knowledge for external_id=%s: %v", item.ExternalID, err)
 			// Non-fatal: proceed with creation (may produce duplicate)
@@ -1271,6 +1354,9 @@ func (s *DataSourceService) ingestItem(
 			if err := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); err != nil {
 				logger.Warnf(ctx, "failed to delete existing knowledge %s: %v", existing.ID, err)
 			} else {
+				if herr := repo.HardDeleteKnowledge(ctx, ds.TenantID, existing.ID); herr != nil {
+					logger.Warnf(ctx, "failed to hard-delete replaced knowledge %s: %v", existing.ID, herr)
+				}
 				isUpdate = true
 			}
 		}
@@ -1334,6 +1420,19 @@ func (s *DataSourceService) ingestItem(
 			}
 			return isUpdate, err
 		}
+		// URL-created knowledge has no metadata, so a later deletion could
+		// never find it. Attach the datasource keys on fresh creation only;
+		// the duplicate path reuses an existing row that must not be re-tagged.
+		if knowledge != nil {
+			metadataBytes, mErr := json.Marshal(metadata)
+			if mErr != nil {
+				return isUpdate, fmt.Errorf("marshal datasource metadata: %w", mErr)
+			}
+			knowledge.Metadata = types.JSON(metadataBytes)
+			if uErr := s.knowledgeService.GetRepository().UpdateKnowledge(ctx, knowledge); uErr != nil {
+				return isUpdate, fmt.Errorf("attach datasource metadata: %w", uErr)
+			}
+		}
 		if err := s.upsertItemSourceACL(ctx, ds, item, knowledge); err != nil {
 			return isUpdate, err
 		}
@@ -1386,6 +1485,11 @@ func (s *DataSourceService) sweepStaleSubtree(ctx context.Context, ds *types.Dat
 	}
 	ids := make([]string, 0, len(children))
 	for _, child := range children {
+		// Scope to this data source so identical external_id prefixes from
+		// another connector in the same KB cannot be swept.
+		if child.GetMetadata()["datasource_id"] != ds.ID {
+			continue
+		}
 		// A child still present in the source is preserved even if it could not be
 		// re-ingested this sync; only children that vanished from the source are
 		// stale and swept. Every child here was selected by the external_id-prefix
@@ -1407,6 +1511,9 @@ func (s *DataSourceService) sweepStaleSubtree(ctx context.Context, ds *types.Dat
 	if derr := s.knowledgeService.DeleteKnowledgeList(ctx, ids); derr != nil {
 		logger.Warnf(ctx, "failed to delete %d stale sub-item(s) of external_id=%s: %v",
 			len(ids), item.ExternalID, derr)
+	} else if herr := repo.HardDeleteKnowledgeList(ctx, ds.TenantID, ids); herr != nil {
+		logger.Warnf(ctx, "failed to hard-delete %d stale sub-item(s) of external_id=%s: %v",
+			len(ids), item.ExternalID, herr)
 	}
 }
 

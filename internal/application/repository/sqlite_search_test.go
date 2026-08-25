@@ -68,7 +68,7 @@ VALUES
 `).Error)
 
 	repo := NewMessageRepository(db)
-	got, err := repo.SearchMessagesByKeyword(context.Background(), 7, "quarterly", nil, 10)
+	got, err := repo.SearchMessagesByKeyword(context.Background(), 7, "", "quarterly", nil, 10)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "m1", got[0].ID)
@@ -155,7 +155,7 @@ INSERT INTO knowledges (id, tag_id) VALUES ('k1', 'tag-a'), ('k2', ''), ('k3', '
 `)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	requireExecSQLFile(t, sqlDB, "..", "..", "..", "migrations", "sqlite", "000004_knowledge_tag_relations.up.sql")
+	requireExecSQLFile(t, sqlDB, "..", "..", "..", "migrations", "sqlite", "000010_knowledge_multi_tags.up.sql")
 
 	var rows []types.KnowledgeTagRelation
 	require.NoError(t, db.Order("knowledge_id ASC").Find(&rows).Error)

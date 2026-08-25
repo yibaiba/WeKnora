@@ -99,7 +99,7 @@ export interface TenantAPIKey {
   name: string
   api_key: string
   full_access: boolean
-  knowledge_base_ids: string[]
+  knowledge_base_ids: string[] | null
   capabilities?: TenantAPIKeyCapability[]
   last_used_at?: string
   expires_at?: string
@@ -144,6 +144,14 @@ export interface PersonalAPIMessage {
   role: string
   content: string
   created_at: string
+}
+
+export interface UpdateTenantAPIKeyPayload {
+  name: string
+  full_access: boolean
+  knowledge_base_ids: string[]
+  capabilities: TenantAPIKeyCapability[]
+  expires_at_unix?: number
 }
 
 // 搜索空间参数
@@ -251,6 +259,23 @@ export async function createTenantAPIKey(
     return {
       success: false,
       message: error.message || t('error.tenant.createApiKeyFailed'),
+    }
+  }
+}
+
+/** 更新已创建租户 API Key 的授权范围和其他可配置属性。 */
+export async function updateTenantAPIKey(
+  tenantId: number,
+  keyId: number,
+  payload: UpdateTenantAPIKeyPayload,
+): Promise<{ success: boolean; data?: TenantAPIKey; message?: string }> {
+  try {
+    const response = await put(`/api/v1/tenants/${tenantId}/api-keys/${keyId}`, payload)
+    return response as unknown as { success: boolean; data?: TenantAPIKey; message?: string }
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error.message || t('integrations.api.updateApiKeyScopeFailed'),
     }
   }
 }

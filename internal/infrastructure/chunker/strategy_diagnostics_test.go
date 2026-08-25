@@ -1,6 +1,7 @@
 package chunker
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -93,5 +94,27 @@ func TestSplitWithDiagnostics_ProfileNilForExplicit(t *testing.T) {
 				t.Errorf("strategy %q should leave Profile nil, got %+v", strat, diag.Profile)
 			}
 		})
+	}
+}
+
+func TestSplitParentChildWithDiagnostics_MatchesSplitParentChild(t *testing.T) {
+	text := strings.Repeat("## Record\n"+strings.Repeat("A sufficiently long entry body. ", 10)+"\n\n", 12)
+	parentCfg := SplitterConfig{ChunkSize: 300, ChunkOverlap: 30, Separators: []string{"\n\n", "\n"}, Strategy: StrategyHeading}
+	childCfg := SplitterConfig{ChunkSize: 100, ChunkOverlap: 20, Separators: []string{"\n\n", "\n"}, Strategy: StrategyHeading}
+
+	want := SplitParentChild(text, parentCfg, childCfg)
+	got, diag := SplitParentChildWithDiagnostics(text, parentCfg, childCfg)
+
+	if len(got.Parents) != len(want.Parents) || len(got.Children) != len(want.Children) {
+		t.Fatalf("parent-child result differs: got %d parents/%d children, want %d parents/%d children",
+			len(got.Parents), len(got.Children), len(want.Parents), len(want.Children))
+	}
+	for i := range want.Children {
+		if !reflect.DeepEqual(got.Children[i], want.Children[i]) {
+			t.Errorf("child %d differs:\n  got:  %+v\n  want: %+v", i, got.Children[i], want.Children[i])
+		}
+	}
+	if diag == nil || diag.SelectedTier == "" {
+		t.Fatal("expected diagnostics for parent split")
 	}
 }

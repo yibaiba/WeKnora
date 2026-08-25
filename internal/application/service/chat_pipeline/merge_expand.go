@@ -213,6 +213,7 @@ func (p *PluginMerge) expandShortContextWithNeighbors(
 
 		beforeLen := runeLen(res.Content)
 		res.Content = merged
+		res.ContentRewritten = true
 
 		for _, id := range prevIDs {
 			if id != "" && !containsID(res.SubChunkID, id) {

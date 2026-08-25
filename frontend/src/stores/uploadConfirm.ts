@@ -28,6 +28,13 @@ export interface UploadConfirmResult {
   urls?: string[]
   manual?: UploadConfirmManualSource
   reparse?: UploadConfirmReparseSource
+  /**
+   * Folder the batch is uploaded into ('' = knowledge base root). Returned as
+   * part of the result because the dialog lets the user change it, so callers
+   * must use this value rather than whatever folder was open when they opened
+   * the dialog.
+   */
+  targetFolder?: string
 }
 
 export interface OpenUploadConfirmOptions {
@@ -40,6 +47,10 @@ export interface OpenUploadConfirmOptions {
   reparse?: UploadConfirmReparseSource
   acceptFileTypes?: string
   supportedFileTypes?: string[]
+  /** Folder pre-selected from the sidebar tree; '' means the root. */
+  targetFolder?: string
+  /** Existing folders the dialog can offer as upload destinations. */
+  folderOptions?: Array<{ path: string; name: string; depth: number }>
 }
 
 export const useUploadConfirmStore = defineStore('uploadConfirm', {
@@ -54,6 +65,8 @@ export const useUploadConfirmStore = defineStore('uploadConfirm', {
     reparse: null as UploadConfirmReparseSource | null,
     acceptFileTypes: '',
     supportedFileTypes: [] as string[],
+    targetFolder: '',
+    folderOptions: [] as Array<{ path: string; name: string; depth: number }>,
     pendingResolve: null as ((value: UploadConfirmResult) => void) | null,
     pendingReject: null as (() => void) | null,
   }),
@@ -73,6 +86,8 @@ export const useUploadConfirmStore = defineStore('uploadConfirm', {
         this.reparse = options.reparse || null
         this.acceptFileTypes = options.acceptFileTypes || ''
         this.supportedFileTypes = options.supportedFileTypes ? [...options.supportedFileTypes] : []
+        this.targetFolder = options.targetFolder || ''
+        this.folderOptions = options.folderOptions ? [...options.folderOptions] : []
         this.pendingResolve = resolve
         this.pendingReject = reject
       })
@@ -99,6 +114,8 @@ export const useUploadConfirmStore = defineStore('uploadConfirm', {
       this.reparse = null
       this.acceptFileTypes = ''
       this.supportedFileTypes = []
+      this.targetFolder = ''
+      this.folderOptions = []
       this.pendingResolve = null
       this.pendingReject = null
     },

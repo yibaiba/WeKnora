@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/require"
 )
 
 const defaultKBIndexingStrategy = `{"vector_enabled":true,"keyword_enabled":true,"wiki_enabled":false,"graph_enabled":false}`
@@ -17,7 +18,7 @@ func TestSQLiteKnowledgeBasesWikiColumnsMigration(t *testing.T) {
 	defer db.Close()
 
 	createLegacyKnowledgeBasesTable(t, db)
-	requireExecFile(t, db, "..", "..", "migrations", "sqlite", "000003_kb_wiki_columns.up.sql")
+	requireExecFile(t, db, "..", "..", "migrations", "sqlite", "000015_kb_wiki_columns.up.sql")
 
 	columns := sqliteColumnNames(t, db, "knowledge_bases")
 	requireSQLiteColumn(t, columns, "wiki_config")
@@ -151,4 +152,38 @@ func requireSQLiteColumn(t *testing.T, columns map[string]struct{}, name string)
 	if _, ok := columns[name]; !ok {
 		t.Fatalf("missing sqlite column %q", name)
 	}
+}
+
+func TestSQLiteMigrationsIncludeAutoTagConfig(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	previousDir, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(repoRoot))
+	t.Cleanup(func() { _ = os.Chdir(previousDir) })
+
+	dbPath := filepath.Join(t.TempDir(), "migration.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows, err := db.Query("PRAGMA table_info(knowledge_bases)")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		require.NoError(t, rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey))
+		if name == "auto_tag_config" {
+			found = true
+		}
+	}
+	require.NoError(t, rows.Err())
+	require.True(t, found, "SQLite migrations must create knowledge_bases.auto_tag_config")
 }

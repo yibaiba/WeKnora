@@ -133,30 +133,48 @@ func SplitWithDiagnostics(text string, cfg SplitterConfig) ([]Chunk, *Diagnostic
 // is bounded by O(sum(parent_size)) ≈ O(N) total, which is the same
 // order as the original parent profiling pass.
 func SplitParentChild(text string, parentCfg, childCfg SplitterConfig) ParentChildResult {
-	if text == "" {
-		return ParentChildResult{}
-	}
+	result, _ := splitParentChild(text, parentCfg, childCfg, false)
+	return result
+}
+
+// SplitParentChildWithDiagnostics is the diagnostics-aware form of
+// SplitParentChild. The result is identical to SplitParentChild; diagnostics
+// describe the strategy selected for the parent split over the full document.
+// It is intended for debug surfaces rather than the ingestion hot path.
+func SplitParentChildWithDiagnostics(text string, parentCfg, childCfg SplitterConfig) (ParentChildResult, *Diagnostics) {
+	return splitParentChild(text, parentCfg, childCfg, true)
+}
+
+func splitParentChild(text string, parentCfg, childCfg SplitterConfig, withDiagnostics bool) (ParentChildResult, *Diagnostics) {
 	parentCfg = ensureDefaults(parentCfg)
 	childCfg = ensureDefaults(childCfg)
 	if parentCfg.Strategy == StrategyAuto || childCfg.Strategy == StrategyAuto {
 		document, err := AnalyzeSemanticDocument(text, SemanticAnalysisOptions{})
 		if err != nil {
 			logger.Errorf(context.Background(), "chunker: semantic parent-child analysis failed: %v", err)
-			return ParentChildResult{}
+			return ParentChildResult{}, nil
 		}
 		result, splitErr := SplitParentChildSemanticDocument(SemanticParentChildRequest{
 			Content: text, ParentConfig: parentCfg, ChildConfig: childCfg, Document: document,
 		})
 		if splitErr != nil {
 			logger.Errorf(context.Background(), "chunker: semantic parent-child packing failed: %v", splitErr)
-			return ParentChildResult{}
+			return ParentChildResult{}, nil
 		}
-		return result
+		return result, nil
 	}
 
-	parents := Split(text, parentCfg)
+	var (
+		parents []Chunk
+		diag    *Diagnostics
+	)
+	if withDiagnostics {
+		parents, diag = SplitWithDiagnostics(text, parentCfg)
+	} else {
+		parents = Split(text, parentCfg)
+	}
 	if len(parents) == 0 {
-		return ParentChildResult{}
+		return ParentChildResult{}, diag
 	}
 
 	var newParents []Chunk
@@ -179,7 +197,64 @@ func SplitParentChild(text string, parentCfg, childCfg SplitterConfig) ParentChi
 			childSeq++
 		}
 	}
-	return ParentChildResult{Parents: newParents, Children: children}
+	return ParentChildResult{Parents: newParents, Children: children}, diag
+}
+
+// NormalizeSplitterConfig applies the same base splitter defaults used by
+// knowledge ingestion before parent-child derivation or single-pass splitting.
+func NormalizeSplitterConfig(cfg SplitterConfig) SplitterConfig {
+	if cfg.ChunkSize <= 0 {
+		cfg.ChunkSize = DefaultChunkSize
+	}
+	if cfg.ChunkOverlap <= 0 {
+		cfg.ChunkOverlap = DefaultChunkOverlap
+	}
+	if len(cfg.Separators) == 0 {
+		cfg.Separators = []string{"\n\n", "\n", "。"}
+	}
+	return cfg
+}
+
+// NormalizeLineEndings canonicalizes text before chunking. Browser textareas
+// normalize pasted CRLF text to LF, while uploaded files preserve their
+// original line endings; without this, the same document produces different
+// character counts and chunk boundaries.
+func NormalizeLineEndings(text string) string {
+	if !strings.Contains(text, "\r") {
+		return text
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.ReplaceAll(text, "\r", "\n")
+}
+
+// DeriveParentChildConfigs produces the exact parent and child splitter
+// configurations used by knowledge ingestion. Keeping this here lets preview
+// and ingestion remain in lockstep as the parent-child defaults evolve.
+// Languages are copied to both levels so parent and child splitters use the same boundary rules.
+// TokenLimit is copied only to children because parents keep the configured context window.
+func DeriveParentChildConfigs(base SplitterConfig, parentSize, childSize int) (parent, child SplitterConfig) {
+	if parentSize <= 0 {
+		parentSize = 4096
+	}
+	if childSize <= 0 {
+		childSize = 384
+	}
+	parent = SplitterConfig{
+		ChunkSize:    parentSize,
+		ChunkOverlap: base.ChunkOverlap,
+		Separators:   base.Separators,
+		Strategy:     base.Strategy,
+		Languages:    base.Languages,
+	}
+	child = SplitterConfig{
+		ChunkSize:    childSize,
+		ChunkOverlap: childSize / 5,
+		Separators:   base.Separators,
+		Strategy:     base.Strategy,
+		TokenLimit:   base.TokenLimit,
+		Languages:    base.Languages,
+	}
+	return
 }
 
 // mergeBreadcrumbs combines parent and child context into one ContextHeader.
