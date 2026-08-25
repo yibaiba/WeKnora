@@ -1,1 +1,2 @@
-ALTER TABLE knowledge_bases ADD COLUMN auto_tag_config TEXT;
+-- auto_tag_config is added idempotently by applySQLiteMergeSchemaPatches.
+SELECT 1;

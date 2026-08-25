@@ -18,6 +18,9 @@ func TestSQLiteKnowledgeBasesWikiColumnsMigration(t *testing.T) {
 	defer db.Close()
 
 	createLegacyKnowledgeBasesTable(t, db)
+	if err := applySQLiteMergeSchemaPatches(db); err != nil {
+		t.Fatalf("apply sqlite merge schema patches: %v", err)
+	}
 	requireExecFile(t, db, "..", "..", "migrations", "sqlite", "000015_kb_wiki_columns.up.sql")
 
 	columns := sqliteColumnNames(t, db, "knowledge_bases")
@@ -186,4 +189,9 @@ func TestSQLiteMigrationsIncludeAutoTagConfig(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	require.True(t, found, "SQLite migrations must create knowledge_bases.auto_tag_config")
+
+	requireSQLiteColumn(t, sqliteColumnNames(t, db, "wiki_pages"), "last_edit_source")
+	requireSQLiteColumn(t, sqliteColumnNames(t, db, "wiki_pages"), "last_editor_id")
+	requireSQLiteColumn(t, sqliteColumnNames(t, db, "tenant_api_keys"), "owner_user_id")
+	requireSQLiteColumn(t, sqliteColumnNames(t, db, "knowledges"), "folder_path")
 }

@@ -40,6 +40,10 @@ var contextCloneAcrossDetach = map[ContextKey]bool{
 	// Per-API-key operation and KB scopes: a restriction, so dropping it would
 	// hand background work broader reach than the key it came from.
 	TenantAPIKeyScopeContextKey: true,
+	// Service-key ACL identity. Dropping either key makes detached work look
+	// like a normal WeKnora user and skip or mis-evaluate WeCom-backed ACL.
+	SourceACLActorUserIDContextKey: true,
+	ServiceKeyCallContextKey:       true,
 
 	// Session scope. SessionTenantID re-scopes session/message lookups, while
 	// SandboxTenantID keys the session→sandbox binding to the session owner

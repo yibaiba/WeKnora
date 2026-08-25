@@ -95,13 +95,7 @@ CREATE TABLE IF NOT EXISTS memory_doc_affinity (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_affinity_scope
     ON memory_doc_affinity (tenant_id, subject_id, knowledge_id);
 
-ALTER TABLE tenants ADD COLUMN memory_config TEXT;
-ALTER TABLE messages ADD COLUMN used_memories TEXT;
-
-ALTER TABLE memory_subjects ADD COLUMN consolidated_at DATETIME;
-ALTER TABLE memory_subjects ADD COLUMN forced_consolidated_at DATETIME;
-
-ALTER TABLE memory_topic_stats ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]';
+-- Extra memory columns are added by applySQLiteMergeSchemaPatches.
 
 CREATE TABLE IF NOT EXISTS memory_item_embeddings (
     item_id VARCHAR(36) PRIMARY KEY,

@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     vector_store_id VARCHAR(36),
     storage_backend_id VARCHAR(36),
     creator_id VARCHAR(36),
+    wiki_config TEXT,
+    indexing_strategy TEXT DEFAULT '{"vector_enabled":true,"keyword_enabled":true,"wiki_enabled":false,"graph_enabled":false}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME
@@ -108,6 +110,8 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
     page_metadata     TEXT DEFAULT '{}',
     aliases           TEXT DEFAULT '[]',
     version           INTEGER NOT NULL DEFAULT 1,
+    last_edit_source  VARCHAR(16) NOT NULL DEFAULT '',
+    last_editor_id    VARCHAR(64) NOT NULL DEFAULT '',
     created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at        DATETIME
@@ -166,22 +170,6 @@ CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_tenant_id ON wiki_page_issues(te
 CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_knowledge_base_id ON wiki_page_issues(knowledge_base_id);
 CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_slug ON wiki_page_issues(slug);
 CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_status ON wiki_page_issues(status);
-
-CREATE TABLE IF NOT EXISTS wiki_log_entries (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id         INTEGER NOT NULL,
-    knowledge_base_id VARCHAR(36) NOT NULL,
-    action            VARCHAR(32) NOT NULL,
-    knowledge_id      VARCHAR(36) NOT NULL DEFAULT '',
-    doc_title         TEXT NOT NULL DEFAULT '',
-    summary           TEXT NOT NULL DEFAULT '',
-    pages_affected    TEXT NOT NULL DEFAULT '[]',
-    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_log_entries_kb_id_desc
-    ON wiki_log_entries(knowledge_base_id, id DESC);
-CREATE INDEX IF NOT EXISTS idx_wiki_log_entries_tenant_id ON wiki_log_entries(tenant_id);
 
 CREATE TABLE IF NOT EXISTS task_pending_ops (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1272,6 +1260,7 @@ CREATE TABLE IF NOT EXISTS tenant_api_keys (
     key_hash TEXT NOT NULL UNIQUE,
     api_key TEXT NOT NULL DEFAULT '',
     full_access BOOLEAN NOT NULL DEFAULT 0,
+    owner_user_id VARCHAR(36),
     knowledge_base_ids TEXT NOT NULL DEFAULT '[]',
     capabilities TEXT NOT NULL DEFAULT '[]',
     last_used_at DATETIME,
@@ -1287,6 +1276,7 @@ CREATE TABLE IF NOT EXISTS tenant_api_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_tenant ON tenant_api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_tenant_owner ON tenant_api_keys(tenant_id, owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_revoked_at ON tenant_api_keys(revoked_at);
 CREATE INDEX IF NOT EXISTS idx_tenant_api_keys_scope_type ON tenant_api_keys(scope_type);
 
@@ -1320,115 +1310,8 @@ CREATE INDEX IF NOT EXISTS idx_temporary_documents_scope ON temporary_documents(
 CREATE INDEX IF NOT EXISTS idx_temporary_documents_status ON temporary_documents(status);
 CREATE INDEX IF NOT EXISTS idx_temporary_documents_expires ON temporary_documents(expires_at);
 
--- ---------------------------------------------------------------------------
--- Wiki (consolidated from Postgres migrations 000037, 000040, 000061, 000075)
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS wiki_pages (
-    id                VARCHAR(36) PRIMARY KEY,
-    tenant_id         INTEGER NOT NULL,
-    knowledge_base_id VARCHAR(36) NOT NULL,
-    slug              VARCHAR(255) NOT NULL,
-    title             VARCHAR(512) NOT NULL DEFAULT '',
-    page_type         VARCHAR(32) NOT NULL DEFAULT 'summary',
-    status            VARCHAR(32) NOT NULL DEFAULT 'published',
-    content           TEXT NOT NULL DEFAULT '',
-    summary           TEXT NOT NULL DEFAULT '',
-    parent_slug       VARCHAR(255) NOT NULL DEFAULT '',
-    folder_id         VARCHAR(36) NOT NULL DEFAULT '',
-    category_path     TEXT DEFAULT '[]',
-    wiki_path         VARCHAR(1024) NOT NULL DEFAULT '',
-    depth             INTEGER NOT NULL DEFAULT 0,
-    sort_order        INTEGER NOT NULL DEFAULT 0,
-    source_refs       TEXT DEFAULT '[]',
-    chunk_refs        TEXT DEFAULT '[]',
-    in_links          TEXT DEFAULT '[]',
-    out_links         TEXT DEFAULT '[]',
-    page_metadata     TEXT DEFAULT '{}',
-    aliases           TEXT DEFAULT '[]',
-    version           INTEGER NOT NULL DEFAULT 1,
-    last_edit_source  VARCHAR(16) NOT NULL DEFAULT '',
-    last_editor_id    VARCHAR(64) NOT NULL DEFAULT '',
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at        DATETIME
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_pages_kb_slug
-    ON wiki_pages (knowledge_base_id, slug)
-    WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_kb_id
-    ON wiki_pages (knowledge_base_id);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_page_type
-    ON wiki_pages (knowledge_base_id, page_type);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_parent_slug
-    ON wiki_pages (knowledge_base_id, parent_slug);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_tree
-    ON wiki_pages (knowledge_base_id, page_type, wiki_path, sort_order, title);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_folder
-    ON wiki_pages (knowledge_base_id, folder_id);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_tenant_id
-    ON wiki_pages (tenant_id);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_pages_deleted_at
-    ON wiki_pages (deleted_at);
-
-CREATE TABLE IF NOT EXISTS wiki_folders (
-    id                VARCHAR(36) PRIMARY KEY,
-    tenant_id         INTEGER NOT NULL DEFAULT 0,
-    knowledge_base_id VARCHAR(36) NOT NULL,
-    parent_id         VARCHAR(36) NOT NULL DEFAULT '',
-    name              VARCHAR(255) NOT NULL,
-    path              VARCHAR(1024) NOT NULL DEFAULT '',
-    depth             INTEGER NOT NULL DEFAULT 0,
-    sort_order        INTEGER NOT NULL DEFAULT 0,
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at        DATETIME
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_folders_parent_name
-    ON wiki_folders (knowledge_base_id, parent_id, name)
-    WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_wiki_folders_parent
-    ON wiki_folders (knowledge_base_id, parent_id);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_folders_deleted_at
-    ON wiki_folders (deleted_at);
-
-CREATE TABLE IF NOT EXISTS wiki_page_issues (
-    id                    VARCHAR(36) PRIMARY KEY,
-    tenant_id             INTEGER NOT NULL,
-    knowledge_base_id     VARCHAR(36) NOT NULL,
-    slug                  VARCHAR(255) NOT NULL,
-    issue_type            VARCHAR(50) NOT NULL,
-    description           TEXT NOT NULL,
-    suspected_knowledge_ids TEXT,
-    status                VARCHAR(20) NOT NULL DEFAULT 'pending',
-    reported_by           VARCHAR(100) NOT NULL,
-    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at            DATETIME
-);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_tenant_id
-    ON wiki_page_issues(tenant_id);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_knowledge_base_id
-    ON wiki_page_issues(knowledge_base_id);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_slug
-    ON wiki_page_issues(slug);
-
-CREATE INDEX IF NOT EXISTS idx_wiki_page_issues_status
-    ON wiki_page_issues(status);
+-- Wiki pages / folders / issues are created earlier in this file.
+-- Revisions come from Postgres 000075 and are not in that earlier block.
 
 CREATE TABLE IF NOT EXISTS wiki_page_revisions (
     id                VARCHAR(36) PRIMARY KEY,

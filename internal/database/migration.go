@@ -254,6 +254,10 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 		logger.Warnf(ctx, "Database is in dirty state! Manual intervention may be required.")
 	}
 
+	if err := applySQLiteMergeSchemaPatchesIfNeeded(dsn, opts); err != nil {
+		return captureMigrationFailure(m, fmt.Errorf("sqlite merge schema patches: %w", err))
+	}
+
 	return nil
 }
 

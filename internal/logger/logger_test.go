@@ -194,6 +194,22 @@ func TestCloneContextPreservesPrincipal(t *testing.T) {
 	}
 }
 
+func TestCloneContextPreservesSourceACLServiceKeyIdentity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.WithValue(context.Background(), types.ServiceKeyCallContextKey, true)
+	ctx = context.WithValue(ctx, types.SourceACLActorUserIDContextKey, "wecom-user-1")
+	cloned := CloneContext(ctx)
+
+	if !types.ServiceKeyCallFromContext(cloned) {
+		t.Fatal("ServiceKeyCallFromContext(cloned) = false, want true")
+	}
+	got, ok := types.SourceACLActorUserIDFromContext(cloned)
+	if !ok || got != "wecom-user-1" {
+		t.Fatalf("SourceACLActorUserIDFromContext(cloned) = (%q, %v), want (wecom-user-1, true)", got, ok)
+	}
+}
+
 func TestCloneContextPreservesTenantAPIKeyScope(t *testing.T) {
 	t.Parallel()
 
