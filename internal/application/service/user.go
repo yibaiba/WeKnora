@@ -117,6 +117,7 @@ type userService struct {
 	tokenRepo     interfaces.AuthTokenRepository
 	tenantService interfaces.TenantService
 	memberService interfaces.TenantMemberService
+	wecomIdentity interfaces.WeComIdentityService
 	config        *config.Config
 }
 
@@ -127,12 +128,14 @@ func NewUserService(
 	tokenRepo interfaces.AuthTokenRepository,
 	tenantService interfaces.TenantService,
 	memberService interfaces.TenantMemberService,
+	wecomIdentity interfaces.WeComIdentityService,
 ) interfaces.UserService {
 	return &userService{
 		userRepo:      userRepo,
 		tokenRepo:     tokenRepo,
 		tenantService: tenantService,
 		memberService: memberService,
+		wecomIdentity: wecomIdentity,
 		config:        configInfo,
 	}
 }
@@ -463,12 +466,20 @@ func (s *userService) GetOIDCAuthorizationURL(ctx context.Context, redirectURI s
 		return nil, fmt.Errorf("failed to encode OIDC state: %w", err)
 	}
 
+	codeVerifier, err := generatePKCEVerifier()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate PKCE verifier: %w", err)
+	}
+
 	query := url.Values{}
 	query.Set("response_type", "code")
 	query.Set("client_id", cfg.ClientID)
 	query.Set("redirect_uri", redirectURI)
 	query.Set("scope", strings.Join(cfg.Scopes, " "))
 	query.Set("state", state)
+	query.Set("nonce", nonce)
+	query.Set("code_challenge", pkceS256Challenge(codeVerifier))
+	query.Set("code_challenge_method", "S256")
 
 	authURL := cfg.AuthorizationEndpoint
 	if strings.Contains(authURL, "?") {
@@ -483,6 +494,7 @@ func (s *userService) GetOIDCAuthorizationURL(ctx context.Context, redirectURI s
 		AuthorizationURL:    authURL,
 		State:               state,
 		Nonce:               nonce,
+		CodeVerifier:        codeVerifier,
 	}, nil
 }
 
@@ -492,14 +504,19 @@ func (s *userService) GetOIDCAuthorizationURL(ctx context.Context, redirectURI s
 // by the caller from the shared auth.default_tenant_mode policy.
 func (s *userService) LoginWithOIDC(
 	ctx context.Context,
-	code, redirectURI string,
+	in types.OIDCLoginInput,
 	provisioning types.TenantProvisioningMode,
 ) (*types.OIDCCallbackResponse, error) {
-	if strings.TrimSpace(code) == "" {
+	code := strings.TrimSpace(in.Code)
+	redirectURI := strings.TrimSpace(in.RedirectURI)
+	if code == "" {
 		return nil, errors.New("code is required")
 	}
-	if strings.TrimSpace(redirectURI) == "" {
+	if redirectURI == "" {
 		return nil, errors.New("redirect_uri is required")
+	}
+	if strings.TrimSpace(in.CodeVerifier) == "" {
+		return nil, errors.New("PKCE code_verifier is required")
 	}
 
 	cfg, err := s.getOIDCConfig(ctx)
@@ -507,8 +524,12 @@ func (s *userService) LoginWithOIDC(
 		return nil, err
 	}
 
-	tokenResp, err := s.exchangeOIDCCode(ctx, cfg, code, redirectURI)
+	tokenResp, err := s.exchangeOIDCCode(ctx, cfg, code, redirectURI, in.CodeVerifier)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := verifyOIDCIDToken(ctx, cfg, tokenResp.IDToken, strings.TrimSpace(in.Nonce)); err != nil {
 		return nil, err
 	}
 
@@ -516,21 +537,10 @@ func (s *userService) LoginWithOIDC(
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(userInfo.Email) == "" {
-		return nil, errors.New("OIDC provider did not return email")
-	}
 
-	user, err := s.userRepo.GetUserByEmail(ctx, userInfo.Email)
-	if err != nil && !isUserLookupNotFound(err) {
-		return nil, fmt.Errorf("failed to query user by email: %w", err)
-	}
-	isNewUser := false
-	if isUserLookupNotFound(err) || user == nil {
-		user, err = s.provisionOIDCUser(ctx, userInfo, provisioning)
-		if err != nil {
-			return nil, err
-		}
-		isNewUser = true
+	user, isNewUser, err := s.findOrProvisionOIDCUser(ctx, cfg, userInfo, provisioning)
+	if err != nil {
+		return nil, err
 	}
 
 	if !user.IsActive {
@@ -557,6 +567,11 @@ func (s *userService) LoginWithOIDC(
 		}
 	}
 	memberships := s.buildMembershipsForUser(ctx, user, tenant)
+
+	s.applySSOAccessSideEffects(ctx, cfg, user, tokenResp.AccessToken, userInfo.WeComUserID)
+	if resolvedTenantID > 0 {
+		s.bindWeComFromSSO(ctx, user, userInfo.WeComUserID, resolvedTenantID)
+	}
 
 	return &types.OIDCCallbackResponse{
 		Success:      true,
@@ -1380,15 +1395,20 @@ func (s *userService) SearchUsers(ctx context.Context, query string, limit int) 
 }
 
 type oidcDiscoveryDocument struct {
+	Issuer                string `json:"issuer"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
 	UserInfoEndpoint      string `json:"userinfo_endpoint"`
+	JWKSURI               string `json:"jwks_uri"`
+	IntrospectionEndpoint string `json:"introspection_endpoint"`
 }
 
 type oidcTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	TokenType   string `json:"token_type"`
+	AccessToken  string `json:"access_token"`
+	IDToken      string `json:"id_token"`
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
 func newOIDCHTTPClient() *http.Client {
@@ -1419,6 +1439,12 @@ func validateOIDCEndpoints(cfg *config.OIDCAuthConfig) error {
 		return err
 	}
 	if err := validateOIDCEndpoint("userinfo", cfg.UserInfoEndpoint, false); err != nil {
+		return err
+	}
+	if err := validateOIDCEndpoint("jwks", cfg.JWKSURI, false); err != nil {
+		return err
+	}
+	if err := validateOIDCEndpoint("introspection", cfg.IntrospectionEndpoint, false); err != nil {
 		return err
 	}
 	return nil
@@ -1477,13 +1503,25 @@ func (s *userService) populateOIDCEndpoints(ctx context.Context, cfg *config.OID
 	if cfg.UserInfoEndpoint == "" {
 		cfg.UserInfoEndpoint = doc.UserInfoEndpoint
 	}
+	if cfg.IssuerURL == "" {
+		cfg.IssuerURL = doc.Issuer
+	}
+	if cfg.JWKSURI == "" {
+		cfg.JWKSURI = doc.JWKSURI
+	}
+	if cfg.IntrospectionEndpoint == "" {
+		cfg.IntrospectionEndpoint = doc.IntrospectionEndpoint
+	}
+	if cfg.IntrospectionEndpoint == "" && strings.TrimSpace(cfg.IssuerURL) != "" {
+		cfg.IntrospectionEndpoint = strings.TrimRight(cfg.IssuerURL, "/") + "/oauth/introspect"
+	}
 	if cfg.AuthorizationEndpoint == "" || cfg.TokenEndpoint == "" {
 		return errors.New("OIDC discovery document missing required endpoints")
 	}
 	return validateOIDCEndpoints(cfg)
 }
 
-func (s *userService) exchangeOIDCCode(ctx context.Context, cfg *config.OIDCAuthConfig, code, redirectURI string) (*oidcTokenResponse, error) {
+func (s *userService) exchangeOIDCCode(ctx context.Context, cfg *config.OIDCAuthConfig, code, redirectURI, codeVerifier string) (*oidcTokenResponse, error) {
 	if err := validateOIDCEndpoint("token", cfg.TokenEndpoint, true); err != nil {
 		return nil, err
 	}
@@ -1494,32 +1532,18 @@ func (s *userService) exchangeOIDCCode(ctx context.Context, cfg *config.OIDCAuth
 	form.Set("redirect_uri", redirectURI)
 	form.Set("client_id", cfg.ClientID)
 	form.Set("client_secret", cfg.ClientSecret)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create OIDC token request: %w", err)
+	if strings.TrimSpace(codeVerifier) != "" {
+		form.Set("code_verifier", codeVerifier)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 
-	resp, err := newOIDCHTTPClient().Do(req)
+	tokenResp, err := postOIDCTokenForm(ctx, cfg, form)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange OIDC code: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("OIDC token exchange failed: status=%d", resp.StatusCode)
-	}
-
-	var tokenResp oidcTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode OIDC token response: %w", err)
 	}
 	if strings.TrimSpace(tokenResp.AccessToken) == "" && strings.TrimSpace(tokenResp.IDToken) == "" {
 		return nil, errors.New("OIDC token response missing access_token and id_token")
 	}
-	return &tokenResp, nil
+	return tokenResp, nil
 }
 
 func (s *userService) resolveOIDCUserInfo(ctx context.Context, cfg *config.OIDCAuthConfig, tokenResp *oidcTokenResponse) (*types.OIDCUserInfo, error) {
@@ -1553,6 +1577,8 @@ func (s *userService) resolveOIDCUserInfo(ctx context.Context, cfg *config.OIDCA
 	}
 	info.Username = extractClaimAsString(claims, cfg.UserInfoMapping.Username)
 	info.Email = extractClaimAsString(claims, cfg.UserInfoMapping.Email)
+	info.Avatar = extractClaimAsString(claims, "picture")
+	info.WeComUserID = extractClaimAsString(claims, "wecom_userid")
 	if info.Username == "" {
 		info.Username = extractClaimAsString(claims, "preferred_username")
 	}
@@ -1611,9 +1637,14 @@ func (s *userService) provisionOIDCUser(
 		return nil, fmt.Errorf("failed to generate password for OIDC user: %w", err)
 	}
 
+	email := strings.TrimSpace(info.Email)
+	if email == "" {
+		email = ssoPlaceholderEmail(info.Subject)
+	}
+
 	user, err := s.Register(ctx, &types.RegisterRequest{
 		Username:           username,
-		Email:              info.Email,
+		Email:              email,
 		Password:           randomPassword,
 		TenantProvisioning: provisioning,
 	})
@@ -1623,6 +1654,12 @@ func (s *userService) provisionOIDCUser(
 
 	oidcOnly := true
 	user.Preferences.OidcOnlyLogin = &oidcOnly
+	if sub := strings.TrimSpace(info.Subject); sub != "" {
+		user.SSOSubject = sub
+	}
+	if avatar := strings.TrimSpace(info.Avatar); avatar != "" {
+		user.Avatar = avatar
+	}
 	user.UpdatedAt = time.Now()
 	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
 		return nil, fmt.Errorf("failed to mark OIDC-only login preference: %w", err)
@@ -1632,8 +1669,15 @@ func (s *userService) provisionOIDCUser(
 
 func (s *userService) generateOIDCUsername(ctx context.Context, info *types.OIDCUserInfo) string {
 	base := sanitizeUsernameCandidate(info.Username)
+	// Enterprise SSO `sub` (emp_ UUID) is the local user key, never a login name.
+	if info != nil && info.Subject != "" && strings.EqualFold(base, info.Subject) {
+		base = ""
+	}
 	if base == "" {
 		base = sanitizeUsernameCandidate(strings.Split(info.Email, "@")[0])
+	}
+	if info != nil && info.Subject != "" && strings.EqualFold(base, info.Subject) {
+		base = ""
 	}
 	if base == "" {
 		base = "oidc-user"

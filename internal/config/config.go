@@ -365,17 +365,22 @@ type OIDCUserInfoMapping struct {
 }
 
 type OIDCAuthConfig struct {
-	Enable                bool                 `yaml:"enable"                 json:"enable"`
-	IssuerURL             string               `yaml:"issuer_url"             json:"issuer_url"`
-	DiscoveryURL          string               `yaml:"discovery_url"          json:"discovery_url"`
-	ProviderDisplayName   string               `yaml:"provider_display_name"  json:"provider_display_name"`
-	ClientID              string               `yaml:"client_id"              json:"client_id"`
-	ClientSecret          string               `yaml:"client_secret"          json:"-"`
-	AuthorizationEndpoint string               `yaml:"authorization_endpoint" json:"authorization_endpoint"`
-	TokenEndpoint         string               `yaml:"token_endpoint"         json:"token_endpoint"`
-	UserInfoEndpoint      string               `yaml:"user_info_endpoint"     json:"user_info_endpoint"`
-	Scopes                []string             `yaml:"scopes"                 json:"scopes"`
-	UserInfoMapping       *OIDCUserInfoMapping `yaml:"user_info_mapping"      json:"user_info_mapping"`
+	Enable                bool   `yaml:"enable"                 json:"enable"`
+	IssuerURL             string `yaml:"issuer_url"             json:"issuer_url"`
+	DiscoveryURL          string `yaml:"discovery_url"          json:"discovery_url"`
+	ProviderDisplayName   string `yaml:"provider_display_name"  json:"provider_display_name"`
+	ClientID              string `yaml:"client_id"              json:"client_id"`
+	ClientSecret          string `yaml:"client_secret"          json:"-"`
+	AuthorizationEndpoint string `yaml:"authorization_endpoint" json:"authorization_endpoint"`
+	TokenEndpoint         string `yaml:"token_endpoint"         json:"token_endpoint"`
+	UserInfoEndpoint      string `yaml:"user_info_endpoint"     json:"user_info_endpoint"`
+	JWKSURI               string `yaml:"jwks_uri"               json:"jwks_uri"`
+	IntrospectionEndpoint string `yaml:"introspection_endpoint" json:"introspection_endpoint"`
+	// ResourceAudience is used by Hermes exchange (expected aud, default weknora).
+	// Webpage OIDC login does not Token Exchange.
+	ResourceAudience string               `yaml:"resource_audience" json:"resource_audience"`
+	Scopes           []string             `yaml:"scopes"            json:"scopes"`
+	UserInfoMapping  *OIDCUserInfoMapping `yaml:"user_info_mapping" json:"user_info_mapping"`
 }
 
 // PromptTemplateI18n holds localized name and description for a prompt template.
@@ -786,6 +791,15 @@ func applyOIDCEnvOverrides(cfg *Config) {
 	}
 	if value := strings.TrimSpace(os.Getenv("OIDC_AUTH_USER_INFO_ENDPOINT")); value != "" {
 		cfg.OIDCAuth.UserInfoEndpoint = value
+	}
+	if value := strings.TrimSpace(os.Getenv("OIDC_AUTH_JWKS_URI")); value != "" {
+		cfg.OIDCAuth.JWKSURI = value
+	}
+	if value := strings.TrimSpace(os.Getenv("OIDC_AUTH_INTROSPECTION_ENDPOINT")); value != "" {
+		cfg.OIDCAuth.IntrospectionEndpoint = value
+	}
+	if value := strings.TrimSpace(os.Getenv("OIDC_AUTH_RESOURCE_AUDIENCE")); value != "" {
+		cfg.OIDCAuth.ResourceAudience = value
 	}
 	if value := strings.TrimSpace(os.Getenv("OIDC_AUTH_SCOPES")); value != "" {
 		cfg.OIDCAuth.Scopes = strings.Fields(strings.ReplaceAll(value, ",", " "))

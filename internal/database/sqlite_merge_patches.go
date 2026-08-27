@@ -32,6 +32,7 @@ var sqliteMergeColumnPatches = []sqliteColumnPatch{
 	{table: "memory_subjects", column: "consolidated_at", decl: "DATETIME"},
 	{table: "memory_subjects", column: "forced_consolidated_at", decl: "DATETIME"},
 	{table: "memory_topic_stats", column: "aliases", decl: "TEXT NOT NULL DEFAULT '[]'"},
+	{table: "users", column: "sso_subject", decl: "VARCHAR(64)"},
 }
 
 func applySQLiteMergeSchemaPatchesIfNeeded(dsn string, opts MigrationOptions) error {
@@ -68,6 +69,10 @@ func applySQLiteMergeSchemaPatches(db *sql.DB) error {
 	if err := sqliteExecIfTableExists(db, "tenant_invitations",
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_invitations_token ON tenant_invitations(token) WHERE token <> '' AND deleted_at IS NULL`); err != nil {
 		return fmt.Errorf("ensure idx_tenant_invitations_token: %w", err)
+	}
+	if err := sqliteExecIfTableExists(db, "users",
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sso_subject ON users(sso_subject) WHERE sso_subject IS NOT NULL AND sso_subject <> ''`); err != nil {
+		return fmt.Errorf("ensure idx_users_sso_subject: %w", err)
 	}
 	if err := sqliteExecIfTableExists(db, "knowledges", `
 UPDATE knowledges

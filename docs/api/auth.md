@@ -2,7 +2,7 @@
 
 [返回目录](./README.md)
 
-OIDC 完整调用流程见 [../OIDC认证调用流程.md](../OIDC认证调用流程.md)。本文档作为端点参考。
+OIDC 完整调用流程见 [../OIDC认证调用流程.md](../OIDC认证调用流程.md)。本文档作为端点参考。企业 SSO（`weknora-web`）走同一组 BFF 端点：授权码 + PKCE 在服务端换码，按 `sub` 建号；业务票仍是 WeKnora JWT。空间 ACL 不在 OAuth 票里。
 
 ## 说明
 
@@ -11,7 +11,7 @@ WeKnora 的 `/auth/*` 端点本身**不需要 X-API-Key**，但部分端点需�
 | 端点 | 鉴权方式 |
 | --- | --- |
 | `/auth/register` `/auth/login` | 无 |
-| `/auth/oidc/config` `/auth/oidc/url` `/auth/oidc/callback` | 无 |
+| `/auth/oidc/config` `/auth/oidc/url` `/auth/oidc/callback` `/auth/sso/exchange` | 无（exchange 的 Bearer 是 SSO 资源票，不是 WeKnora JWT） |
 | `/auth/refresh` | refresh_token（请求体携带） |
 | `/auth/validate` `/auth/me` `/auth/logout` `/auth/change-password` | Bearer JWT |
 
@@ -26,6 +26,7 @@ WeKnora 的 `/auth/*` 端点本身**不需要 X-API-Key**，但部分端点需�
 | GET  | `/auth/oidc/config`        | 获取 OIDC 配置元数据                       |
 | GET  | `/auth/oidc/url`           | 获取 OIDC 授权链接                         |
 | GET  | `/auth/oidc/callback`      | OIDC 授权回调（由 IdP 重定向触发）         |
+| POST | `/auth/sso/exchange`       | Hermes：`aud=weknora` SSO 票换 WeKnora JWT |
 | POST | `/auth/refresh`            | 用 refresh_token 换新的 access_token       |
 | GET  | `/auth/validate`           | 验证 JWT 有效性                            |
 | POST | `/auth/logout`             | 退出登录                                   |
@@ -196,6 +197,20 @@ curl --location 'http://localhost:8080/api/v1/auth/oidc/url?redirect=%2Fdashboar
 与 `/auth/oidc/url` 不同，此端点**直接 302 重定向**到 OIDC Provider 的授权页，不返回 JSON，因此无需前端 JS 介入。适用于外部平台（如企业门户 / Nexus）直接给出一个链接即可触发 OIDC 授权码流程，借助 IdP 的 SSO session 实现免再次输密码。
 
 回调地址由后端根据请求自身的 origin（`<scheme>://<host>/api/v1/auth/oidc/callback`）自动构造，无需调用方提供。
+
+---
+
+## POST `/auth/sso/exchange` - Hermes 用 SSO 资源票换 WeKnora JWT
+
+给 Hermes（或其它持有 `aud=weknora` 短票的客户端）。**不是**网页 OIDC 回调。WeKnora 业务接口仍只认自己签发的 Bearer。
+
+**请求头**: `Authorization: Bearer {SSO access token}`，且该票必须是 RS256、`aud` 为单个字符串 `weknora`（或 `OIDC_AUTH_RESOURCE_AUDIENCE`）、`iss` 与配置的 issuer 一致、未过期。拒绝 `aud=sso` 登录票。不要把 token 放进 JSON body。
+
+**成功 200**：与 `/auth/login` 相同，含 `token` / `refresh_token` / `user` / `active_tenant` / `memberships`。服务端会 JWKS 验签并 introspect；`active: false` 为 401。之后用 WeKnora `token` 调 `GET /tenants` 和检索，并带 `X-Tenant-ID`。没有成员关系则没有知识库。
+
+登录/换票只打 `QueryEmployeeDirectory` 查**当前这个人**的部门（不拉整棵组织树）。用返回的部门在本地 upsert 部门/企微身份，再绑定 Source ACL；其它已经有这些部门记录的空间会把人加为 viewer。整棵通讯录仍走空间里的企微同步，不是 SSO 登录协议。
+
+**失败**：OIDC 未启用 403；验签失败 / 错 audience / 过期 / 账号停用 401。
 
 **请求**:
 

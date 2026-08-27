@@ -67,6 +67,7 @@ type WeComIdentityRepository interface {
 		q WeComBindingListQuery,
 	) ([]*types.WeComUserBinding, int64, error)
 	ResolveSubject(ctx context.Context, tenantID uint64, weknoraUserID string) (*types.WeComACLSubject, error)
+	ListTenantIDsByDepartmentID(ctx context.Context, departmentID string) ([]uint64, error)
 }
 
 type WeComIdentityService interface {
@@ -88,4 +89,9 @@ type WeComIdentityService interface {
 		rows []WeComBindingImportRow,
 	) []WeComBindingImportResult
 	ResolveSubject(ctx context.Context, tenantID uint64, weknoraUserID string) (*types.WeComACLSubject, error)
+	ListTenantIDsByDepartmentIDs(ctx context.Context, departmentIDs []string) ([]uint64, error)
+	// EnsureSSOEmployee upserts this employee's WeCom identity and the
+	// departments from QueryEmployeeDirectory (current person only, not
+	// the org tree) so Source ACL bind can succeed without a full sync.
+	EnsureSSOEmployee(ctx context.Context, tenantID uint64, wecomUserID, name string, departments []types.SSODepartment) error
 }

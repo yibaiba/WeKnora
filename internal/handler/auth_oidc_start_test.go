@@ -45,6 +45,7 @@ func TestOIDCStart_RedirectsToAuthProvider(t *testing.T) {
 				AuthorizationURL: authURL,
 				State:            "state123",
 				Nonce:            "nonce456",
+				CodeVerifier:     "pkce-verifier",
 			}, nil
 		},
 	}
@@ -62,14 +63,20 @@ func TestOIDCStart_RedirectsToAuthProvider(t *testing.T) {
 	if loc := w.Header().Get("Location"); loc != authURL {
 		t.Errorf("Location = %q, want %q", loc, authURL)
 	}
-	var hasNonce bool
+	var hasNonce, hasPKCE bool
 	for _, ck := range w.Result().Cookies() {
 		if ck.Name == oidcNonceCookieName && ck.Value == "nonce456" {
 			hasNonce = true
 		}
+		if ck.Name == oidcPKCECookieName && ck.Value == "pkce-verifier" {
+			hasPKCE = true
+		}
 	}
 	if !hasNonce {
 		t.Errorf("expected %s cookie to be set with the nonce", oidcNonceCookieName)
+	}
+	if !hasPKCE {
+		t.Errorf("expected %s cookie to be set with the PKCE verifier", oidcPKCECookieName)
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 )
 
 const oidcNonceCookieName = "weknora_oidc_nonce"
+const oidcPKCECookieName = "weknora_oidc_pkce"
 const oidcNonceCookieMaxAge = 600
 
 // AuthHandler implements HTTP request handlers for user authentication
@@ -305,23 +306,36 @@ func (h *AuthHandler) GetOIDCAuthorizationURL(c *gin.Context) {
 		return
 	}
 
-	// Bind the state nonce to this browser so an attacker cannot replay
-	// their own authorization code into a victim's callback.
-	setOIDCNonceCookie(c, resp.Nonce)
+	// Bind the state nonce and PKCE verifier to this browser so an
+	// attacker cannot replay their own authorization code into a victim's
+	// callback, and so code_verifier never leaves the BFF.
+	setOIDCLoginCookies(c, resp)
 
 	c.JSON(http.StatusOK, resp)
 }
 
-// setOIDCNonceCookie binds the OIDC state nonce to this browser so an
-// attacker cannot replay their own authorization code into a victim's
-// callback. Shared by /auth/oidc/url (JSON) and /auth/oidc/start (302).
-func setOIDCNonceCookie(c *gin.Context, nonce string) {
-	if nonce == "" {
+func setOIDCLoginCookies(c *gin.Context, resp *types.OIDCAuthURLResponse) {
+	if resp == nil {
+		return
+	}
+	setOIDCCookie(c, oidcNonceCookieName, resp.Nonce)
+	setOIDCCookie(c, oidcPKCECookieName, resp.CodeVerifier)
+}
+
+func clearOIDCLoginCookies(c *gin.Context) {
+	c.SetCookie(oidcNonceCookieName, "", -1, "/", "", false, true)
+	c.SetCookie(oidcPKCECookieName, "", -1, "/", "", false, true)
+}
+
+// setOIDCCookie binds an OIDC login secret to this browser. Shared by
+// /auth/oidc/url (JSON) and /auth/oidc/start (302).
+func setOIDCCookie(c *gin.Context, name, value string) {
+	if value == "" {
 		return
 	}
 	secure := c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https")
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(oidcNonceCookieName, nonce, oidcNonceCookieMaxAge, "/", "", secure, true)
+	c.SetCookie(name, value, oidcNonceCookieMaxAge, "/", "", secure, true)
 }
 
 // oidcCallbackURL derives the absolute /auth/oidc/callback URL from the
@@ -352,7 +366,7 @@ func (h *AuthHandler) OIDCStart(c *gin.Context) {
 		c.Error(appErr)
 		return
 	}
-	setOIDCNonceCookie(c, resp.Nonce)
+	setOIDCLoginCookies(c, resp)
 	c.Redirect(http.StatusFound, resp.AuthorizationURL)
 }
 
@@ -411,8 +425,8 @@ func (h *AuthHandler) OIDCRedirectCallback(c *gin.Context) {
 		c.Redirect(http.StatusFound, frontendRedirectURI+"#oidc_error="+urlQueryEscape("invalid_state"))
 		return
 	}
-	// One-time use: clear the binding cookie as soon as it is checked.
-	c.SetCookie(oidcNonceCookieName, "", -1, "/", "", false, true)
+	// One-time use: clear the binding cookies as soon as they are checked.
+	clearOIDCLoginCookies(c)
 
 	code := strings.TrimSpace(c.Query("code"))
 	if code == "" {
@@ -420,7 +434,12 @@ func (h *AuthHandler) OIDCRedirectCallback(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.userService.LoginWithOIDC(ctx, code, strings.TrimSpace(decodedState.RedirectURI), h.resolveDefaultTenantMode(ctx))
+	resp, err := h.userService.LoginWithOIDC(ctx, types.OIDCLoginInput{
+		Code:         code,
+		RedirectURI:  strings.TrimSpace(decodedState.RedirectURI),
+		CodeVerifier: decodedState.CodeVerifier,
+		Nonce:        decodedState.Nonce,
+	}, h.resolveDefaultTenantMode(ctx))
 	if err != nil {
 		logger.Errorf(ctx, "Failed to complete OIDC login via redirect callback: %v", err)
 		c.Redirect(http.StatusFound, frontendRedirectURI+"#oidc_error="+urlQueryEscape("login_failed")+"&oidc_error_description="+urlQueryEscape(err.Error()))
@@ -441,6 +460,52 @@ func (h *AuthHandler) OIDCRedirectCallback(c *gin.Context) {
 	c.Redirect(http.StatusFound, frontendRedirectURI+"#oidc_result="+urlQueryEscape(payload))
 }
 
+// ExchangeSSOAccess godoc
+// @Summary      用企业 SSO 资源票换 WeKnora JWT
+// @Description  Hermes 持 aud=weknora 的 SSO Access Token 调用本接口，换回 WeKnora 自己签发的 JWT。不是网页 OIDC 回调，也不接受 aud=sso 登录票。
+// @Tags         认证
+// @Accept       json
+// @Produce      json
+// @Param        Authorization  header    string  true  "Bearer {aud=weknora SSO JWT}"
+// @Success      200            {object}  dto.AuthLoginResponse
+// @Failure      401            {object}  errors.AppError
+// @Failure      403            {object}  errors.AppError
+// @Router       /auth/sso/exchange [post]
+func (h *AuthHandler) ExchangeSSOAccess(c *gin.Context) {
+	ctx := c.Request.Context()
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		appErr := errors.NewUnauthorizedError("Authorization header is required")
+		c.Error(appErr)
+		return
+	}
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.TrimSpace(parts[1]) == "" {
+		appErr := errors.NewUnauthorizedError("Invalid Authorization header format")
+		c.Error(appErr)
+		return
+	}
+
+	resp, err := h.userService.ExchangeSSOAccess(ctx, strings.TrimSpace(parts[1]), h.resolveDefaultTenantMode(ctx))
+	if err != nil {
+		logger.Errorf(ctx, "SSO access exchange failed")
+		if strings.Contains(strings.ToLower(err.Error()), "disabled") || strings.Contains(err.Error(), "OIDC login is disabled") {
+			appErr := errors.NewForbiddenError("OIDC is not enabled")
+			c.Error(appErr)
+			return
+		}
+		appErr := errors.NewUnauthorizedError("SSO token exchange failed")
+		c.Error(appErr)
+		return
+	}
+	if !resp.Success {
+		c.JSON(http.StatusUnauthorized, dto.NewAuthLoginResponse(resp))
+		return
+	}
+	logger.Infof(ctx, "SSO access exchanged for WeKnora session, user_id: %s", resp.User.ID)
+	c.JSON(http.StatusOK, dto.NewAuthLoginResponse(resp))
+}
+
 func encodeOIDCCallbackPayload(resp *types.OIDCCallbackResponse) (string, error) {
 	payload, err := json.Marshal(dto.NewAuthOIDCCallbackResponse(resp))
 	if err != nil {
@@ -450,8 +515,9 @@ func encodeOIDCCallbackPayload(resp *types.OIDCCallbackResponse) (string, error)
 }
 
 type oidcStatePayload struct {
-	Nonce       string
-	RedirectURI string
+	Nonce        string
+	RedirectURI  string
+	CodeVerifier string
 }
 
 func decodeOIDCState(raw string, req *http.Request) (*oidcStatePayload, error) {
@@ -466,9 +532,14 @@ func decodeOIDCState(raw string, req *http.Request) (*oidcStatePayload, error) {
 	if cookieNonce.Value != payload.Nonce {
 		return nil, errors.NewValidationError("oidc nonce mismatch")
 	}
+	pkceCookie, err := req.Cookie(oidcPKCECookieName)
+	if err != nil || pkceCookie == nil || strings.TrimSpace(pkceCookie.Value) == "" {
+		return nil, errors.NewValidationError("oidc pkce cookie missing")
+	}
 	return &oidcStatePayload{
-		Nonce:       payload.Nonce,
-		RedirectURI: strings.TrimSpace(payload.RedirectURI),
+		Nonce:        payload.Nonce,
+		RedirectURI:  strings.TrimSpace(payload.RedirectURI),
+		CodeVerifier: strings.TrimSpace(pkceCookie.Value),
 	}, nil
 }
 

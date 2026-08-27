@@ -86,6 +86,22 @@ func (r *memoryWeComRepo) ListBindings(
 	return out, int64(len(out)), nil
 }
 
+func (r *memoryWeComRepo) ListTenantIDsByDepartmentID(_ context.Context, departmentID string) ([]uint64, error) {
+	seen := map[uint64]struct{}{}
+	var ids []uint64
+	for _, department := range r.departments {
+		if department == nil || department.DepartmentID != departmentID || department.TenantID == 0 {
+			continue
+		}
+		if _, ok := seen[department.TenantID]; ok {
+			continue
+		}
+		seen[department.TenantID] = struct{}{}
+		ids = append(ids, department.TenantID)
+	}
+	return ids, nil
+}
+
 func (r *memoryWeComRepo) ResolveSubject(_ context.Context, _ uint64, weknoraUserID string) (*types.WeComACLSubject, error) {
 	binding := r.bindings[weknoraUserID]
 	if binding == nil {
@@ -119,6 +135,30 @@ func (r *memoryUserRepo) GetUserByEmail(_ context.Context, email string) (*types
 		return nil, apprepo.ErrUserNotFound
 	}
 	return user, nil
+}
+
+func TestEnsureSSOEmployeeCreatesDepartmentsFromCurrentPerson(t *testing.T) {
+	repo := newMemoryWeComRepo()
+	svc := newWeComIdentityService(repo, &memoryUserRepo{
+		byID:    map[string]*types.User{},
+		byEmail: map[string]*types.User{},
+	}, nil, nil)
+
+	err := svc.EnsureSSOEmployee(context.Background(), 7, "wx-a", "Alice", []types.SSODepartment{
+		{WeComDepartmentID: 42, Name: "Sales", IsMain: true, DirectoryState: "present"},
+		{WeComDepartmentID: 7, Name: "Eng", IsMain: false, DirectoryState: "present"},
+	})
+	require.NoError(t, err)
+	sales := repo.departments["42"]
+	eng := repo.departments["7"]
+	require.NotNil(t, sales)
+	require.NotNil(t, eng)
+	require.Equal(t, "Sales", sales.Name)
+	require.Equal(t, "Eng", eng.Name)
+	ident := repo.identities["wx-a"]
+	require.NotNil(t, ident)
+	require.Equal(t, "Alice", ident.Name)
+	require.ElementsMatch(t, []string{"42", "7"}, repo.memberships["wx-a"])
 }
 
 func TestWeComIdentityServiceSyncAndImport(t *testing.T) {

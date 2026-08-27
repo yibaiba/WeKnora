@@ -248,6 +248,8 @@ window.location.href = authorizationURL
 - `redirect_uri`
 - `scope`
 - `state`
+- `nonce`（写入授权请求，并与 ID Token 核对）
+- `code_challenge` / `code_challenge_method=S256`（PKCE；`code_verifier` 只放 HttpOnly Cookie，不进浏览器 JSON）
 
 然后返回给前端：
 
@@ -314,12 +316,17 @@ GET /api/v1/auth/oidc/callback
 若 `state` 与 `code` 都合法，则调用：
 
 ```go
-LoginWithOIDC(ctx, code, decodedState.RedirectURI, h.resolveDefaultTenantMode(ctx))
+LoginWithOIDC(ctx, types.OIDCLoginInput{
+    Code:         code,
+    RedirectURI:  decodedState.RedirectURI,
+    CodeVerifier: decodedState.CodeVerifier, // HttpOnly Cookie
+    Nonce:        decodedState.Nonce,
+}, h.resolveDefaultTenantMode(ctx))
 ```
 
-注意这里传入的是 **state 中保存的 redirect_uri**，而不是重新拼接的地址，这样保证了 code 交换时使用的 `redirect_uri` 和授权时完全一致。
+注意这里传入的是 **state 中保存的 redirect_uri**，而不是重新拼接的地址，这样保证了 code 交换时使用的 `redirect_uri` 和授权时完全一致。`code_verifier` 来自 BFF HttpOnly Cookie，不会出现在前端 JSON。
 
-第四个参数是首次自动开户时的默认空间策略，由 `resolveDefaultTenantMode` 从 `auth.default_tenant_mode`（SystemSetting，DB > `WEKNORA_AUTH_DEFAULT_TENANT_MODE` > 配置文件）解析，与本地密码注册共用同一开关；OIDC 不再有独立的 `OIDC_AUTH_DEFAULT_TENANT_MODE`。
+`provisioning` 是首次自动开户时的默认空间策略，由 `resolveDefaultTenantMode` 从 `auth.default_tenant_mode`（SystemSetting，DB > `WEKNORA_AUTH_DEFAULT_TENANT_MODE` > 配置文件）解析，与本地密码注册共用同一开关；OIDC 不再有独立的 `OIDC_AUTH_DEFAULT_TENANT_MODE`。
 
 ---
 
@@ -373,19 +380,19 @@ POST application/x-www-form-urlencoded
 2. 再尝试 `name`
 3. 再尝试从邮箱前缀生成用户名
 
-如果最终没有拿到邮箱，则直接报错，因为本地用户是按 email 关联的。
+有 `sub` 时按 `sub` 建号/绑定（企业 SSO 邮箱常为空）。没有 `sub` 时仍要求邮箱（兼容 Dex）。
 
 ---
 
 ## 8. 本地用户关联与自动开通
 
-### 8.1 通过邮箱查找用户
+### 8.1 查找用户
 
-后端使用 OIDC 返回的邮箱执行：
+换码带 `code_verifier`。校验 ID Token `nonce`，拒绝 `acr=urn:enterprise-sso:acr:breakglass`。用登录票调 UserInfo。网页登录 **不做** Token Exchange，也 **不** 在回调里查员工目录。
 
-```go
-userRepo.GetUserByEmail(ctx, userInfo.Email)
-```
+本地用户：有 `sub` 先按 `sso_subject` 查找，没有再按邮箱绑定并写上 `sub`。没有邮箱时用占位邮箱开户。用户名不用 `sub`。
+
+业务凭证仍是 WeKnora JWT。空间权限看 `tenant_members`；企微网盘 Source ACL 看现有 `wecom_user_bindings`，不从 SSO Token 读 `groups`。
 
 ### 8.2 用户不存在时自动注册
 
@@ -537,7 +544,8 @@ OIDC 配置定义位于 `internal/config/config.go`，环境变量示例见 `.en
 | `OIDC_AUTH_AUTHORIZATION_ENDPOINT` | 授权端点，可选 |
 | `OIDC_AUTH_TOKEN_ENDPOINT` | Token 端点，可选 |
 | `OIDC_AUTH_USER_INFO_ENDPOINT` | UserInfo 端点，可选 |
-| `OIDC_AUTH_SCOPES` | Scope 列表，默认 `openid profile email` |
+| `OIDC_AUTH_SCOPES` | Scope 列表，默认 `openid profile email`；企业 SSO 建议 `openid profile` |
+| `OIDC_AUTH_JWKS_URI` | JWKS 地址，可选；Discovery 会补齐。Hermes 换票阶段再用来验资源票 |
 | `OIDC_USER_INFO_MAPPING_USER_NAME` | claims 中映射到用户名的字段名 |
 | `OIDC_USER_INFO_MAPPING_EMAIL` | claims 中映射到邮箱的字段名 |
 
@@ -550,6 +558,26 @@ OIDC 配置定义位于 `internal/config/config.go`，环境变量示例见 `.en
 3. 必须满足以下二选一：
    - 配置 `discovery_url`
    - 或同时配置 `authorization_endpoint + token_endpoint`
+
+### 12.3 企业 SSO 网页登录（weknora-web）
+
+对接企业 SSO 网页登录时：
+
+```bash
+OIDC_AUTH_ENABLE=true
+OIDC_AUTH_ISSUER_URL=http://localhost:8080
+OIDC_AUTH_DISCOVERY_URL=http://localhost:8080/.well-known/openid-configuration
+OIDC_AUTH_PROVIDER_DISPLAY_NAME=企业 SSO
+OIDC_AUTH_CLIENT_ID=weknora-web
+OIDC_AUTH_CLIENT_SECRET=...   # 管理台「应用密钥」为 weknora-web 新建，明文只出现一次
+OIDC_AUTH_SCOPES="openid profile"
+```
+
+在 SSO 管理台把回调登记为 `{WeKnora origin}/api/v1/auth/oidc/callback`（`localhost` 与 `127.0.0.1` 不是同一个 Cookie / 回调）。本机 SSO 若走 `127.0.0.1`，把它加入 `SSRF_WHITELIST`。
+
+权限仍以 WeKnora `tenant_members` 为准，不要在 SSO 再维护一份空间成员表。网页登录不会把 SSO JWT 当业务 Bearer。
+
+Hermes 查知识库：在 SSO 把登录票 exchange 成 `aud=weknora` 之后，打 `POST /api/v1/auth/sso/exchange`（`Authorization: Bearer {资源票}`）换成 WeKnora JWT，再 `GET /tenants` 检索。不要复用网页 `/auth/oidc/callback`，也不要用空间 `sk-`。
 
 ---
 
@@ -614,10 +642,10 @@ Provider 回调后端 `/auth/oidc/callback`，后端用 `code` 换 token、拉�
 ## 15. 注意事项
 
 1. **`redirect_uri` 必须严格匹配** Provider 客户端配置。
-2. **前端首页不是 OIDC Provider 回调地址**。
+2. **前端首页不是 OIDC Provider 回调地址**。企业 SSO 回调必须与管理台登记值完全一致：`{WeKnora origin}/api/v1/auth/oidc/callback`。
    - Provider 回调的是后端 `/api/v1/auth/oidc/callback`
 	   - 后端再固定重定向到前端首页 `/`
-3. **邮箱是本地账号关联主键**。
+3. **通用 OIDC 用邮箱关联本地账号；企业 SSO 用 `sub`（`emp_` UUID），不要把 SSO JWT 当 WeKnora 业务票。**
    - 若 Provider 没返回 email，将无法完成登录。
 4. **首次 OIDC 登录会自动创建用户和默认空间**。
 5. **真正用于访问 WeKnora API 的仍是本地 JWT**，不是 OIDC access token。

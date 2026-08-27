@@ -31,9 +31,10 @@ func (s *personalKeyServiceStub) CreateAPIKey(
 	_ context.Context, req interfaces.TenantAPIKeyCreateRequest,
 ) (*interfaces.TenantAPIKeyCreateResult, error) {
 	s.created = req
+	tenantID := req.TenantID
 	key := &types.TenantAPIKey{
 		ID:               7,
-		TenantID:         req.TenantID,
+		TenantID:         &tenantID,
 		OwnerUserID:      req.OwnerUserID,
 		Name:             req.Name,
 		KnowledgeBaseIDs: req.KnowledgeBaseIDs,

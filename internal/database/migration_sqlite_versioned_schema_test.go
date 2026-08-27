@@ -25,7 +25,7 @@ var versionedSQLiteTables = []string{
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
 	"tenants":            {"api_principal_config"},           // 000064
-	"users":              {"is_system_admin"},                // 000053
+	"users":              {"is_system_admin", "sso_subject"}, // 000053, 000092 / sqlite 000019
 	"knowledges":         {"pending_subtasks_count"},         // 000056
 	"messages":           {"attachments", "usage"},           // 000034, 000085
 	"tenant_invitations": {"token", "accepted_count"},        // 000054
@@ -33,7 +33,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"mcp_oauth_tokens":   {"principal_type", "principal_id"}, // 000064
 }
 
-const expectedSQLiteMigrationVersion = 18
+const expectedSQLiteMigrationVersion = 19
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

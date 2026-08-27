@@ -315,6 +315,20 @@ func (r *wecomIdentityRepository) ResolveSubject(
 	}, nil
 }
 
+func (r *wecomIdentityRepository) ListTenantIDsByDepartmentID(ctx context.Context, departmentID string) ([]uint64, error) {
+	departmentID = strings.TrimSpace(departmentID)
+	if departmentID == "" {
+		return nil, nil
+	}
+	var ids []uint64
+	err := r.db.WithContext(ctx).
+		Model(&types.WeComDepartment{}).
+		Where("department_id = ? AND deleted_at IS NULL AND status = ?", departmentID, types.WeComIdentityStatusActive).
+		Distinct("tenant_id").
+		Pluck("tenant_id", &ids).Error
+	return ids, err
+}
+
 func (r *wecomIdentityRepository) identityDepartments(ctx context.Context, tenantID uint64, userID string) ([]string, error) {
 	var rows []types.WeComIdentityDepartment
 	err := r.db.WithContext(ctx).

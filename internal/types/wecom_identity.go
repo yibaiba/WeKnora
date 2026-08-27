@@ -18,6 +18,7 @@ const (
 	WeComBindingStatusDeleted = "deleted"
 
 	WeComBindingSourceAdmin = "admin"
+	WeComBindingSourceSSO   = "sso"
 )
 
 type WeComIdentity struct {

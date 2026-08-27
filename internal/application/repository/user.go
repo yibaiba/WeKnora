@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -78,6 +79,22 @@ func (r *userRepository) GetUsersByIDs(ctx context.Context, ids []string) (map[s
 func (r *userRepository) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
 	var user types.User
 	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetUserBySSOSubject gets a user by enterprise SSO subject.
+func (r *userRepository) GetUserBySSOSubject(ctx context.Context, subject string) (*types.User, error) {
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return nil, ErrUserNotFound
+	}
+	var user types.User
+	if err := r.db.WithContext(ctx).Where("sso_subject = ? AND sso_subject <> ''", subject).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrUserNotFound
 		}

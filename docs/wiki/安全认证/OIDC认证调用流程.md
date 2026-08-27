@@ -19,8 +19,8 @@ source: OIDC认证调用流程.md
 
 1. **前端只负责发起跳转**，不直接和 OIDC Provider 交换 token
 2. **后端负责用授权码 `code` 向 OIDC Provider 换取 token**
-3. 后端拿到 OIDC 用户信息后，会查找本地用户；若不存在则自动创建本地账号和默认空间
-4. 最终签发 WeKnora 自己的本地 JWT，OIDC token 只用于后端换取用户身份
+3. 后端拿到 OIDC 用户信息后，会查找本地用户；若不存在则自动创建本地账号和默认空间。企业 SSO（`OIDC_AUTH_RESOURCE_AUDIENCE=weknora`）按 SSO `sub` 建号，并查询员工目录
+4. 最终签发 WeKnora 自己的本地 JWT，OIDC token 只用于后端换取用户身份，不作为业务 Bearer
 
 > 自动创建用户与空间的逻辑与 [共享空间说明](../安全认证/共享空间说明.md) 的多空间模型相关
 
@@ -59,8 +59,11 @@ Provider 回调后端 `/auth/oidc/callback`，后端用 `code` 换 token、拉�
 | `OIDC_AUTH_CLIENT_SECRET` | OIDC Client Secret |
 | `OIDC_AUTH_DISCOVERY_URL` | OIDC Discovery 地址 |
 | `OIDC_AUTH_SCOPES` | Scope 列表，默认 `openid profile email` |
+| `OIDC_AUTH_RESOURCE_AUDIENCE` | 企业 SSO 填 `weknora`；留空为通用 Dex/OIDC |
 
 启用时的最小要求：`client_id` + `client_secret` + (`discovery_url` 或 `authorization_endpoint + token_endpoint`)
+
+企业 SSO 网页登录：`client_id=weknora-web`，授权码 + PKCE S256 + 服务端换码，按 `sub` 建号并签发 WeKnora JWT。回调登记 `{origin}/api/v1/auth/oidc/callback`。权限看 `tenant_members` / Source ACL，不要在 Token 里找 `groups`。Hermes 用 `POST /auth/sso/exchange` 把 `aud=weknora` 短票换成 WeKnora JWT。
 
 ## 本地联调示例（Dex）
 
@@ -71,7 +74,7 @@ Provider 回调后端 `/auth/oidc/callback`，后端用 `code` 换 token、拉�
 ## 注意事项
 
 1. **`redirect_uri` 必须严格匹配** Provider 客户端配置
-2. **邮箱是本地账号关联主键** — 若 Provider 没返回 email，将无法完成登录
+2. **有 `sub` 按 `sub` 建号**；没有 `sub` 才用邮箱（Dex）。不要把 SSO JWT 当 WeKnora 业务票。权限看 `tenant_members` / Source ACL
 3. **首次 OIDC 登录会自动创建用户和默认空间**
 4. **真正用于访问 API 的是本地 JWT**，不是 OIDC access token
 

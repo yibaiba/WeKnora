@@ -17,7 +17,11 @@ type UserService interface {
 	// LoginWithOIDC exchanges the callback code, auto-provisions users if needed, and completes login.
 	// provisioning is the default tenant mode for a newly auto-created user
 	// (resolved by the caller from auth.default_tenant_mode).
-	LoginWithOIDC(ctx context.Context, code, redirectURI string, provisioning types.TenantProvisioningMode) (*types.OIDCCallbackResponse, error)
+	LoginWithOIDC(ctx context.Context, in types.OIDCLoginInput, provisioning types.TenantProvisioningMode) (*types.OIDCCallbackResponse, error)
+	// ExchangeSSOAccess verifies an enterprise-sso resource access token
+	// (aud=weknora) and issues a WeKnora JWT pair. Used by Hermes; not the
+	// webpage OIDC callback.
+	ExchangeSSOAccess(ctx context.Context, resourceAccessToken string, provisioning types.TenantProvisioningMode) (*types.LoginResponse, error)
 	// GetUserByID gets a user by ID
 	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	// GetUsersByIDs batch-fetches users by id, returning a map keyed by
@@ -106,6 +110,8 @@ type UserRepository interface {
 	GetUsersByIDs(ctx context.Context, ids []string) (map[string]*types.User, error)
 	// GetUserByEmail gets a user by email
 	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
+	// GetUserBySSOSubject gets a user by enterprise SSO subject (emp_ UUID).
+	GetUserBySSOSubject(ctx context.Context, subject string) (*types.User, error)
 	// GetUserByUsername gets a user by username
 	GetUserByUsername(ctx context.Context, username string) (*types.User, error)
 	// GetUserByTenantID gets the first user (owner) of a tenant

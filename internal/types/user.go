@@ -43,6 +43,29 @@ type UserPreferences struct {
 	// UI hides self-service password rotation until the user sets a known
 	// password via ChangePassword (which clears this flag).
 	OidcOnlyLogin *bool `json:"oidc_only_login,omitempty"`
+
+	// SSODirectory is the last snapshot from enterprise-sso
+	// POST /QueryEmployeeDirectory (position / departments). Token claims
+	// never carry these fields. Written only by the OIDC BFF.
+	SSODirectory *SSODirectorySnapshot `json:"sso_directory,omitempty"`
+}
+
+// SSODirectorySnapshot is the current employee's post and departments from
+// enterprise-sso. It is not an ACL; WeKnora tenant_members remain the
+// permission source.
+type SSODirectorySnapshot struct {
+	Sub            string          `json:"sub,omitempty"`
+	Position       *string         `json:"position"`
+	DirectoryState string          `json:"directory_state,omitempty"`
+	Departments    []SSODepartment `json:"departments,omitempty"`
+}
+
+// SSODepartment is one department row from QueryEmployeeDirectory.
+type SSODepartment struct {
+	WeComDepartmentID int64  `json:"wecom_department_id"`
+	Name              string `json:"name"`
+	IsMain            bool   `json:"is_main"`
+	DirectoryState    string `json:"directory_state,omitempty"`
 }
 
 // Value implements driver.Valuer so GORM persists UserPreferences as
@@ -84,6 +107,11 @@ type User struct {
 	Username string `json:"username"   gorm:"type:varchar(100);uniqueIndex;not null"`
 	// Email address of the user
 	Email string `json:"email"      gorm:"type:varchar(255);uniqueIndex;not null"`
+	// SSOSubject is the enterprise SSO `sub` (emp_ + UUID). Empty for
+	// password-only accounts and for legacy Dex users that have not been
+	// bound yet. This is the local user key for enterprise SSO; it is not
+	// a login name.
+	SSOSubject string `json:"sso_subject,omitempty" gorm:"column:sso_subject;type:varchar(64)"`
 	// Hashed password of the user
 	PasswordHash string `json:"-"          gorm:"type:varchar(255);not null"`
 	// Avatar URL of the user
@@ -148,6 +176,19 @@ type OIDCAuthURLResponse struct {
 	// Nonce is bound to an HttpOnly cookie on /auth/oidc/url and verified
 	// on callback; omitted from JSON so clients cannot replay it alone.
 	Nonce string `json:"-"`
+	// CodeVerifier is the PKCE S256 secret. Bound to an HttpOnly cookie
+	// on /auth/oidc/url and consumed on callback; never returned to the
+	// browser.
+	CodeVerifier string `json:"-"`
+}
+
+// OIDCLoginInput is the BFF-side payload for completing an authorization-code
+// login. CodeVerifier stays on the server (cookie / session), never in SPA JSON.
+type OIDCLoginInput struct {
+	Code         string
+	RedirectURI  string
+	CodeVerifier string
+	Nonce        string
 }
 
 type OIDCConfigResponse struct {
@@ -175,10 +216,12 @@ type OIDCCallbackResponse struct {
 }
 
 type OIDCUserInfo struct {
-	Subject  string                 `json:"subject,omitempty"`
-	Username string                 `json:"username,omitempty"`
-	Email    string                 `json:"email,omitempty"`
-	Claims   map[string]interface{} `json:"claims,omitempty"`
+	Subject     string                 `json:"subject,omitempty"`
+	Username    string                 `json:"username,omitempty"`
+	Email       string                 `json:"email,omitempty"`
+	Avatar      string                 `json:"avatar,omitempty"`
+	WeComUserID string                 `json:"wecom_userid,omitempty"`
+	Claims      map[string]interface{} `json:"claims,omitempty"`
 }
 
 // RegisterRequest represents a registration request

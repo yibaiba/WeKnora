@@ -213,6 +213,92 @@ func (s *wecomIdentityService) ResolveSubject(
 	return s.repo.ResolveSubject(ctx, tenantID, strings.TrimSpace(weknoraUserID))
 }
 
+func (s *wecomIdentityService) ListTenantIDsByDepartmentIDs(ctx context.Context, departmentIDs []string) ([]uint64, error) {
+	seen := map[uint64]struct{}{}
+	var out []uint64
+	for _, id := range departmentIDs {
+		ids, err := s.repo.ListTenantIDsByDepartmentID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, tenantID := range ids {
+			if tenantID == 0 {
+				continue
+			}
+			if _, ok := seen[tenantID]; ok {
+				continue
+			}
+			seen[tenantID] = struct{}{}
+			out = append(out, tenantID)
+		}
+	}
+	return out, nil
+}
+
+func (s *wecomIdentityService) EnsureSSOEmployee(
+	ctx context.Context,
+	tenantID uint64,
+	wecomUserID, name string,
+	departments []types.SSODepartment,
+) error {
+	if tenantID == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	// Keep every department the person belongs to. is_main only sorts
+	// QueryEmployeeDirectory; it is not a reason to drop the rest.
+	deptRows := make([]*types.WeComDepartment, 0, len(departments))
+	deptIDs := make([]string, 0, len(departments))
+	seenDept := map[string]struct{}{}
+	for _, department := range departments {
+		if department.WeComDepartmentID == 0 {
+			continue
+		}
+		id := strconv.FormatInt(department.WeComDepartmentID, 10)
+		if _, dup := seenDept[id]; dup {
+			continue
+		}
+		seenDept[id] = struct{}{}
+		status := types.WeComIdentityStatusActive
+		if department.DirectoryState != "" && department.DirectoryState != "present" {
+			status = types.WeComIdentityStatusUnavailable
+		}
+		deptRows = append(deptRows, &types.WeComDepartment{
+			TenantID:     tenantID,
+			Provider:     types.WeComProvider,
+			DepartmentID: id,
+			Name:         strings.TrimSpace(department.Name),
+			Status:       status,
+			SyncedAt:     now,
+		})
+		deptIDs = append(deptIDs, id)
+	}
+	if len(deptRows) > 0 {
+		if err := s.repo.UpsertDepartments(ctx, deptRows); err != nil {
+			return err
+		}
+	}
+	wecomUserID = strings.TrimSpace(wecomUserID)
+	if wecomUserID == "" {
+		return nil
+	}
+	identity := &types.WeComIdentity{
+		TenantID: tenantID,
+		Provider: types.WeComProvider,
+		UserID:   wecomUserID,
+		Name:     strings.TrimSpace(name),
+		Status:   types.WeComIdentityStatusActive,
+		SyncedAt: now,
+	}
+	if err := s.repo.UpsertIdentities(ctx, []*types.WeComIdentity{identity}); err != nil {
+		return err
+	}
+	if err := s.repo.ReplaceIdentityDepartments(ctx, tenantID, wecomUserID, deptIDs, now); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *wecomIdentityService) resolveImportUserID(
 	ctx context.Context,
 	row interfaces.WeComBindingImportRow,
