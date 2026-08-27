@@ -50,7 +50,23 @@ func (s *sideEffectMembers) AddMember(_ context.Context, _ string, tenantID uint
 		return nil, ErrInvalidTenantRole
 	}
 	s.added = append(s.added, tenantID)
-	return &types.TenantMember{TenantID: tenantID, Role: role}, nil
+	return &types.TenantMember{
+		TenantID: tenantID,
+		Role:     role,
+		Status:   types.TenantMemberStatusActive,
+	}, nil
+}
+
+func (s *sideEffectMembers) ListByUser(_ context.Context, _ string) ([]*types.TenantMember, error) {
+	rows := make([]*types.TenantMember, 0, len(s.added))
+	for _, id := range s.added {
+		rows = append(rows, &types.TenantMember{
+			TenantID: id,
+			Role:     types.TenantRoleViewer,
+			Status:   types.TenantMemberStatusActive,
+		})
+	}
+	return rows, nil
 }
 
 type sideEffectTenants struct {
@@ -58,7 +74,15 @@ type sideEffectTenants struct {
 }
 
 func (s *sideEffectTenants) GetTenantByID(_ context.Context, id uint64) (*types.Tenant, error) {
-	return &types.Tenant{ID: id, Status: "active"}, nil
+	return &types.Tenant{ID: id, Name: "Workspace", Status: "active"}, nil
+}
+
+func (s *sideEffectTenants) GetTenantsByIDs(_ context.Context, ids []uint64) (map[uint64]*types.Tenant, error) {
+	out := make(map[uint64]*types.Tenant, len(ids))
+	for _, id := range ids {
+		out[id] = &types.Tenant{ID: id, Name: "Workspace", Status: "active"}
+	}
+	return out, nil
 }
 
 func TestApplySSOAccessSideEffectsBindsAndJoins(t *testing.T) {
@@ -78,13 +102,14 @@ func TestApplySSOAccessSideEffectsBindsAndJoins(t *testing.T) {
 
 	wecom := &sideEffectWeCom{tenants: []uint64{9}}
 	members := &sideEffectMembers{}
+	tenants := &sideEffectTenants{}
 	repo := &oidcMemoryUserRepo{}
 	user := &types.User{ID: "u1", TenantID: 3, Email: "a@example.com"}
 	svc := &userService{
 		userRepo:      repo,
-		wecomIdentity: wecom,
 		memberService: members,
-		tenantService: &sideEffectTenants{},
+		tenantService: tenants,
+		ssoEffects:    newSSOAccessEffects(repo, tenants, members, wecom),
 		config:        &config.Config{},
 	}
 	svc.applySSOAccessSideEffects(context.Background(), &config.OIDCAuthConfig{
@@ -94,8 +119,8 @@ func TestApplySSOAccessSideEffectsBindsAndJoins(t *testing.T) {
 	if len(wecom.ensuredFor) == 0 || wecom.ensuredFor[0] != 3 {
 		t.Fatalf("expected local departments created in home tenant 3, got %v", wecom.ensuredFor)
 	}
-	if len(wecom.bound) == 0 {
-		t.Fatal("expected WeCom bind for home tenant or joined tenant")
+	if len(wecom.bound) != 2 {
+		t.Fatalf("expected WeCom bind once for home and once for joined tenant, got %d: %+v", len(wecom.bound), wecom.bound)
 	}
 	if wecom.bound[0].WeComUserID != "wx-sales" || wecom.bound[0].Source != types.WeComBindingSourceSSO {
 		t.Fatalf("binding = %+v", wecom.bound[0])

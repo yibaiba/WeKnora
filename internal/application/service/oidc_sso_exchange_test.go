@@ -17,10 +17,21 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+func startJWKSServer(t *testing.T) (*rsa.PrivateKey, *httptest.Server) {
+	t.Helper()
+	withOIDCSSRFWhitelist(t, "127.0.0.1")
+	key, jwks := mustRSAJWKS(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwks)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return key, server
+}
+
 func TestExchangeSSOAccessIssuesWeKnoraJWT(t *testing.T) {
 	withOIDCSSRFWhitelist(t, "127.0.0.1")
-	resetOIDCJWKSCacheForTest()
-	t.Cleanup(resetOIDCJWKSCacheForTest)
 
 	key, jwks := mustRSAJWKS(t)
 	var sawUserinfo bool
@@ -95,8 +106,6 @@ func TestExchangeSSOAccessIssuesWeKnoraJWT(t *testing.T) {
 
 func TestExchangeSSOAccessRejectsInactiveIntrospection(t *testing.T) {
 	withOIDCSSRFWhitelist(t, "127.0.0.1")
-	resetOIDCJWKSCacheForTest()
-	t.Cleanup(resetOIDCJWKSCacheForTest)
 
 	key, jwks := mustRSAJWKS(t)
 	mux := http.NewServeMux()
@@ -137,8 +146,6 @@ func TestExchangeSSOAccessRejectsInactiveIntrospection(t *testing.T) {
 
 func TestVerifySSOResourceTokenRejectsLoginAudience(t *testing.T) {
 	withOIDCSSRFWhitelist(t, "127.0.0.1")
-	resetOIDCJWKSCacheForTest()
-	t.Cleanup(resetOIDCJWKSCacheForTest)
 
 	key, jwks := mustRSAJWKS(t)
 	mux := http.NewServeMux()
@@ -167,8 +174,6 @@ func TestVerifySSOResourceTokenRejectsLoginAudience(t *testing.T) {
 
 func TestVerifySSOResourceTokenRejectsNoneAlg(t *testing.T) {
 	withOIDCSSRFWhitelist(t, "127.0.0.1")
-	resetOIDCJWKSCacheForTest()
-	t.Cleanup(resetOIDCJWKSCacheForTest)
 
 	_, jwks := mustRSAJWKS(t)
 	mux := http.NewServeMux()
@@ -195,8 +200,6 @@ func TestVerifySSOResourceTokenRejectsNoneAlg(t *testing.T) {
 
 func TestVerifySSOResourceTokenRejectsExpired(t *testing.T) {
 	withOIDCSSRFWhitelist(t, "127.0.0.1")
-	resetOIDCJWKSCacheForTest()
-	t.Cleanup(resetOIDCJWKSCacheForTest)
 
 	key, jwks := mustRSAJWKS(t)
 	mux := http.NewServeMux()
@@ -223,14 +226,132 @@ func TestVerifySSOResourceTokenRejectsExpired(t *testing.T) {
 }
 
 func TestVerifySSOResourceTokenRejectsArrayAudience(t *testing.T) {
-	cfg := &config.OIDCAuthConfig{JWKSURI: "http://127.0.0.1/jwks"}
+	cfg := &config.OIDCAuthConfig{
+		IssuerURL: "http://127.0.0.1",
+		JWKSURI:   "http://127.0.0.1/jwks",
+	}
 	raw := unsignedJWT(map[string]any{
+		"iss": "http://127.0.0.1",
 		"sub": "emp_1",
 		"aud": []string{"weknora", "owc"},
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	if _, err := verifySSOResourceToken(context.Background(), cfg, raw); err == nil || !strings.Contains(err.Error(), "single string") {
 		t.Fatalf("error = %v, want single-string audience rejection", err)
+	}
+}
+
+func TestVerifySSOResourceTokenRejectsEmptyKid(t *testing.T) {
+	key, server := startJWKSServer(t)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": server.URL,
+		"sub": "emp_1",
+		"aud": "weknora",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	raw, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	cfg := &config.OIDCAuthConfig{
+		IssuerURL: server.URL,
+		JWKSURI:   server.URL + "/jwks",
+	}
+	if _, err := verifySSOResourceToken(context.Background(), cfg, raw); err == nil || !strings.Contains(err.Error(), "kid") {
+		t.Fatalf("error = %v, want kid required", err)
+	}
+}
+
+func TestVerifySSOResourceTokenRejectsEmptyIssuer(t *testing.T) {
+	key, server := startJWKSServer(t)
+	raw := mustSignRS256(t, key, jwt.MapClaims{
+		"sub": "emp_1",
+		"aud": "weknora",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	cfg := &config.OIDCAuthConfig{
+		IssuerURL: server.URL,
+		JWKSURI:   server.URL + "/jwks",
+	}
+	if _, err := verifySSOResourceToken(context.Background(), cfg, raw); err == nil || !strings.Contains(err.Error(), "issuer") {
+		t.Fatalf("error = %v, want issuer mismatch", err)
+	}
+}
+
+func TestExchangeSSOAccessMembershipsIncludeAutoJoinedTenant(t *testing.T) {
+	withOIDCSSRFWhitelist(t, "127.0.0.1")
+	key, jwks := mustRSAJWKS(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwks)
+	})
+	mux.HandleFunc("/oauth/introspect", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "aud": "weknora"})
+	})
+	mux.HandleFunc("/QueryEmployeeDirectory", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(types.SSODirectorySnapshot{
+			Sub: "emp_join",
+			Departments: []types.SSODepartment{
+				{WeComDepartmentID: 42, Name: "Sales", IsMain: true},
+			},
+		})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	raw := mustSignRS256(t, key, jwt.MapClaims{
+		"iss":          server.URL,
+		"sub":          "emp_join",
+		"aud":          "weknora",
+		"name":         "Join User",
+		"wecom_userid": "wx-join",
+		"exp":          time.Now().Add(time.Hour).Unix(),
+		"iat":          time.Now().Unix(),
+	})
+
+	wecom := &sideEffectWeCom{tenants: []uint64{9}}
+	members := &sideEffectMembers{}
+	tenants := &sideEffectTenants{}
+	repo := &oidcMemoryUserRepo{}
+	svc := &userService{
+		userRepo:      repo,
+		tokenRepo:     &oidcMemoryTokenRepo{},
+		memberService: members,
+		tenantService: tenants,
+		ssoEffects:    newSSOAccessEffects(repo, tenants, members, wecom),
+		config: &config.Config{OIDCAuth: &config.OIDCAuthConfig{
+			Enable:                true,
+			IssuerURL:             server.URL,
+			ClientID:              "weknora-web",
+			ClientSecret:          "secret",
+			AuthorizationEndpoint: server.URL + "/authorize",
+			TokenEndpoint:         server.URL + "/token",
+			JWKSURI:               server.URL + "/jwks",
+			UserInfoMapping:       &config.OIDCUserInfoMapping{Username: "name", Email: "email"},
+		}},
+	}
+
+	resp, err := svc.ExchangeSSOAccess(context.Background(), raw, types.TenantProvisioningTenantless)
+	if err != nil {
+		t.Fatalf("ExchangeSSOAccess: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	foundJoined := false
+	for _, m := range resp.Memberships {
+		if m.TenantID == 9 {
+			foundJoined = true
+			break
+		}
+	}
+	if !foundJoined {
+		t.Fatalf("memberships = %+v, want tenant 9 from auto-join", resp.Memberships)
+	}
+	if len(wecom.bound) != 1 {
+		t.Fatalf("expected one WeCom bind for joined tenant, got %d", len(wecom.bound))
 	}
 }
 

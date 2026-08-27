@@ -3,10 +3,8 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
-	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -24,7 +22,7 @@ func (s *userService) ExchangeSSOAccess(
 		return nil, errors.New("OIDC jwks_uri is required")
 	}
 
-	claims, err := verifySSOResourceToken(ctx, cfg, rawToken)
+	claims, err := s.tokenVerifier().verifyResourceToken(ctx, cfg, rawToken)
 	if err != nil {
 		return nil, err
 	}
@@ -37,41 +35,10 @@ func (s *userService) ExchangeSSOAccess(
 	if err != nil {
 		return nil, err
 	}
-	if !user.IsActive {
-		return &types.LoginResponse{Success: false, Message: "Account is disabled"}, nil
-	}
-
-	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
-	}
-
-	var tenant *types.Tenant
-	if resolvedTenantID > 0 && s.tenantService != nil {
-		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
-			tenant = t
-		} else {
-			logger.Warnf(ctx, "SSO exchange: failed to load tenant %d for user %s: %v",
-				resolvedTenantID, user.ID, terr)
-		}
-	}
-	memberships := s.buildMembershipsForUser(ctx, user, tenant)
 
 	s.applySSOAccessSideEffects(ctx, cfg, user, rawToken, info.WeComUserID)
-	if resolvedTenantID > 0 {
-		s.bindWeComFromSSO(ctx, user, info.WeComUserID, resolvedTenantID)
-	}
 
-	return &types.LoginResponse{
-		Success:      true,
-		Message:      "登录成功",
-		User:         user,
-		ActiveTenant: tenant,
-		Memberships:  memberships,
-		Token:        accessToken,
-		RefreshToken: refreshToken,
-	}, nil
+	return s.issueWeKnoraSession(ctx, user, "登录成功")
 }
 
 func ssoResourceUserInfo(claims jwt.MapClaims) *types.OIDCUserInfo {

@@ -60,6 +60,10 @@ var (
 	// one so callers can reject no-op rotations that would still revoke
 	// every session.
 	ErrSamePassword = errors.New("new password must differ from current password")
+
+	// ErrOIDCDisabled is returned when OIDC/SSO is not enabled. Handlers
+	// map it to 403 instead of matching error strings.
+	ErrOIDCDisabled = errors.New("OIDC login is disabled")
 )
 
 // Machine-readable change-password failure reasons for HTTP details fields.
@@ -117,7 +121,8 @@ type userService struct {
 	tokenRepo     interfaces.AuthTokenRepository
 	tenantService interfaces.TenantService
 	memberService interfaces.TenantMemberService
-	wecomIdentity interfaces.WeComIdentityService
+	ssoEffects    *ssoAccessEffects
+	oidcVerifier  *oidcJWTVerifier
 	config        *config.Config
 }
 
@@ -135,7 +140,8 @@ func NewUserService(
 		tokenRepo:     tokenRepo,
 		tenantService: tenantService,
 		memberService: memberService,
-		wecomIdentity: wecomIdentity,
+		ssoEffects:    newSSOAccessEffects(userRepo, tenantService, memberService, wecomIdentity),
+		oidcVerifier:  newOIDCJWTVerifier(),
 		config:        configInfo,
 	}
 }
@@ -276,13 +282,7 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 	}
 	logger.Info(ctx, "Password verification successful")
 
-	// Generate tokens. Resolve the target tenant once so the JWT claim
-	// and the tenant we return below agree — otherwise an honoured
-	// "last active tenant" preference would mint a token for tenant N
-	// but tell the client they're in their home tenant.
-	logger.Info(ctx, "Generating tokens")
-	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	session, err := s.issueWeKnoraSession(ctx, user, "Login successful")
 	if err != nil {
 		logger.Errorf(ctx, "Failed to generate tokens: %v", err)
 		return &types.LoginResponse{
@@ -290,32 +290,8 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 			Message: "Login failed",
 		}, nil
 	}
-	logger.Info(ctx, "Tokens generated successfully")
-
-	// Get tenant information. A zero resolved ID is a valid tenantless
-	// identity, not a failed tenant lookup.
-	var tenant *types.Tenant
-	if resolvedTenantID > 0 {
-		tenant, err = s.tenantService.GetTenantByID(ctx, resolvedTenantID)
-		if err != nil {
-			logger.Warn(ctx, "Failed to get tenant info")
-		} else {
-			logger.Info(ctx, "Tenant information retrieved successfully")
-		}
-	}
-
-	memberships := s.buildMembershipsForUser(ctx, user, tenant)
-
 	logger.Info(ctx, "User logged in successfully")
-	return &types.LoginResponse{
-		Success:      true,
-		Message:      "Login successful",
-		User:         user,
-		ActiveTenant: tenant,
-		Memberships:  memberships,
-		Token:        accessToken,
-		RefreshToken: refreshToken,
-	}, nil
+	return session, nil
 }
 
 // buildMembershipsForUser returns the user's tenant memberships projected
@@ -529,7 +505,7 @@ func (s *userService) LoginWithOIDC(
 		return nil, err
 	}
 
-	if err := verifyOIDCIDToken(ctx, cfg, tokenResp.IDToken, strings.TrimSpace(in.Nonce)); err != nil {
+	if err := s.tokenVerifier().verifyIDToken(ctx, cfg, tokenResp.IDToken, strings.TrimSpace(in.Nonce)); err != nil {
 		return nil, err
 	}
 
@@ -543,44 +519,23 @@ func (s *userService) LoginWithOIDC(
 		return nil, err
 	}
 
-	if !user.IsActive {
-		return &types.OIDCCallbackResponse{Success: false, Message: "Account is disabled"}, nil
-	}
-
-	// Resolve target tenant once so the JWT claim and the tenant we
-	// return below stay in sync; see Login for the rationale.
-	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
-	}
-
-	// 拉取 tenant + memberships，让 OIDC 登录的返回结构与本地登录一致，
-	// 前端无须为 OIDC 单独走一次 /auth/me 才能拿到角色。
-	var tenant *types.Tenant
-	if resolvedTenantID > 0 {
-		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
-			tenant = t
-		} else {
-			logger.Warnf(ctx, "OIDC login: failed to load tenant %d for user %s: %v",
-				resolvedTenantID, user.ID, terr)
-		}
-	}
-	memberships := s.buildMembershipsForUser(ctx, user, tenant)
-
 	s.applySSOAccessSideEffects(ctx, cfg, user, tokenResp.AccessToken, userInfo.WeComUserID)
-	if resolvedTenantID > 0 {
-		s.bindWeComFromSSO(ctx, user, userInfo.WeComUserID, resolvedTenantID)
-	}
 
+	session, err := s.issueWeKnoraSession(ctx, user, "登录成功")
+	if err != nil {
+		return nil, err
+	}
+	if !session.Success {
+		return &types.OIDCCallbackResponse{Success: false, Message: session.Message}, nil
+	}
 	return &types.OIDCCallbackResponse{
 		Success:      true,
-		Message:      "登录成功",
-		User:         user,
-		Tenant:       tenant,
-		Memberships:  memberships,
-		Token:        accessToken,
-		RefreshToken: refreshToken,
+		Message:      session.Message,
+		User:         session.User,
+		Tenant:       session.ActiveTenant,
+		Memberships:  session.Memberships,
+		Token:        session.Token,
+		RefreshToken: session.RefreshToken,
 		IsNewUser:    isNewUser,
 	}, nil
 }
@@ -1051,6 +1006,71 @@ func (s *userService) clearLastActiveTenantPreference(ctx context.Context, user 
 	}
 }
 
+// issueWeKnoraSession mints the WeKnora JWT pair and login payload after
+// identity is established (password, OIDC, or SSO exchange). Callers that
+// join workspaces as a side effect must run those first so memberships
+// in the response include the newly added tenants.
+func (s *userService) issueWeKnoraSession(
+	ctx context.Context,
+	user *types.User,
+	successMessage string,
+) (*types.LoginResponse, error) {
+	if user == nil {
+		return nil, errors.New("user is required")
+	}
+	if !user.IsActive {
+		return &types.LoginResponse{Success: false, Message: "Account is disabled"}, nil
+	}
+	if successMessage == "" {
+		successMessage = "Login successful"
+	}
+
+	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
+	}
+
+	var tenant *types.Tenant
+	if resolvedTenantID > 0 && s.tenantService != nil {
+		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
+			tenant = t
+		} else {
+			logger.Warnf(ctx, "failed to load tenant %d for user %s: %v", resolvedTenantID, user.ID, terr)
+		}
+	}
+
+	return &types.LoginResponse{
+		Success:      true,
+		Message:      successMessage,
+		User:         user,
+		ActiveTenant: tenant,
+		Memberships:  s.buildMembershipsForUser(ctx, user, tenant),
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+
+func (s *userService) tokenVerifier() *oidcJWTVerifier {
+	if s != nil && s.oidcVerifier != nil {
+		return s.oidcVerifier
+	}
+	return newOIDCJWTVerifier()
+}
+
+func (s *userService) applySSOAccessSideEffects(
+	ctx context.Context,
+	cfg *config.OIDCAuthConfig,
+	user *types.User,
+	directoryAccess string,
+	wecomUserID string,
+) {
+	if s == nil || s.ssoEffects == nil {
+		return
+	}
+	s.ssoEffects.apply(ctx, cfg, user, directoryAccess, wecomUserID)
+}
+
 // generateTokensForTenant is the shared implementation behind
 // GenerateTokens and SwitchTenant. It encodes activeTenantID into the
 // access token's tenant_id claim so the auth middleware scopes future
@@ -1452,7 +1472,7 @@ func validateOIDCEndpoints(cfg *config.OIDCAuthConfig) error {
 
 func (s *userService) getOIDCConfig(ctx context.Context) (*config.OIDCAuthConfig, error) {
 	if s.config == nil || s.config.OIDCAuth == nil || !s.config.OIDCAuth.Enable {
-		return nil, errors.New("OIDC login is disabled")
+		return nil, ErrOIDCDisabled
 	}
 	cfg := *s.config.OIDCAuth
 	if cfg.UserInfoMapping == nil {

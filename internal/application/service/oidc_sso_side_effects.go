@@ -83,7 +83,31 @@ func (s *userService) introspectSSOResourceToken(ctx context.Context, cfg *confi
 	return nil
 }
 
-func (s *userService) queryEmployeeDirectory(ctx context.Context, cfg *config.OIDCAuthConfig, accessToken string) (*types.SSODirectorySnapshot, error) {
+// ssoAccessEffects applies directory / WeCom / auto-join after SSO identity
+// is established. UserService only holds this helper; password login does
+// not call it.
+type ssoAccessEffects struct {
+	userRepo      interfaces.UserRepository
+	tenantService interfaces.TenantService
+	memberService interfaces.TenantMemberService
+	wecomIdentity interfaces.WeComIdentityService
+}
+
+func newSSOAccessEffects(
+	userRepo interfaces.UserRepository,
+	tenantService interfaces.TenantService,
+	memberService interfaces.TenantMemberService,
+	wecomIdentity interfaces.WeComIdentityService,
+) *ssoAccessEffects {
+	return &ssoAccessEffects{
+		userRepo:      userRepo,
+		tenantService: tenantService,
+		memberService: memberService,
+		wecomIdentity: wecomIdentity,
+	}
+}
+
+func (e *ssoAccessEffects) queryEmployeeDirectory(ctx context.Context, cfg *config.OIDCAuthConfig, accessToken string) (*types.SSODirectorySnapshot, error) {
 	issuer := strings.TrimRight(strings.TrimSpace(cfg.IssuerURL), "/")
 	if issuer == "" {
 		return nil, errors.New("OIDC issuer_url is required for QueryEmployeeDirectory")
@@ -125,38 +149,40 @@ func (s *userService) queryEmployeeDirectory(ctx context.Context, cfg *config.OI
 	return &snapshot, nil
 }
 
-// applySSOAccessSideEffects uses QueryEmployeeDirectory for the current
-// employee only (not the org tree): upserts their departments locally,
-// binds WeCom identity for Source ACL, and adds viewer memberships on
-// workspaces that already have those department records.
-func (s *userService) applySSOAccessSideEffects(
+// apply uses QueryEmployeeDirectory for the current employee only (not the
+// org tree): upserts their departments locally, binds WeCom identity for
+// Source ACL, and adds viewer memberships on workspaces that already have
+// those department records.
+func (e *ssoAccessEffects) apply(
 	ctx context.Context,
 	cfg *config.OIDCAuthConfig,
 	user *types.User,
 	directoryAccess string,
 	wecomUserID string,
 ) {
-	if user == nil {
+	if e == nil || user == nil {
 		return
 	}
 	if cfg == nil || strings.TrimSpace(directoryAccess) == "" {
-		s.bindWeComFromSSO(ctx, user, wecomUserID, user.TenantID)
+		e.bindWeComFromSSO(ctx, user, wecomUserID, user.TenantID)
 		return
 	}
-	dir, err := s.queryEmployeeDirectory(ctx, cfg, directoryAccess)
+	dir, err := e.queryEmployeeDirectory(ctx, cfg, directoryAccess)
 	if err != nil {
 		logger.Warnf(ctx, "SSO directory lookup failed for user %s: %v", user.ID, err)
-		s.bindWeComFromSSO(ctx, user, wecomUserID, user.TenantID)
+		e.bindWeComFromSSO(ctx, user, wecomUserID, user.TenantID)
 		return
 	}
 	user.Preferences.SSODirectory = dir
 	user.UpdatedAt = time.Now()
-	if uerr := s.userRepo.UpdateUser(ctx, user); uerr != nil {
-		logger.Warnf(ctx, "SSO directory snapshot persist failed for user %s: %v", user.ID, uerr)
+	if e.userRepo != nil {
+		if uerr := e.userRepo.UpdateUser(ctx, user); uerr != nil {
+			logger.Warnf(ctx, "SSO directory snapshot persist failed for user %s: %v", user.ID, uerr)
+		}
 	}
 
-	s.ensureSSOEmployeeInTenant(ctx, user.TenantID, wecomUserID, user.Username, dir.Departments)
-	s.bindWeComFromSSO(ctx, user, wecomUserID, user.TenantID)
+	e.ensureSSOEmployeeInTenant(ctx, user.TenantID, wecomUserID, user.Username, dir.Departments)
+	e.bindWeComFromSSO(ctx, user, wecomUserID, user.TenantID)
 
 	deptIDs := make([]string, 0, len(dir.Departments))
 	for _, dept := range dir.Departments {
@@ -165,18 +191,18 @@ func (s *userService) applySSOAccessSideEffects(
 		}
 		deptIDs = append(deptIDs, strconv.FormatInt(dept.WeComDepartmentID, 10))
 	}
-	s.autoJoinTenantsByDepartments(ctx, user, deptIDs, wecomUserID, dir.Departments)
+	e.autoJoinTenantsByDepartments(ctx, user, deptIDs, wecomUserID, dir.Departments)
 }
 
-func (s *userService) bindWeComFromSSO(ctx context.Context, user *types.User, wecomUserID string, tenantID uint64) {
-	if s.wecomIdentity == nil || user == nil {
+func (e *ssoAccessEffects) bindWeComFromSSO(ctx context.Context, user *types.User, wecomUserID string, tenantID uint64) {
+	if e == nil || e.wecomIdentity == nil || user == nil {
 		return
 	}
 	wecomUserID = strings.TrimSpace(wecomUserID)
 	if wecomUserID == "" || tenantID == 0 {
 		return
 	}
-	subject, err := s.wecomIdentity.ResolveSubject(ctx, tenantID, user.ID)
+	subject, err := e.wecomIdentity.ResolveSubject(ctx, tenantID, user.ID)
 	if err != nil {
 		logger.Warnf(ctx, "SSO WeCom resolve failed tenant=%d user=%s: %v", tenantID, user.ID, err)
 		return
@@ -187,7 +213,7 @@ func (s *userService) bindWeComFromSSO(ctx context.Context, user *types.User, we
 		}
 		return
 	}
-	_, err = s.wecomIdentity.CreateOrUpdateBinding(ctx, tenantID, interfaces.WeComBindingInput{
+	_, err = e.wecomIdentity.CreateOrUpdateBinding(ctx, tenantID, interfaces.WeComBindingInput{
 		WeKnoraUserID: user.ID,
 		WeComUserID:   wecomUserID,
 		Source:        types.WeComBindingSourceSSO,
@@ -197,31 +223,31 @@ func (s *userService) bindWeComFromSSO(ctx context.Context, user *types.User, we
 	}
 }
 
-func (s *userService) ensureSSOEmployeeInTenant(
+func (e *ssoAccessEffects) ensureSSOEmployeeInTenant(
 	ctx context.Context,
 	tenantID uint64,
 	wecomUserID, name string,
 	departments []types.SSODepartment,
 ) {
-	if s.wecomIdentity == nil || tenantID == 0 {
+	if e == nil || e.wecomIdentity == nil || tenantID == 0 {
 		return
 	}
-	if err := s.wecomIdentity.EnsureSSOEmployee(ctx, tenantID, wecomUserID, name, departments); err != nil {
+	if err := e.wecomIdentity.EnsureSSOEmployee(ctx, tenantID, wecomUserID, name, departments); err != nil {
 		logger.Warnf(ctx, "SSO WeCom employee upsert failed tenant=%d: %v", tenantID, err)
 	}
 }
 
-func (s *userService) autoJoinTenantsByDepartments(
+func (e *ssoAccessEffects) autoJoinTenantsByDepartments(
 	ctx context.Context,
 	user *types.User,
 	departmentIDs []string,
 	wecomUserID string,
 	departments []types.SSODepartment,
 ) {
-	if s.wecomIdentity == nil || s.memberService == nil || user == nil || len(departmentIDs) == 0 {
+	if e == nil || e.wecomIdentity == nil || e.memberService == nil || user == nil || len(departmentIDs) == 0 {
 		return
 	}
-	tenantIDs, err := s.wecomIdentity.ListTenantIDsByDepartmentIDs(ctx, departmentIDs)
+	tenantIDs, err := e.wecomIdentity.ListTenantIDsByDepartmentIDs(ctx, departmentIDs)
 	if err != nil {
 		logger.Warnf(ctx, "SSO department tenant lookup failed for user %s: %v", user.ID, err)
 		return
@@ -230,18 +256,18 @@ func (s *userService) autoJoinTenantsByDepartments(
 		if tenantID == 0 || tenantID == user.TenantID {
 			continue
 		}
-		if s.tenantService != nil {
-			tenant, terr := s.tenantService.GetTenantByID(ctx, tenantID)
+		if e.tenantService != nil {
+			tenant, terr := e.tenantService.GetTenantByID(ctx, tenantID)
 			if terr != nil || tenant == nil || !strings.EqualFold(tenant.Status, "active") {
 				continue
 			}
 		}
-		s.ensureSSOEmployeeInTenant(ctx, tenantID, wecomUserID, user.Username, departments)
-		_, err := s.memberService.AddMember(ctx, user.ID, tenantID, types.TenantRoleViewer, nil)
+		e.ensureSSOEmployeeInTenant(ctx, tenantID, wecomUserID, user.Username, departments)
+		_, err := e.memberService.AddMember(ctx, user.ID, tenantID, types.TenantRoleViewer, nil)
 		if err != nil && !errors.Is(err, ErrMembershipAlreadyExists) {
 			logger.Warnf(ctx, "SSO auto-join failed user=%s tenant=%d: %v", user.ID, tenantID, err)
 			continue
 		}
-		s.bindWeComFromSSO(ctx, user, wecomUserID, tenantID)
+		e.bindWeComFromSSO(ctx, user, wecomUserID, tenantID)
 	}
 }

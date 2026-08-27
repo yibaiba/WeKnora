@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -97,5 +98,26 @@ func TestExchangeSSOAccessMapsVerifyErrorTo401(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestExchangeSSOAccessMapsDisabledTo403(t *testing.T) {
+	us := &stubSSOExchangeUserService{
+		exchange: func(context.Context, string, types.TenantProvisioningMode) (*types.LoginResponse, error) {
+			return nil, service.ErrOIDCDisabled
+		},
+	}
+	h := NewAuthHandler(&config.Config{}, us, nil, nil, nil)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(errorCapture())
+	r.POST("/auth/sso/exchange", h.ExchangeSSOAccess)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/sso/exchange", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
 	}
 }

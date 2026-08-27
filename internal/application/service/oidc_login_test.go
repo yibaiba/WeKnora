@@ -9,11 +9,13 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type oidcMemoryUserRepo struct {
@@ -157,13 +159,19 @@ func TestGetOIDCAuthorizationURLIncludesPKCEAndNonce(t *testing.T) {
 }
 
 func TestVerifyOIDCIDTokenRejectsBreakglass(t *testing.T) {
-	raw := unsignedJWT(map[string]any{
+	key, server := startJWKSServer(t)
+	raw := mustSignRS256(t, key, jwt.MapClaims{
+		"iss":   server.URL,
 		"sub":   "emp_1",
 		"nonce": "n1",
 		"acr":   oidcBreakglassACR,
 		"aud":   "weknora-web",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+		"iat":   time.Now().Unix(),
 	})
 	err := verifyOIDCIDToken(context.Background(), &config.OIDCAuthConfig{
+		IssuerURL:        server.URL,
+		JWKSURI:          server.URL + "/jwks",
 		ClientID:         "weknora-web",
 		ResourceAudience: "weknora",
 	}, raw, "n1")
@@ -173,17 +181,42 @@ func TestVerifyOIDCIDTokenRejectsBreakglass(t *testing.T) {
 }
 
 func TestVerifyOIDCIDTokenNonceMismatch(t *testing.T) {
-	raw := unsignedJWT(map[string]any{
+	key, server := startJWKSServer(t)
+	raw := mustSignRS256(t, key, jwt.MapClaims{
+		"iss":   server.URL,
 		"sub":   "emp_1",
 		"nonce": "other",
 		"aud":   "weknora-web",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+		"iat":   time.Now().Unix(),
 	})
 	err := verifyOIDCIDToken(context.Background(), &config.OIDCAuthConfig{
+		IssuerURL:        server.URL,
+		JWKSURI:          server.URL + "/jwks",
 		ClientID:         "weknora-web",
 		ResourceAudience: "weknora",
 	}, raw, "n1")
 	if err == nil || !strings.Contains(err.Error(), "nonce") {
 		t.Fatalf("error = %v, want nonce mismatch", err)
+	}
+}
+
+func TestVerifyOIDCIDTokenRejectsUnsigned(t *testing.T) {
+	_, server := startJWKSServer(t)
+	raw := unsignedJWT(map[string]any{
+		"iss":   server.URL,
+		"sub":   "emp_1",
+		"nonce": "n1",
+		"aud":   "weknora-web",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	})
+	err := verifyOIDCIDToken(context.Background(), &config.OIDCAuthConfig{
+		IssuerURL: server.URL,
+		JWKSURI:   server.URL + "/jwks",
+		ClientID:  "weknora-web",
+	}, raw, "n1")
+	if err == nil {
+		t.Fatal("expected unsigned id_token to be rejected")
 	}
 }
 
@@ -223,17 +256,14 @@ func TestLoginWithOIDCKeysBySubjectWithoutTokenExchange(t *testing.T) {
 		verifier = "pkce-verifier-aaaaaaaaaaaaaaaaaaaaaaaa"
 		loginTok = "sso-login-access"
 	)
-	idToken := unsignedJWT(map[string]any{
-		"sub":   sub,
-		"nonce": nonce,
-		"acr":   "urn:enterprise-sso:acr:wecom-scan",
-		"aud":   "weknora-web",
-		"name":  "Alice",
-	})
-
+	key, jwks := mustRSAJWKS(t)
+	var idToken string
 	var sawVerifier, sawExchange, sawDirectory bool
 	var userinfoAuth string
 	mux := http.NewServeMux()
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwks)
+	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if strings.Contains(r.Form.Get("grant_type"), "token-exchange") {
@@ -263,6 +293,16 @@ func TestLoginWithOIDCKeysBySubjectWithoutTokenExchange(t *testing.T) {
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
+	idToken = mustSignRS256(t, key, jwt.MapClaims{
+		"iss":   server.URL,
+		"sub":   sub,
+		"nonce": nonce,
+		"acr":   "urn:enterprise-sso:acr:wecom-scan",
+		"aud":   "weknora-web",
+		"name":  "Alice",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+		"iat":   time.Now().Unix(),
+	})
 
 	repo := &oidcMemoryUserRepo{}
 	svc := &userService{
@@ -276,6 +316,7 @@ func TestLoginWithOIDCKeysBySubjectWithoutTokenExchange(t *testing.T) {
 			AuthorizationEndpoint: server.URL + "/authorize",
 			TokenEndpoint:         server.URL + "/token",
 			UserInfoEndpoint:      server.URL + "/userinfo",
+			JWKSURI:               server.URL + "/jwks",
 			Scopes:                []string{"openid", "profile"},
 			UserInfoMapping:       &config.OIDCUserInfoMapping{Username: "name", Email: "email"},
 		}},

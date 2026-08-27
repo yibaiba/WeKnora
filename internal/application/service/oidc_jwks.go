@@ -39,10 +39,14 @@ type jwksCacheEntry struct {
 	expiresAt time.Time
 }
 
-var (
-	jwksCacheMu sync.Mutex
-	jwksCache   jwksCacheEntry
-)
+type oidcJWTVerifier struct {
+	mu    sync.Mutex
+	cache jwksCacheEntry
+}
+
+func newOIDCJWTVerifier() *oidcJWTVerifier {
+	return &oidcJWTVerifier{}
+}
 
 func oidcResourceAudience(cfg *config.OIDCAuthConfig) string {
 	if cfg != nil {
@@ -105,13 +109,13 @@ func fetchOIDCJWKS(ctx context.Context, jwksURI string) (map[string]*rsa.PublicK
 		if key.Use != "" && !strings.EqualFold(key.Use, "sig") {
 			continue
 		}
+		kid := strings.TrimSpace(key.Kid)
+		if kid == "" {
+			continue
+		}
 		pub, err := rsaPublicKeyFromJWK(key.N, key.E)
 		if err != nil {
 			continue
-		}
-		kid := strings.TrimSpace(key.Kid)
-		if kid == "" {
-			kid = fmt.Sprintf("idx-%d", i)
 		}
 		keys[kid] = pub
 	}
@@ -142,54 +146,63 @@ func jwksCacheTTL(cacheControl string) time.Duration {
 	return ttl
 }
 
-func loadOIDCRSAKey(ctx context.Context, jwksURI, kid string) (*rsa.PublicKey, error) {
+func jwtHeaderString(raw, field string) string {
+	parts := strings.Split(raw, ".")
+	if len(parts) < 1 {
+		return ""
+	}
+	buf, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return ""
+	}
+	var header map[string]interface{}
+	if err := json.Unmarshal(buf, &header); err != nil {
+		return ""
+	}
+	s, _ := header[field].(string)
+	return strings.TrimSpace(s)
+}
+
+func (v *oidcJWTVerifier) loadKey(ctx context.Context, jwksURI, kid string) (*rsa.PublicKey, error) {
 	jwksURI = strings.TrimSpace(jwksURI)
 	kid = strings.TrimSpace(kid)
+	if kid == "" {
+		return nil, errors.New("token kid is required")
+	}
 	now := time.Now()
 
-	jwksCacheMu.Lock()
-	if jwksCache.uri == jwksURI && now.Before(jwksCache.expiresAt) {
-		if kid != "" {
-			if key, ok := jwksCache.keys[kid]; ok {
-				jwksCacheMu.Unlock()
-				return key, nil
-			}
+	v.mu.Lock()
+	if v.cache.uri == jwksURI && now.Before(v.cache.expiresAt) {
+		if key, ok := v.cache.keys[kid]; ok {
+			v.mu.Unlock()
+			return key, nil
 		}
 	}
-	jwksCacheMu.Unlock()
+	v.mu.Unlock()
 
 	keys, ttl, err := fetchOIDCJWKS(ctx, jwksURI)
 	if err != nil {
 		return nil, err
 	}
 
-	jwksCacheMu.Lock()
-	jwksCache = jwksCacheEntry{
+	v.mu.Lock()
+	v.cache = jwksCacheEntry{
 		uri:       jwksURI,
 		keys:      keys,
 		expiresAt: time.Now().Add(ttl),
 	}
-	jwksCacheMu.Unlock()
+	v.mu.Unlock()
 
-	if kid != "" {
-		if key, ok := keys[kid]; ok {
-			return key, nil
-		}
-		return nil, errors.New("no matching JWKS key")
-	}
-	for _, key := range keys {
+	if key, ok := keys[kid]; ok {
 		return key, nil
 	}
 	return nil, errors.New("no matching JWKS key")
 }
 
-func resetOIDCJWKSCacheForTest() {
-	jwksCacheMu.Lock()
-	jwksCache = jwksCacheEntry{}
-	jwksCacheMu.Unlock()
-}
-
-func verifySSOResourceToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw string) (jwt.MapClaims, error) {
+func (v *oidcJWTVerifier) verifyRS256(ctx context.Context, cfg *config.OIDCAuthConfig, raw, expectedAud string) (jwt.MapClaims, error) {
+	if v == nil {
+		return nil, errors.New("OIDC verifier is required")
+	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, errors.New("missing access token")
@@ -197,6 +210,19 @@ func verifySSOResourceToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw
 	if cfg == nil {
 		return nil, errors.New("OIDC config is required")
 	}
+	expectedIss := strings.TrimRight(strings.TrimSpace(cfg.IssuerURL), "/")
+	if expectedIss == "" {
+		return nil, errors.New("OIDC issuer_url is required")
+	}
+	jwksURI := strings.TrimSpace(cfg.JWKSURI)
+	if jwksURI == "" {
+		return nil, errors.New("OIDC jwks_uri is required")
+	}
+	expectedAud = strings.TrimSpace(expectedAud)
+	if expectedAud == "" {
+		return nil, errors.New("token audience is required")
+	}
+
 	unverified, err := decodeJWTClaims(raw)
 	if err != nil {
 		return nil, errors.New("invalid token")
@@ -204,23 +230,20 @@ func verifySSOResourceToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw
 	if _, isString := unverified["aud"].(string); !isString {
 		return nil, errors.New("token audience must be a single string")
 	}
-	expectedAud := oidcResourceAudience(cfg)
 	if claimAsString(unverified, "aud") != expectedAud {
 		return nil, errors.New("token audience mismatch")
 	}
 	if strings.TrimSpace(claimAsString(unverified, "sub")) == "" {
 		return nil, errors.New("token subject is required")
 	}
-
-	jwksURI := strings.TrimSpace(cfg.JWKSURI)
-	if jwksURI == "" {
-		return nil, errors.New("OIDC jwks_uri is required")
+	if jwtHeaderString(raw, "kid") == "" {
+		return nil, errors.New("token kid is required")
 	}
 
 	parser := jwt.NewParser(jwt.WithValidMethods([]string{"RS256"}))
 	token, err := parser.Parse(raw, func(t *jwt.Token) (interface{}, error) {
 		kid, _ := t.Header["kid"].(string)
-		return loadOIDCRSAKey(ctx, jwksURI, kid)
+		return v.loadKey(ctx, jwksURI, strings.TrimSpace(kid))
 	})
 	if err != nil {
 		return nil, errors.New("invalid token")
@@ -229,11 +252,48 @@ func verifySSOResourceToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw
 	if !ok || !token.Valid {
 		return nil, errors.New("invalid token")
 	}
-	if issuer := strings.TrimRight(strings.TrimSpace(cfg.IssuerURL), "/"); issuer != "" {
-		iss := strings.TrimRight(claimAsString(map[string]interface{}(claims), "iss"), "/")
-		if iss != "" && iss != issuer {
-			return nil, errors.New("token issuer mismatch")
-		}
+	iss := strings.TrimRight(claimAsString(map[string]interface{}(claims), "iss"), "/")
+	if iss == "" || iss != expectedIss {
+		return nil, errors.New("token issuer mismatch")
 	}
 	return claims, nil
+}
+
+func (v *oidcJWTVerifier) verifyResourceToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw string) (jwt.MapClaims, error) {
+	return v.verifyRS256(ctx, cfg, raw, oidcResourceAudience(cfg))
+}
+
+func (v *oidcJWTVerifier) verifyIDToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw, nonce string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return errors.New("OIDC id_token is required")
+	}
+	expectedAud := ""
+	if cfg != nil {
+		expectedAud = strings.TrimSpace(cfg.ClientID)
+	}
+	if expectedAud == "" {
+		return errors.New("OIDC client_id is required")
+	}
+	claims, err := v.verifyRS256(ctx, cfg, raw, expectedAud)
+	if err != nil {
+		return err
+	}
+	asMap := map[string]interface{}(claims)
+	nonce = strings.TrimSpace(nonce)
+	if nonce != "" && claimAsString(asMap, "nonce") != nonce {
+		return errors.New("OIDC id_token nonce mismatch")
+	}
+	if claimAsString(asMap, "acr") == oidcBreakglassACR {
+		return errors.New("breakglass session rejected")
+	}
+	return nil
+}
+
+func verifySSOResourceToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw string) (jwt.MapClaims, error) {
+	return newOIDCJWTVerifier().verifyResourceToken(ctx, cfg, raw)
+}
+
+func verifyOIDCIDToken(ctx context.Context, cfg *config.OIDCAuthConfig, raw, nonce string) error {
+	return newOIDCJWTVerifier().verifyIDToken(ctx, cfg, raw, nonce)
 }

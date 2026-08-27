@@ -109,33 +109,6 @@ func retryAfterDuration(resp *http.Response) time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-func verifyOIDCIDToken(_ context.Context, cfg *config.OIDCAuthConfig, raw, nonce string) error {
-	raw = strings.TrimSpace(raw)
-	nonce = strings.TrimSpace(nonce)
-	if raw == "" {
-		if nonce != "" {
-			return errors.New("OIDC id_token is required")
-		}
-		return nil
-	}
-	claims, err := decodeJWTClaims(raw)
-	if err != nil {
-		return fmt.Errorf("decode OIDC id_token: %w", err)
-	}
-	if nonce != "" && claimAsString(claims, "nonce") != nonce {
-		return errors.New("OIDC id_token nonce mismatch")
-	}
-	if claimAsString(claims, "acr") == oidcBreakglassACR {
-		return errors.New("breakglass session rejected")
-	}
-	if cfg != nil {
-		if aud := claimAsString(claims, "aud"); aud != "" && strings.TrimSpace(cfg.ClientID) != "" && aud != cfg.ClientID {
-			return errors.New("OIDC id_token audience mismatch")
-		}
-	}
-	return nil
-}
-
 func claimAsString(claims map[string]interface{}, key string) string {
 	raw, ok := claims[key]
 	if !ok || raw == nil {
