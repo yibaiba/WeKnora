@@ -218,10 +218,55 @@
                         <h2 class="section-title">{{ t('knowledgeEditor.chunking.title') }}</h2>
                         <p class="section-desc">{{ t('knowledgeEditor.chunking.description') }}</p>
                       </div>
+                      <div v-if="advisorModeAvailable" class="settings-group">
+                        <div class="setting-row">
+                          <div class="setting-info">
+                            <label id="processing-mode-label">{{ t('uploadConfirm.processingModeLabel') }}</label>
+                            <p class="desc">{{ t('uploadConfirm.processingModeDescription') }}</p>
+                          </div>
+                          <div class="setting-control">
+                            <t-radio-group
+                              v-model="uiState.ingestionAdvisorMode"
+                              aria-labelledby="processing-mode-label"
+                            >
+                              <t-radio-button value="smart">{{ t('uploadConfirm.modeSmart') }}</t-radio-button>
+                              <t-radio-button value="off">{{ t('uploadConfirm.modeKnowledgeBase') }}</t-radio-button>
+                            </t-radio-group>
+                          </div>
+                        </div>
+                        <div v-if="isSmartAnalysis" class="setting-row setting-row-vertical">
+                          <div class="setting-info">
+                            <label>{{ t('uploadConfirm.smartDecisionHint') }}</label>
+                            <p v-if="!llmModelId" class="desc">{{ t('uploadConfirm.smartModelMissing') }}</p>
+                            <p v-else-if="localUrls.length > 0" class="desc">{{ t('uploadConfirm.smartUrlsUseKb') }}</p>
+                          </div>
+                        </div>
+                        <div v-if="isSmartAnalysis" class="setting-row">
+                          <div class="setting-info">
+                            <label id="smart-web-access-label">{{ t('uploadConfirm.smartWebAccess') }}</label>
+                            <p class="desc">{{ t('uploadConfirm.smartWebAccessDescription') }}</p>
+                          </div>
+                          <div class="setting-control">
+                            <t-switch v-model="uiState.allowSmartWebAccess" aria-labelledby="smart-web-access-label" />
+                          </div>
+                        </div>
+                        <div v-if="isSmartAnalysis" class="setting-row">
+                          <div class="setting-info">
+                            <label id="smart-mcp-access-label">{{ t('uploadConfirm.smartMcpAccess') }}</label>
+                            <p class="desc">{{ t('uploadConfirm.smartMcpAccessDescription') }}</p>
+                          </div>
+                          <div class="setting-control">
+                            <t-switch v-model="uiState.allowSmartReadOnlyMcp" aria-labelledby="smart-mcp-access-label" />
+                          </div>
+                        </div>
+                      </div>
                       <div class="settings-group">
                         <div class="setting-row">
                           <div class="setting-info">
-                            <label>{{ t('knowledgeEditor.chunking.strategyLabel') }}</label>
+                            <label>
+                              {{ t('knowledgeEditor.chunking.strategyLabel') }}
+                              <span v-if="isSmartAnalysis" class="advisor-owned-badge">{{ t('uploadConfirm.agentOwned') }}</span>
+                            </label>
                             <p class="desc">{{ t('knowledgeEditor.chunking.strategyDescription') }}</p>
                           </div>
                           <div class="setting-control">
@@ -229,6 +274,7 @@
                               v-model="uiState.chunkingConfig.strategy"
                               :options="chunkingStrategyOptions"
                               :clearable="false"
+                              :disabled="isSmartAnalysis"
                               :style="{ width: '280px' }"
                             />
                           </div>
@@ -245,6 +291,7 @@
                               :max="4000"
                               :step="50"
                               theme="normal"
+                              :disabled="isSmartAnalysis"
                               :style="{ width: '200px' }"
                             />
                           </div>
@@ -261,6 +308,7 @@
                               :max="500"
                               :step="20"
                               theme="normal"
+                              :disabled="isSmartAnalysis"
                               :style="{ width: '200px' }"
                             />
                           </div>
@@ -328,7 +376,7 @@
                             <p class="desc">{{ t('knowledgeEditor.chunking.parentChildDescription') }}</p>
                           </div>
                           <div class="setting-control">
-                            <t-switch v-model="uiState.chunkingConfig.enableParentChild" />
+                            <t-switch v-model="uiState.chunkingConfig.enableParentChild" :disabled="isSmartAnalysis" />
                           </div>
                         </div>
                         <div v-if="uiState.chunkingConfig.enableParentChild" class="setting-row">
@@ -585,7 +633,7 @@ import { listKnowledgeTags } from '@/api/knowledge-base'
 import KbUploadSourceDropdown from './KbUploadSourceDropdown.vue'
 import FolderPickerMenu, { type FolderOption } from './FolderPickerMenu.vue'
 import { folderOptionFromPath, sortFolderOptions } from '../folderTree'
-import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
+import type { IngestionAdvisorMode, KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
 import type {
   UploadConfirmManualSource,
   UploadConfirmMode,
@@ -633,6 +681,9 @@ interface UploadUIState {
   }
   graphEnabled: boolean
   pdfForceScanned: boolean
+  ingestionAdvisorMode: IngestionAdvisorMode
+  allowSmartWebAccess: boolean
+  allowSmartReadOnlyMcp: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -867,6 +918,17 @@ const tagOptions = computed(() => availableTags.value.map(tag => ({
 
 const llmModelId = computed(() => props.kbInfo?.summary_model_id || '')
 
+const advisorModeAvailable = computed(() => {
+  if (props.mode === 'file') return localFiles.value.length > 0
+  if (props.mode !== 'reparse') return false
+  const source = props.reparsePreview
+  return source?.knowledgeType === 'file' && !source.isDatasource
+})
+
+const isSmartAnalysis = computed(() => {
+  return advisorModeAvailable.value && uiState.value.ingestionAdvisorMode === 'smart'
+})
+
 const hasImages = computed(() => {
   if (props.mode === 'manual' && props.manualPreview?.content) {
     const content = props.manualPreview.content
@@ -986,6 +1048,9 @@ function getSectionNavStatus(
       }
       return { status: t('uploadConfirm.navParserDefault'), statusTone: 'muted' }
     case 'chunking': {
+      if (isSmartAnalysis.value) {
+        return { status: t('uploadConfirm.navChunkingSmart') }
+      }
       const chunking = uiState.value.chunkingConfig
       const parts = [t('uploadConfirm.navChunkingSummary', { size: chunking.chunkSize })]
       if (chunking.enableParentChild) {
@@ -1109,6 +1174,9 @@ function createDefaultUIState(): UploadUIState {
     },
     graphEnabled: false,
     pdfForceScanned: false,
+    ingestionAdvisorMode: 'off',
+    allowSmartWebAccess: false,
+    allowSmartReadOnlyMcp: false,
   }
 }
 
@@ -1162,6 +1230,9 @@ function initFromKbInfo(kb: any) {
     },
     graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
     pdfForceScanned: false,
+    ingestionAdvisorMode: 'off',
+    allowSmartWebAccess: false,
+    allowSmartReadOnlyMcp: false,
   }
 }
 
@@ -1212,6 +1283,18 @@ function buildProcessOverrides(): KnowledgeProcessOverrides {
     },
   }
 
+  if (advisorModeAvailable.value) {
+    overrides.ingestion_advisor = {
+      mode: state.ingestionAdvisorMode,
+      ...(state.ingestionAdvisorMode === 'smart' && state.allowSmartWebAccess
+        ? { allow_web_access: true }
+        : {}),
+      ...(state.ingestionAdvisorMode === 'smart' && state.allowSmartReadOnlyMcp
+        ? { allow_read_only_mcp: true }
+        : {}),
+    }
+  }
+
   if (state.pdfForceScanned) {
     overrides.parser_engine_overrides = {
       pdf_force_scanned: 'true',
@@ -1224,6 +1307,8 @@ function buildProcessOverrides(): KnowledgeProcessOverrides {
 function applyOverridesToState(o?: KnowledgeProcessOverrides | null) {
   if (!o) return
   const s = uiState.value
+  s.allowSmartWebAccess = o.ingestion_advisor?.allow_web_access === true
+  s.allowSmartReadOnlyMcp = o.ingestion_advisor?.allow_read_only_mcp === true
   if (o.summary_enabled != null) s.summaryEnabled = o.summary_enabled
   const cc = o.chunking_config
   if (cc) {
@@ -1328,6 +1413,7 @@ watch(
     if (props.mode === 'reparse') {
       applyOverridesToState(props.reparsePreview?.processOverrides)
     }
+    initializeIngestionAdvisorMode()
     activeSection.value = getDefaultSection()
     chunkingMoreOpen.value = false
     loadModels()
@@ -1342,7 +1428,22 @@ watch(isGraphSectionAvailable, (available) => {
   }
 })
 
+function initializeIngestionAdvisorMode() {
+  if (props.mode === 'file') {
+    uiState.value.ingestionAdvisorMode = localFiles.value.length > 0 ? 'smart' : 'off'
+    return
+  }
+  if (props.mode === 'reparse' && advisorModeAvailable.value) {
+    uiState.value.ingestionAdvisorMode = props.reparsePreview?.processOverrides?.ingestion_advisor?.mode === 'smart'
+      ? 'smart'
+      : 'off'
+    return
+  }
+  uiState.value.ingestionAdvisorMode = 'off'
+}
+
 const appendFiles = (incoming: File[]) => {
+  const hadFiles = localFiles.value.length > 0
   const existingKeys = new Set(localFiles.value.map(getUploadFileKey))
   const toAdd: File[] = []
   let duplicateCount = 0
@@ -1359,6 +1460,7 @@ const appendFiles = (incoming: File[]) => {
 
   if (toAdd.length > 0) {
     localFiles.value = [...localFiles.value, ...toAdd]
+    if (!hadFiles) uiState.value.ingestionAdvisorMode = 'smart'
     MessagePlugin.success(t('uploadConfirm.filesAdded', { count: toAdd.length }))
   } else if (duplicateCount > 0) {
     MessagePlugin.warning(t('uploadConfirm.filesAllDuplicate'))
@@ -2075,6 +2177,16 @@ const handleConfirm = () => {
     font-size: var(--app-text-lg);
     font-weight: 500;
     color: var(--td-text-color-primary);
+  }
+
+  .advisor-owned-badge {
+    margin-left: 8px;
+    padding: 0 6px;
+    border-radius: var(--app-radius-sm, 4px);
+    font-size: var(--app-text-xs);
+    font-weight: 500;
+    color: var(--td-brand-color);
+    background: var(--td-brand-color-light);
   }
 
   .desc {

@@ -9,13 +9,14 @@ func (scanner *semanticScanner) consumeMarkdownTable(index int) (int, bool) {
 	}
 	scanner.tableSeq++
 	tableID := semanticTableID(scanner.tableSeq)
+	headerEnd, dataStart := semanticMarkdownTableHeaderSpan(scanner.lines, index, len(scanner.lines))
 	header := newSemanticBlock(semanticBlockSpec{
-		kind: SemanticKindTableHeader, start: scanner.lines[index].start, end: scanner.lines[index+1].end,
+		kind: SemanticKindTableHeader, start: scanner.lines[index].start, end: scanner.lines[headerEnd].end,
 		confidence: SemanticConfidenceHigh, atomic: true,
 	})
 	header.TableID = tableID
 	scanner.blocks = append(scanner.blocks, header)
-	index += 2
+	index = dataStart
 	for index < len(scanner.lines) && tableRowPattern.MatchString(scanner.lines[index].trimmed) {
 		row := newSemanticBlock(semanticBlockSpec{
 			kind: SemanticKindTableRow, start: scanner.lines[index].start, end: scanner.lines[index].end,
@@ -26,6 +27,21 @@ func (scanner *semanticScanner) consumeMarkdownTable(index int) (int, bool) {
 		index++
 	}
 	return index, true
+}
+
+func semanticMarkdownTableHeaderSpan(lines []semanticLine, start, end int) (headerEnd, dataStart int) {
+	headerEnd = start + 1
+	dataStart = start + 2
+	if dataStart >= end || dataStart >= len(lines) {
+		return headerEnd, dataStart
+	}
+	if !tableRowPattern.MatchString(lines[dataStart].trimmed) {
+		return headerEnd, dataStart
+	}
+	if headerColumnRow(lines[start].trimmed) != "" || headerColumnRow(lines[dataStart].trimmed) == "" {
+		return headerEnd, dataStart
+	}
+	return dataStart, dataStart + 1
 }
 
 func isMarkdownTableSeparator(value string) bool {
@@ -67,6 +83,7 @@ func (scanner *semanticScanner) consumeFAQ(index int) (int, SemanticBlock, bool)
 func isExplicitQuestion(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	return strings.HasPrefix(lower, "q:") || strings.HasPrefix(lower, "q：") ||
+		strings.HasPrefix(lower, "q.") || strings.HasPrefix(lower, "faq:") ||
 		strings.HasPrefix(lower, "question:") || strings.HasPrefix(lower, "问：") ||
 		strings.HasPrefix(lower, "问题：")
 }

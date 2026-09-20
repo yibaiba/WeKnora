@@ -36,13 +36,14 @@ func (scanner *semanticScanner) consumeASTTable(start, end int) (int, []Semantic
 	}
 	scanner.tableSeq++
 	tableID := semanticTableID(scanner.tableSeq)
+	headerEnd, dataStart := semanticMarkdownTableHeaderSpan(scanner.lines, start, end)
 	header := newSemanticBlock(semanticBlockSpec{
-		kind: SemanticKindTableHeader, start: scanner.lines[start].start, end: scanner.lines[start+1].end,
+		kind: SemanticKindTableHeader, start: scanner.lines[start].start, end: scanner.lines[headerEnd].end,
 		confidence: SemanticConfidenceHigh, atomic: true,
 	})
 	header.TableID = tableID
 	blocks := []SemanticBlock{header}
-	for index := start + 2; index < end; index++ {
+	for index := dataStart; index < end; index++ {
 		row := newSemanticBlock(semanticBlockSpec{
 			kind: SemanticKindTableRow, start: scanner.lines[index].start, end: scanner.lines[index].end,
 			confidence: SemanticConfidenceHigh, atomic: true,

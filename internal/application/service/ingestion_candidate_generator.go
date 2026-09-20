@@ -10,16 +10,14 @@ import (
 )
 
 const (
-	ingestionCandidateArchetypeRetrievalDense      = "retrieval_dense"
-	ingestionCandidateArchetypeBalanced            = "balanced"
-	ingestionCandidateArchetypeStructurePreserving = "structure_preserving"
-	ingestionPackingPolicyVersion                  = "semantic-packing-v2"
-	ingestionCandidateGeneratorVersion             = "semantic-candidates-v2"
-	ingestionContextTokenPercent                   = 20
-	ingestionContextTokenLimit                     = 128
+	ingestionCandidateArchetypeSectionParent = "section_parent"
+	ingestionCandidateArchetypePageParent    = "page_parent"
+	ingestionCandidateArchetypeNoParent      = "no_parent"
+	ingestionPackingPolicyVersion            = "semantic-packing-v2"
+	ingestionCandidateGeneratorVersion       = "semantic-candidates-v2"
+	ingestionContextTokenPercent             = 20
+	ingestionContextTokenLimit               = 128
 )
-
-var ingestionCandidateGradient = [...]float64{0.55, 0.85, 1.15, 1.45, 1.70}
 
 type ingestionCandidateSpec struct {
 	archetype string
@@ -44,9 +42,12 @@ func (s *ingestionAgentSession) generateCandidates(evidence ingestionDocumentEvi
 		if idErr != nil {
 			return idErr
 		}
+		candidatePolicy := cloneSemanticPackingPolicy(policy)
+		candidatePolicy.ParentUnit = spec.config.ParentUnit
+		candidatePolicy.ForbidMixedSections = true
 		candidate, buildErr := s.buildCandidate(ingestionCandidateBuildRequest{
 			content: s.content, config: spec.config, constraints: s.constraints,
-			id: id, document: s.document, archetype: spec.archetype, policy: policy,
+			id: id, document: s.document, archetype: spec.archetype, policy: candidatePolicy,
 		})
 		if buildErr != nil {
 			return fmt.Errorf("候选 %s 评估失败: %w", spec.archetype, buildErr)
@@ -89,6 +90,10 @@ func semanticPackingPolicyFromEvidence(
 		StrongBoundaryOrder:         append([]string(nil), evidence.BoundaryPriorities...),
 		SeparateRecords:             containsString(evidence.DominantStructures, "repeated_records"),
 		PreserveRepeatedPageRegions: containsString(evidence.RiskSignals, "repeated_headers_footers"),
+		ForbidMixedSections:         hasAnyString(evidence.DominantStructures, "section_body", "mixed"),
+		RepeatRequiredContext:       hasAnyString(evidence.DominantStructures, "table", "faq", "code"),
+		ChildUnit:                   types.SemanticChildUnitAtomic,
+		ParentUnit:                  types.SemanticParentUnitSection,
 		ContextTokenPercent:         ingestionContextTokenPercent,
 		ContextTokenLimit:           ingestionContextTokenLimit,
 	}
@@ -105,28 +110,29 @@ func generateIngestionCandidateSpecs(
 	if err != nil {
 		return nil, err
 	}
+	size := max(base.ChunkSize, p90)
 	targets := []struct {
-		archetype string
-		size      int
+		archetype  string
+		parentUnit string
 	}{
-		{ingestionCandidateArchetypeRetrievalDense, scaledSize(base.ChunkSize, 0.70)},
-		{ingestionCandidateArchetypeBalanced, max(base.ChunkSize, p90)},
-		{ingestionCandidateArchetypeStructurePreserving, scaledSize(base.ChunkSize, 1.30)},
+		{ingestionCandidateArchetypeSectionParent, types.SemanticParentUnitSection},
+		{ingestionCandidateArchetypePageParent, types.SemanticParentUnitPage},
+		{ingestionCandidateArchetypeNoParent, types.SemanticParentUnitNone},
 	}
 	specs := make([]ingestionCandidateSpec, 0, len(targets))
 	used := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
-		config, configErr := candidateConfigForArchetype(base, target.archetype, target.size, session.constraints)
+		config, configErr := candidateConfigForParentUnit(base, target.parentUnit, size, session.constraints)
 		if configErr != nil {
 			return nil, configErr
 		}
-		config, configErr = makeCandidateConfigDistinct(
-			config, target.archetype, base.ChunkSize, session.constraints, used,
-		)
-		if configErr != nil {
-			return nil, configErr
+		id, idErr := ingestionCandidateID(config)
+		if idErr != nil {
+			return nil, idErr
 		}
-		id, _ := ingestionCandidateID(config)
+		if _, duplicate := used[id]; duplicate {
+			return nil, fmt.Errorf("无法为 %s 生成第三个不同候选", target.archetype)
+		}
 		used[id] = struct{}{}
 		specs = append(specs, ingestionCandidateSpec{archetype: target.archetype, config: config})
 	}
@@ -150,59 +156,30 @@ func normalizedCandidateBase(
 	return normalizeIngestionPreviewConfig(config, constraints)
 }
 
-func candidateConfigForArchetype(
+func candidateConfigForParentUnit(
 	base types.IngestionChunkingRecommendation,
-	archetype string,
+	parentUnit string,
 	targetSize int,
 	constraints types.IngestionChunkingConstraints,
 ) (types.IngestionChunkingRecommendation, error) {
 	config := cloneChunkingRecommendation(base)
 	config.ChunkSize = clampInt(targetSize, minimumAdvisorChunkSize, maximumAdvisorChunkSize)
-	config.ChunkOverlap = min(config.ChunkOverlap, config.ChunkSize/2)
-	switch archetype {
-	case ingestionCandidateArchetypeRetrievalDense:
+	config.ParentUnit = parentUnit
+	switch parentUnit {
+	case types.SemanticParentUnitSection, types.SemanticParentUnitPage:
 		config.EnableParentChild = true
 		config.ChildChunkSize = clampInt(config.ChunkSize, minimumAdvisorChildSize, maximumAdvisorChildSize)
 		config.ParentChunkSize = clampInt(config.ChildChunkSize*4, minimumAdvisorParentSize, maximumAdvisorParentSize)
-	case ingestionCandidateArchetypeBalanced:
-	case ingestionCandidateArchetypeStructurePreserving:
+		if parentUnit == types.SemanticParentUnitPage {
+			config.ChunkOverlap = 0
+		}
+	case types.SemanticParentUnitNone:
+		config.EnableParentChild = false
 		config.ChunkOverlap = 0
 	default:
-		return types.IngestionChunkingRecommendation{}, fmt.Errorf("未知候选原型 %q", archetype)
+		return types.IngestionChunkingRecommendation{}, fmt.Errorf("未知父块单元 %q", parentUnit)
 	}
 	return normalizeIngestionPreviewConfig(config, constraints)
-}
-
-func makeCandidateConfigDistinct(
-	config types.IngestionChunkingRecommendation,
-	archetype string,
-	baseSize int,
-	constraints types.IngestionChunkingConstraints,
-	used map[string]struct{},
-) (types.IngestionChunkingRecommendation, error) {
-	id, err := ingestionCandidateID(config)
-	if err != nil {
-		return types.IngestionChunkingRecommendation{}, err
-	}
-	if _, duplicate := used[id]; !duplicate {
-		return config, nil
-	}
-	for _, ratio := range ingestionCandidateGradient {
-		candidate, candidateErr := candidateConfigForArchetype(
-			config, archetype, scaledSize(baseSize, ratio), constraints,
-		)
-		if candidateErr != nil {
-			return types.IngestionChunkingRecommendation{}, candidateErr
-		}
-		candidateID, candidateIDErr := ingestionCandidateID(candidate)
-		if candidateIDErr != nil {
-			return types.IngestionChunkingRecommendation{}, candidateIDErr
-		}
-		if _, duplicate := used[candidateID]; !duplicate {
-			return candidate, nil
-		}
-	}
-	return types.IngestionChunkingRecommendation{}, fmt.Errorf("无法为 %s 生成第三个不同候选", archetype)
 }
 
 func highConfidenceAtomicP90(session *ingestionAgentSession) (int, error) {
@@ -239,10 +216,6 @@ func highConfidenceAtomicP90(session *ingestionAgentSession) (int, error) {
 	sort.Ints(lengths)
 	index := int(math.Ceil(float64(len(lengths))*0.90)) - 1
 	return lengths[max(0, index)], nil
-}
-
-func scaledSize(value int, ratio float64) int {
-	return int(math.Round(float64(value) * ratio))
 }
 
 func defaultPositive(value, fallback int) int {

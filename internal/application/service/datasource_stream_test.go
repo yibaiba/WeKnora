@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -103,6 +105,23 @@ func TestStreamHandler_EmitAbortsOnCanceledContext(t *testing.T) {
 	err := h.Emit(ctx, types.FetchedItem{ExternalID: "x", Content: []byte("data"), FileName: "x.md"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+type captureKnowledgeRepository struct{}
+
+type captureKnowledgeService struct {
+	interfaces.KnowledgeService
+	repo          *captureKnowledgeRepository
+	fileOverrides *types.KnowledgeProcessOverrides
+}
+
+func (k *captureKnowledgeService) CreateKnowledgeFromFile(
+	_ context.Context, _ string, _ *multipart.FileHeader, _ map[string]string,
+	_ *bool, _ string, _ []string, _ string,
+	processOverrides *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
+	k.fileOverrides = processOverrides
+	return &types.Knowledge{ID: "k-1"}, nil
 }
 
 func TestStreamHandler_EmitForwardsProcessOverrides(t *testing.T) {

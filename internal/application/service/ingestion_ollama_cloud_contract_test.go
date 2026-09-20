@@ -90,7 +90,7 @@ func newOllamaCloudAnalysisModel(t *testing.T, serverURL string) chat.Chat {
 		Source: types.ModelSourceRemote,
 		Parameters: types.ModelParameters{
 			BaseURL: serverURL + "/v1", APIKey: "test-key",
-			Provider: string(provider.ProviderOllamaCloud), ContextWindowTokens: 4096,
+			Provider: string(provider.ProviderOllamaCloud), ContextWindow: 4096,
 		},
 	}
 	config := chat.ConfigFromModel(entity, "", "")

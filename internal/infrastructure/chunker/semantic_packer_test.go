@@ -359,7 +359,7 @@ func TestExplicitLegacyStrategyRemainsUnchanged(t *testing.T) {
 	content := strings.Repeat("legacy paragraph. ", 30)
 	config := SplitterConfig{Strategy: StrategyLegacy, ChunkSize: 80, ChunkOverlap: 10}
 
-	require.Equal(t, SplitText(content, NormalizeConfig(config)), Split(content, config))
+	require.Equal(t, SplitText(content, NormalizeSplitterConfig(config)), Split(content, config))
 }
 
 func requireChunksRestoreSource(t *testing.T, content string, chunks []Chunk) {
@@ -374,6 +374,92 @@ func requireChunksRestoreSource(t *testing.T, content string, chunks []Chunk) {
 	}
 	require.Equal(t, len([]rune(content)), expected)
 	require.Equal(t, content, restored.String())
+}
+
+func TestSemanticPackingPolicyChangesCutPoints(t *testing.T) {
+	content := "# Guide\n\nFirst paragraph stays short.\n\nSecond paragraph is also short.\n"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+
+	merged, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 200, ChunkOverlap: 0, AllowZeroOverlap: true,
+	}, document)
+	require.NoError(t, err)
+	sealed, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 200, ChunkOverlap: 0, AllowZeroOverlap: true,
+		SemanticPackingPolicy: types.SemanticPackingPolicy{
+			StrongBoundaryOrder: []string{"paragraph"},
+		},
+	}, document)
+	require.NoError(t, err)
+	require.Greater(t, len(sealed), len(merged))
+}
+
+func TestSemanticRegionRuleForbidsMixedSections(t *testing.T) {
+	content := "# Alpha\n\nAlpha body.\n\n# Beta\n\nBeta body.\n"
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+
+	chunks, err := SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 400, ChunkOverlap: 0, AllowZeroOverlap: true,
+		SemanticPackingPolicy: types.SemanticPackingPolicy{
+			ForbidMixedSections: true,
+			RegionRules: []types.SemanticPackRegionRule{{
+				Start: 0, End: len([]rune(content)), ForbidMixedSections: true,
+			}},
+		},
+	}, document)
+	require.NoError(t, err)
+	for _, chunk := range chunks {
+		require.False(t, strings.Contains(chunk.Content, "Alpha body") && strings.Contains(chunk.Content, "Beta body"))
+	}
+}
+
+func TestSemanticOversizeTableRowDoesNotCutCells(t *testing.T) {
+	header := "| Case | Result |\n| --- | --- |\n"
+	row := "| " + strings.Repeat("WIDE", 30) + " | overflow |\n"
+	content := header + row
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+
+	_, err = SplitSemanticDocument(content, SplitterConfig{
+		ChunkSize: 40, ChunkOverlap: 0, AllowZeroOverlap: true,
+	}, document)
+
+	require.ErrorContains(t, err, "oversize_atomic")
+}
+
+func TestSemanticParentChildUsesSectionTree(t *testing.T) {
+	content := "# Alpha\n\n" + strings.Repeat("Alpha sentence. ", 18) +
+		"\n\n# Beta\n\n" + strings.Repeat("Beta sentence. ", 18)
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+	require.NoError(t, err)
+
+	result, err := SplitParentChildSemanticDocument(SemanticParentChildRequest{
+		Content: content,
+		ParentConfig: SplitterConfig{
+			ChunkSize: 400, Strategy: StrategyAuto, AllowZeroOverlap: true,
+			SemanticPackingPolicy: types.SemanticPackingPolicy{ParentUnit: types.SemanticParentUnitSection},
+		},
+		ChildConfig: SplitterConfig{
+			ChunkSize: 55, Strategy: StrategyAuto, AllowZeroOverlap: true,
+			SemanticPackingPolicy: types.SemanticPackingPolicy{ParentUnit: types.SemanticParentUnitSection},
+		},
+		Document: document,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Parents)
+	for _, child := range result.Children {
+		if child.ParentIndex < 0 {
+			continue
+		}
+		parent := result.Parents[child.ParentIndex]
+		require.GreaterOrEqual(t, child.Start, parent.Start)
+		require.LessOrEqual(t, child.End, parent.End)
+		if strings.Contains(child.Content, "Alpha sentence") {
+			require.NotContains(t, parent.Content, "Beta sentence")
+		}
+	}
 }
 
 func anyChunkContains(chunks []Chunk, value string) bool {

@@ -73,7 +73,7 @@ func TestRemoteMapRetryPreservesStrictRequestBody(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	model, err := chat.NewRemoteAPIChat(&chat.ChatConfig{
+	model, err := chat.NewRemoteChat(&chat.ChatConfig{
 		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
 		ModelName: "gpt-4o", ModelID: "model-id", APIKey: "test-key", Provider: "openai",
 	})
@@ -128,7 +128,7 @@ func TestRemoteMapRetriesInterruptedResponseBody(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	model, err := chat.NewRemoteAPIChat(&chat.ChatConfig{
+	model, err := chat.NewRemoteChat(&chat.ChatConfig{
 		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
 		ModelName: "gpt-4o", ModelID: "model-id", APIKey: "test-key", Provider: "openai",
 	})
@@ -174,7 +174,7 @@ func TestRemoteReasoningMapUsesRetryAfterWithoutChangingRequest(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	model, err := chat.NewRemoteAPIChat(&chat.ChatConfig{
+	model, err := chat.NewRemoteChat(&chat.ChatConfig{
 		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
 		ModelName: "gpt-5", ModelID: "gpt-5", APIKey: "test-key", Provider: "openai",
 	})

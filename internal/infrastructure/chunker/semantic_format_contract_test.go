@@ -23,6 +23,12 @@ type semanticFormatContract struct {
 	ExpectedHintsAccepted int                       `json:"expected_hints_accepted"`
 	ExpectedHintsRejected int                       `json:"expected_hints_rejected"`
 	ReportRegression      bool                      `json:"report_regression"`
+	PackChecks            []semanticFormatPackCheck `json:"pack_checks"`
+}
+
+type semanticFormatPackCheck struct {
+	Marker          string `json:"marker"`
+	RequiredContext string `json:"required_context"`
 }
 
 type semanticFormatStructure struct {
@@ -55,7 +61,39 @@ func TestSemanticFormatContractsFuseOptionalStructure(t *testing.T) {
 			for _, kind := range contract.ExpectedKinds {
 				require.Contains(t, semanticKinds(document.Blocks), kind)
 			}
+			requireSemanticPackChecks(t, contract, document)
 		})
+	}
+}
+
+func requireSemanticPackChecks(t *testing.T, contract semanticFormatContract, document SemanticDocument) {
+	t.Helper()
+	if len(contract.PackChecks) == 0 {
+		return
+	}
+	chunks, err := SplitSemanticDocument(contract.Markdown, SplitterConfig{
+		Strategy: StrategyAuto, ChunkSize: 120, ChunkOverlap: 0, AllowZeroOverlap: true,
+	}, document)
+	require.NoError(t, err)
+	requireChunksRestoreSource(t, contract.Markdown, chunks)
+	for _, check := range contract.PackChecks {
+		require.NotEmpty(t, check.Marker)
+		found := false
+		for _, chunk := range chunks {
+			if !strings.Contains(chunk.Content, check.Marker) {
+				continue
+			}
+			found = true
+			if check.RequiredContext == "" {
+				break
+			}
+			require.Contains(
+				t, chunk.EmbeddingContent(), check.RequiredContext,
+				"format %s marker %q lost required context after pack", contract.Format, check.Marker,
+			)
+			break
+		}
+		require.True(t, found, "format %s pack lost marker %q", contract.Format, check.Marker)
 	}
 }
 

@@ -103,7 +103,7 @@ func withIngestionAnalysisBudgetForTest(
 
 func emitIngestionProgressForTest(progress func(types.IngestionAgentStep)) {
 	for _, toolName := range []string{
-		agenttools.ToolKnowledgeSearch, previewIngestionChunkingTool, submitIngestionDecisionTool,
+		agenttools.ToolSearchKnowledge, previewIngestionChunkingTool, submitIngestionDecisionTool,
 	} {
 		progress(types.IngestionAgentStep{Round: 1, ToolName: toolName, Status: "running"})
 		progress(types.IngestionAgentStep{

@@ -116,7 +116,43 @@ func normalizeOneHTMLTable(conv *converter.Converter, block string) string {
 	if converted == "" || !markdownTableSeparatorPattern.MatchString(converted) {
 		return fallback()
 	}
-	return converted
+	return promoteEmptyGFMTableHeader(converted)
+}
+
+// promoteEmptyGFMTableHeader rewrites converter output where every source cell
+// was <td>, so html-to-markdown emits an empty header row and treats the real
+// column names as the first body row. Continuation chunks must carry those
+// names, not the empty pipes.
+func promoteEmptyGFMTableHeader(table string) string {
+	lines := strings.Split(strings.ReplaceAll(table, "\r\n", "\n"), "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) < 3 {
+		return table
+	}
+	header, separator, firstBody := lines[0], lines[1], lines[2]
+	if !markdownTableSeparatorPattern.MatchString(separator) {
+		return table
+	}
+	if gfmHeaderColumnRow(header) != "" || gfmHeaderColumnRow(firstBody) == "" {
+		return table
+	}
+	promoted := append([]string{firstBody, separator}, lines[3:]...)
+	return strings.Join(promoted, "\n")
+}
+
+func gfmHeaderColumnRow(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.Contains(line, "---") {
+		return ""
+	}
+	for _, r := range line {
+		if r != '|' && r != ' ' && r != '\t' {
+			return line
+		}
+	}
+	return ""
 }
 
 func indexInsideSpans(pos int, spans [][]int) bool {

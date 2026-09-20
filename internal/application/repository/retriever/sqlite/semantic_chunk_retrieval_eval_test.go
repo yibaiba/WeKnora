@@ -36,6 +36,7 @@ type semanticRetrievalQuery struct {
 	Query           string `json:"query"`
 	Marker          string `json:"marker"`
 	RequiredContext string `json:"required_context"`
+	Excerpt         string `json:"excerpt"`
 }
 
 type indexedSemanticChunks struct {
@@ -43,6 +44,7 @@ type indexedSemanticChunks struct {
 	metricIDs        map[string]int
 	relevantIDs      map[string]int
 	contextByChunkID map[string]string
+	sourceByChunkID  map[string]string
 }
 
 type semanticEvalIndexRequest struct {
@@ -89,7 +91,10 @@ func TestSemanticChunkingRetrievalRecallAtFive(t *testing.T) {
 	require.GreaterOrEqual(t, semanticMetrics.Structure.RecallAtFive, 0.95)
 	require.GreaterOrEqual(t, semanticMetrics.Structure.ContextCompletenessRate, 0.95)
 	require.GreaterOrEqual(t, semanticMetrics.Ordinary.RecallAtFive, baselineMetrics.Ordinary.RecallAtFive)
+	require.GreaterOrEqual(t, semanticMetrics.Ordinary.TokenIoU, baselineMetrics.Ordinary.TokenIoU)
 	require.GreaterOrEqual(t, semanticMetrics.Overall.RecallAtFive, baselineMetrics.Overall.RecallAtFive)
+	requireSemanticKindGates(t, semanticMetrics, fixture.Queries)
+	require.NoError(t, validateSemanticRolloutGate(semanticMetrics, baselineMetrics))
 	requireSemanticMetricRange(t, semanticMetrics)
 	requireSemanticMetricRange(t, baselineMetrics)
 	logSemanticEvaluation(t, "keyword_semantic", semanticMetrics)
@@ -113,6 +118,7 @@ func TestSemanticParentChildKeywordRetrievalPreservesContext(t *testing.T) {
 
 	require.GreaterOrEqual(t, report.Structure.RecallAtFive, 0.95)
 	require.GreaterOrEqual(t, report.Structure.ContextCompletenessRate, 0.95)
+	requireSemanticKindGates(t, report, fixture.Queries)
 	requireSemanticMetricRange(t, report)
 	logSemanticEvaluation(t, "keyword_parent_child", report)
 }
@@ -170,11 +176,13 @@ func indexSemanticEvalChunks(
 		metricIDs:        make(map[string]int, len(request.chunks)),
 		relevantIDs:      make(map[string]int, len(request.queries)),
 		contextByChunkID: make(map[string]string, len(request.chunks)),
+		sourceByChunkID:  make(map[string]string, len(request.chunks)),
 	}
 	for position, current := range request.chunks {
 		chunkID := fmt.Sprintf("%s-%03d", request.prefix, position)
 		index.metricIDs[chunkID] = position + 1
 		index.contextByChunkID[chunkID] = current.EmbeddingContent()
+		index.sourceByChunkID[chunkID] = current.Content
 		if position < len(request.contexts) && request.contexts[position] != "" {
 			index.contextByChunkID[chunkID] = request.contexts[position]
 		}
@@ -216,7 +224,7 @@ func evaluateSemanticRetrieval(
 			require.NotZero(t, metricID, "unknown retrieved chunk %q", result.ChunkID)
 		}
 		metrics := computeSemanticQueryMetrics(request.index, query, retrieved)
-		accumulator.add(query.Class, metrics)
+		accumulator.add(query.Class, query.Kind, metrics)
 		if request.requireStructureHit && query.Class == semanticQueryClassStructure {
 			require.Equal(t, 1.0, metrics.RecallAtFive, "structure query %q missed target evidence", query.Query)
 			require.Equal(t, 1.0, metrics.ContextCompletenessRate, "structure query %q lost context", query.Query)
@@ -257,17 +265,36 @@ func loadSemanticRetrievalFixture(t *testing.T) semanticRetrievalFixture {
 	require.NotEmpty(t, fixture.Markdown)
 	require.NotEmpty(t, fixture.Queries)
 	requireSemanticFixtureCoverage(t, fixture.Queries)
+	for _, query := range fixture.Queries {
+		require.Contains(t, fixture.Markdown, query.Marker)
+		if query.Excerpt != "" {
+			require.Contains(t, fixture.Markdown, query.Excerpt)
+		}
+		if query.RequiredContext != "" {
+			require.Contains(t, fixture.Markdown, query.RequiredContext)
+		}
+	}
 	return fixture
 }
 
 func requireSemanticFixtureCoverage(t *testing.T, queries []semanticRetrievalQuery) {
 	t.Helper()
 	kinds := make(map[string]bool)
+	tableQueries := 0
 	for _, query := range queries {
 		require.Contains(t, []string{semanticQueryClassStructure, semanticQueryClassOrdinary}, query.Class)
 		require.NotEmpty(t, query.Kind)
+		require.NotEmpty(t, query.Marker)
 		kinds[query.Kind] = true
+		if query.Kind == "table" {
+			tableQueries++
+			require.Contains(t, query.RequiredContext, "|", "table query %q must label the header", query.Query)
+		}
+		if query.Class == semanticQueryClassStructure {
+			require.NotEmpty(t, query.RequiredContext, "structure query %q missing required_context", query.Query)
+		}
 	}
+	require.GreaterOrEqual(t, tableQueries, 3, "fixture needs an oversized table query in addition to mixed-language tables")
 	for _, required := range []string{"text", "table", "faq", "record", "code", "toc_body", "cross_page"} {
 		require.True(t, kinds[required], "fixture missing query kind %q", required)
 	}

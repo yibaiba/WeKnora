@@ -76,7 +76,13 @@
       ],
       "expected_kinds": ["heading", "paragraph", "list_item", "table_header", "table_row", "image_caption", "page_region"],
       "expected_hints_accepted": 8,
-      "expected_hints_rejected": 0
+      "expected_hints_rejected": 0,
+      "pack_checks": [
+        {
+          "marker": "Connectivity",
+          "required_context": "| Check | Result |"
+        }
+      ]
     },
     {
       "format": "pdf",
@@ -179,7 +185,17 @@
       ],
       "expected_kinds": ["heading", "list_item", "page_region", "paragraph", "table_header", "table_row", "record", "image_caption"],
       "expected_hints_accepted": 10,
-      "expected_hints_rejected": 1
+      "expected_hints_rejected": 1,
+      "pack_checks": [
+        {
+          "marker": "TC-LOGIN",
+          "required_context": "| Case | Category | Result |"
+        },
+        {
+          "marker": "PERF-001",
+          "required_context": "## Performance"
+        }
+      ]
     },
     {
       "format": "markdown",
@@ -187,7 +203,17 @@
       "structure_blocks": [],
       "expected_kinds": ["heading", "faq", "code_block"],
       "expected_hints_accepted": 0,
-      "expected_hints_rejected": 0
+      "expected_hints_rejected": 0,
+      "pack_checks": [
+        {
+          "marker": "Retry only after the reported failure is resolved.",
+          "required_context": "Q: How is a request retried?"
+        },
+        {
+          "marker": "func retry() error",
+          "required_context": "```go"
+        }
+      ]
     },
     {
       "format": "html",
@@ -295,7 +321,13 @@
       ],
       "expected_kinds": ["heading", "paragraph", "list_item", "table_header", "table_row", "image_caption", "page_region"],
       "expected_hints_accepted": 8,
-      "expected_hints_rejected": 1
+      "expected_hints_rejected": 1,
+      "pack_checks": [
+        {
+          "marker": "Recall",
+          "required_context": "| Metric | State |"
+        }
+      ]
     }
   ]
 }

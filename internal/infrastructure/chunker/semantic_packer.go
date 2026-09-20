@@ -3,7 +3,6 @@ package chunker
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 type semanticPackingUnit struct {
@@ -75,57 +74,6 @@ func (packer semanticPacker) expand(blocks []SemanticBlock) ([]semanticPackingUn
 	return units, nil
 }
 
-func (packer semanticPacker) splitOversize(block SemanticBlock) ([]semanticPackingUnit, error) {
-	result := make([]semanticPackingUnit, 0, (block.End-block.Start)/packer.config.ChunkSize+1)
-	start := block.Start
-	for start < block.End {
-		continuation := start > block.Start
-		context, contextErr := packer.context.contextFor(
-			block, semanticContextOptions{
-				continuation: continuation, tokenLimit: packer.config.TokenLimit,
-				counter: packer.config.TokenCounter, embeddingPrefix: packer.config.EmbeddingPrefix,
-			},
-		)
-		if contextErr != nil {
-			return nil, contextErr
-		}
-		limit, err := packer.sourceBudget(context.header)
-		if err != nil {
-			return nil, err
-		}
-		if limit <= 0 {
-			return nil, fmt.Errorf("semantic context exceeds chunk budget")
-		}
-		end := min(block.End, start+limit)
-		if end < block.End {
-			end = semanticSafeCut(packer.runes, semanticCutRequest{
-				start: start, proposed: end, kind: block.Kind,
-			})
-		}
-		for end > start {
-			fits, fitErr := packer.fits(start, end, context.header)
-			if fitErr != nil {
-				return nil, fitErr
-			}
-			if fits {
-				break
-			}
-			end--
-		}
-		if end <= start {
-			return nil, fmt.Errorf("semantic block cannot fit chunk budget")
-		}
-		part := block
-		part.Start, part.End = start, end
-		result = append(result, semanticPackingUnit{
-			SemanticBlock: part, ContextHeader: context.header,
-			ContextReasonCodes: context.reasonCodes,
-		})
-		start = end
-	}
-	return result, nil
-}
-
 func (packer semanticPacker) sourceBudget(header string) (int, error) {
 	limit := packer.config.ChunkSize
 	if packer.config.TokenLimit <= 0 {
@@ -181,24 +129,4 @@ type semanticCutRequest struct {
 	start    int
 	proposed int
 	kind     string
-}
-
-func semanticSafeCut(content []rune, request semanticCutRequest) int {
-	for position := request.proposed; position > request.start; position-- {
-		current := content[position-1]
-		if current == '\n' {
-			return position
-		}
-		if request.kind == SemanticKindTableRow && current == '|' {
-			return position
-		}
-		if semanticNarrativeKind(request.kind) && (strings.ContainsRune("。！？.!?;；", current) || unicode.IsSpace(current)) {
-			return position
-		}
-	}
-	return request.proposed
-}
-
-func semanticNarrativeKind(kind string) bool {
-	return kind == SemanticKindParagraph || kind == SemanticKindPreamble || kind == SemanticKindFAQ
 }

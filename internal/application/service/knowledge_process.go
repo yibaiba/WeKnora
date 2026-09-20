@@ -2657,7 +2657,10 @@ func (s *knowledgeService) ReparseKnowledge(
 			return nil, werrors.NewBadRequestError("无法获取手工知识内容")
 		}
 
-		resetKnowledgeForReparse(existing, kb)
+		if err := resetKnowledgeForReparse(existing, kb); err != nil {
+			logger.Errorf(ctx, "Failed to reset knowledge before reparse: %v", err)
+			return nil, err
+		}
 
 		if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
 			logger.Errorf(ctx, "Failed to update knowledge status before reparse: %v", err)
@@ -2688,7 +2691,10 @@ func (s *knowledgeService) ReparseKnowledge(
 	}
 
 	// Step 2: Update knowledge status and metadata
-	resetKnowledgeForReparse(existing, kb)
+	if err := resetKnowledgeForReparse(existing, kb); err != nil {
+		logger.Errorf(ctx, "Failed to reset knowledge before reparse: %v", err)
+		return nil, err
+	}
 
 	if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
 		logger.Errorf(ctx, "Failed to update knowledge status before reparse: %v", err)
@@ -2871,7 +2877,7 @@ func (s *knowledgeService) ReparseKnowledge(
 // resetKnowledgeForReparse makes the top-level knowledge state describe the
 // new processing attempt rather than retaining terminal state from the
 // previous one.
-func resetKnowledgeForReparse(knowledge *types.Knowledge, kb *types.KnowledgeBase) {
+func resetKnowledgeForReparse(knowledge *types.Knowledge, kb *types.KnowledgeBase) error {
 	knowledge.ParseStatus = types.ParseStatusPending
 	knowledge.EnableStatus = "disabled"
 	knowledge.Description = ""
@@ -2881,6 +2887,7 @@ func resetKnowledgeForReparse(knowledge *types.Knowledge, kb *types.KnowledgeBas
 	// UpdateKnowledge deliberately omits pending_subtasks_count, so callers
 	// must still persist this reset through an explicit column update.
 	knowledge.PendingSubtasksCount = 0
+	return knowledge.SetIngestionAnalysis(nil)
 }
 
 // CancelKnowledgeParse marks an in-progress parse as cancelled by the user.
@@ -3675,6 +3682,8 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		}
 	}
 
+	parserMarkdown := convertResult.MarkdownContent
+
 	// Step 1.5: ASR transcription for audio files
 	if convertResult != nil && convertResult.IsAudio && len(convertResult.AudioData) > 0 {
 		if !eff.ASRConfig.IsASREnabled() {
@@ -3726,6 +3735,8 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		convertResult.MarkdownContent = transcribedText
 		convertResult.IsAudio = false
 		convertResult.AudioData = nil
+		parserMarkdown = transcribedText
+		convertResult.StructureBlocks = nil
 	}
 
 	// Normalize inline HTML tables from any parser engine (MinerU, builtin,
@@ -3774,9 +3785,28 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		logger.Infof(ctx, "Resolved %d total images for knowledge %s", len(storedImages), knowledge.ID)
 	}
 
-	// Step 3: Split into chunks using Go chunker. Line endings and inline
-	// HTML tables were normalized before image resolution above.
-	chunkCfg := buildSplitterConfigFromChunking(eff.ChunkingConfig)
+	semanticDocument, err := analyzeFinalSemanticDocument(finalSemanticDocumentRequest{
+		finalMarkdown: convertResult.MarkdownContent, parserMarkdown: parserMarkdown,
+		structure: convertResult.StructureBlocks,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Smart document analysis owns only the chunking fields it recommends.
+	// Parser, VLM, ASR, enrichment and language/token settings remain in the
+	// previously resolved effective config. Line endings, HTML tables and
+	// images were rewritten before this analysis so offsets match packer content.
+	eff, err = s.applyIngestionAdvisor(ctx, ingestionAdvisorRun{
+		Knowledge: knowledge,
+		KB:        kb,
+		Content:   convertResult.MarkdownContent,
+		Effective: eff,
+		Document:  semanticDocument,
+	})
+	if err != nil {
+		return nil
+	}
 
 	processOpts := ProcessChunksOptions{
 		EnableQuestionGeneration: payload.EnableQuestionGeneration,
@@ -3789,39 +3819,26 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		processOpts.Metadata = convertResult.Metadata
 	}
 
-	if eff.ChunkingConfig.EnableParentChild {
-		parentCfg, childCfg := buildParentChildConfigs(eff.ChunkingConfig, chunkCfg)
-		pcResult := chunker.SplitParentChild(convertResult.MarkdownContent, parentCfg, childCfg)
-		chunks = make([]types.ParsedChunk, len(pcResult.Children))
-		for i, c := range pcResult.Children {
-			chunks[i] = types.ParsedChunk{
-				Content:       c.Content,
-				ContextHeader: c.ContextHeader,
-				Seq:           c.Seq,
-				Start:         c.Start,
-				End:           c.End,
-				ParentIndex:   c.ParentIndex,
-			}
+	var productionTokenCounter types.TokenCounter
+	if eff.IngestionAdvisorApplied {
+		productionTokenCounter, err = s.resolveIngestionTokenCounter(ctx, kb)
+		if err != nil {
+			return err
 		}
-		parentChunks := make([]types.ParsedParentChunk, len(pcResult.Parents))
-		for i, p := range pcResult.Parents {
-			parentChunks[i] = types.ParsedParentChunk{Content: p.Content, Seq: p.Seq, Start: p.Start, End: p.End}
-		}
-		processOpts.ParentChunks = parentChunks
+	}
+	splitResult, err := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
+		content: convertResult.MarkdownContent, effective: eff, document: semanticDocument,
+		tokenCounter: productionTokenCounter, embeddingPrefix: knowledge.Title,
+	})
+	if err != nil {
+		return err
+	}
+	chunks = splitResult.chunks
+	processOpts.ParentChunks = splitResult.parents
+	if len(splitResult.parents) > 0 {
 		logger.Infof(ctx, "Split document into %d parent + %d child chunks for knowledge %s",
-			len(pcResult.Parents), len(pcResult.Children), knowledge.ID)
+			len(splitResult.parents), len(chunks), knowledge.ID)
 	} else {
-		splitChunks := chunker.Split(convertResult.MarkdownContent, chunkCfg)
-		chunks = make([]types.ParsedChunk, len(splitChunks))
-		for i, c := range splitChunks {
-			chunks[i] = types.ParsedChunk{
-				Content:       c.Content,
-				ContextHeader: c.ContextHeader,
-				Seq:           c.Seq,
-				Start:         c.Start,
-				End:           c.End,
-			}
-		}
 		logger.Infof(ctx, "Split document into %d chunks for knowledge %s", len(chunks), knowledge.ID)
 	}
 

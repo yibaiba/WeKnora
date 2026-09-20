@@ -15,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -332,16 +333,50 @@ func withMaxContextTokens(n int) testEngineOption {
 }
 
 func TestWithinIterationBudgetUnlimited(t *testing.T) {
+	ctx := context.Background()
 	unlimited := newTestEngine(t, &mockChat{}, withMaxIterations(types.UnlimitedMaxIterations))
-	require.True(t, unlimited.withinIterationBudget(0))
-	require.True(t, unlimited.withinIterationBudget(10_000))
+	require.True(t, unlimited.withinIterationBudget(ctx, 0))
+	require.True(t, unlimited.withinIterationBudget(ctx, 10_000))
 	require.Equal(t, "unlimited", unlimited.maxIterationsDisplay())
 
 	capped := newTestEngine(t, &mockChat{}, withMaxIterations(3))
-	require.True(t, capped.withinIterationBudget(0))
-	require.True(t, capped.withinIterationBudget(2))
-	require.False(t, capped.withinIterationBudget(3))
+	require.True(t, capped.withinIterationBudget(ctx, 0))
+	require.True(t, capped.withinIterationBudget(ctx, 2))
+	require.False(t, capped.withinIterationBudget(ctx, 3))
 	require.Equal(t, "3", capped.maxIterationsDisplay())
+}
+
+func TestExecuteTaskStopsAfterTerminationToolWithoutFinalAnswer(t *testing.T) {
+	tool := newCountingTool("submit_decision")
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		ToolCalls: []types.LLMToolCall{{
+			ID: "call-1",
+			Function: types.FunctionCall{Name: tool.Name(), Arguments: `{}`},
+		}},
+		Done: true, FinishReason: "tool_calls",
+	}}}}}
+	engine := newTestEngine(t, model)
+	registry := agenttools.NewToolRegistry()
+	registry.RegisterTool(tool)
+	engine.toolRegistry = registry
+
+	state, err := engine.ExecuteTask(context.Background(), interfaces.AgentTaskRequest{
+		SessionID: "s", MessageID: "m", Query: "choose a candidate",
+		Options: interfaces.AgentTaskOptions{
+			SystemPrompt:     "You must call submit_decision.",
+			MaxIterations:    4,
+			TerminationTools: []string{tool.Name()},
+			SkipFinalAnswer:  true,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "termination_tool", state.StopReason)
+	require.Equal(t, tool.Name(), state.TerminatedByTool)
+	require.Equal(t, 1, tool.calls)
+	require.Equal(t, 1, model.callCount, "must not request a chat final-answer round")
+	require.Contains(t, model.calls[0][0].Content, "You must call submit_decision.")
 }
 
 // History may not fill the window: the reply has to land somewhere. A reserve

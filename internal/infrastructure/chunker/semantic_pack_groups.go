@@ -1,6 +1,10 @@
 package chunker
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 type semanticPackGroup struct {
 	units        []semanticPackingUnit
@@ -93,14 +97,32 @@ func (packer semanticPacker) canMerge(group semanticPackGroup, next semanticPack
 		return false, err
 	}
 	anchor := lastSemanticMeaningfulUnit(group.units, packer.runes)
+	policy := packer.ruleFor(next)
 	if next.Kind == SemanticKindHeading {
 		return false, nil
+	}
+	if policy.PreserveRepeatedPageRegions &&
+		(anchor.Kind == SemanticKindPageRegion || next.Kind == SemanticKindPageRegion) {
+		return false, nil
+	}
+	if semanticStrongBoundary(policy, next.Kind) && next.Kind != SemanticKindTableRow {
+		return false, nil
+	}
+	if policy.ForbidMixedSections {
+		anchorRoot := packer.context.headingRootID(anchor.SemanticBlock)
+		nextRoot := packer.context.headingRootID(next.SemanticBlock)
+		if anchorRoot != nextRoot && !(anchor.Kind == SemanticKindHeading && next.ParentID == anchor.ID) {
+			return false, nil
+		}
 	}
 	if anchor.Kind == SemanticKindHeading {
 		return next.ParentID == anchor.ID, nil
 	}
 	if semanticStandaloneKind(anchor.Kind) || semanticStandaloneKind(next.Kind) {
 		return false, nil
+	}
+	if policy.SeparateRecords && (anchor.Kind == SemanticKindRecord || next.Kind == SemanticKindRecord) {
+		return anchor.RecordID != "" && anchor.RecordID == next.RecordID, nil
 	}
 	if anchor.TableID != "" || next.TableID != "" {
 		return anchor.TableID != "" && anchor.TableID == next.TableID, nil
@@ -109,6 +131,63 @@ func (packer semanticPacker) canMerge(group semanticPackGroup, next semanticPack
 		return anchor.RecordID != "" && anchor.RecordID == next.RecordID, nil
 	}
 	return anchor.Kind == next.Kind && anchor.ParentID == next.ParentID, nil
+}
+
+func (packer semanticPacker) ruleFor(unit semanticPackingUnit) types.SemanticPackingPolicy {
+	policy := packer.config.SemanticPackingPolicy
+	for _, rule := range policy.RegionRules {
+		if unit.Start < rule.Start || unit.Start >= rule.End {
+			continue
+		}
+		if len(rule.StrongBoundaryOrder) > 0 {
+			policy.StrongBoundaryOrder = append([]string(nil), rule.StrongBoundaryOrder...)
+		}
+		policy.SeparateRecords = policy.SeparateRecords || rule.SeparateRecords
+		policy.PreserveRepeatedPageRegions = policy.PreserveRepeatedPageRegions || rule.PreserveRepeatedPageRegions
+		policy.RepeatRequiredContext = policy.RepeatRequiredContext || rule.RepeatRequiredContext
+		policy.ForbidMixedSections = policy.ForbidMixedSections || rule.ForbidMixedSections
+		if rule.ChildUnit != "" {
+			policy.ChildUnit = rule.ChildUnit
+		}
+		if rule.ParentUnit != "" {
+			policy.ParentUnit = rule.ParentUnit
+		}
+	}
+	return policy
+}
+
+func semanticStrongBoundary(policy types.SemanticPackingPolicy, kind string) bool {
+	token := semanticBoundaryToken(kind)
+	if token == "" {
+		return false
+	}
+	for _, current := range policy.StrongBoundaryOrder {
+		if current == token {
+			return true
+		}
+	}
+	return false
+}
+
+func semanticBoundaryToken(kind string) string {
+	switch kind {
+	case SemanticKindHeading:
+		return "section"
+	case SemanticKindParagraph:
+		return "paragraph"
+	case SemanticKindRecord:
+		return "record"
+	case SemanticKindTableHeader, SemanticKindTableRow:
+		return "table_row"
+	case SemanticKindListItem:
+		return "list_item"
+	case SemanticKindFAQ:
+		return "faq_pair"
+	case SemanticKindCodeBlock:
+		return "code_block"
+	default:
+		return ""
+	}
 }
 
 func lastSemanticMeaningfulUnit(units []semanticPackingUnit, content []rune) semanticPackingUnit {

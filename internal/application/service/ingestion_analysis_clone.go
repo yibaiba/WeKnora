@@ -42,6 +42,8 @@ func cloneIngestionSemanticDiagnostics(
 ) types.IngestionSemanticDiagnostics {
 	diagnostics.HintRejectionReasonCounts = cloneStringIntMap(diagnostics.HintRejectionReasonCounts)
 	diagnostics.StructureViolationCounts = cloneStringIntMap(diagnostics.StructureViolationCounts)
+	diagnostics.KindBlockCounts = cloneStringIntMap(diagnostics.KindBlockCounts)
+	diagnostics.KindViolationCounts = cloneStringIntMap(diagnostics.KindViolationCounts)
 	diagnostics.TokenCountModeCounts = cloneStringIntMap(diagnostics.TokenCountModeCounts)
 	return diagnostics
 }

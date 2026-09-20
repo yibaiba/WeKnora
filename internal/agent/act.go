@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -102,7 +103,7 @@ func buildToolSpanInput(tc types.LLMToolCall, resolvedArgs map[string]any, sensi
 // update. Extracted from runToolCall so the tool-call pipeline keeps
 // a single assignment per line and the observability-specific logic
 // (payload shaping, error classification) lives in one place.
-func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durationMs int64) {
+func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durationMs int64, redacted bool) {
 	if span == nil {
 		return
 	}
@@ -111,7 +112,7 @@ func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durat
 		"success":     success,
 		"duration_ms": durationMs,
 	}
-	if tc.Result != nil {
+	if tc.Result != nil && !redacted {
 		if tc.Result.Output != "" {
 			output["output"] = truncateForLangfuse(tc.Result.Output, langfuseToolOutputPreview)
 			output["output_len"] = len(tc.Result.Output)
@@ -129,25 +130,28 @@ func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durat
 			output["image_count"] = len(tc.Result.Images)
 		}
 	}
-	// Classify the span's outcome: a non-nil execErr is always an error, and
-	// a result with Success=false is treated as an error too (matches the
-	// user-visible behaviour — the LLM would see this as a failed tool call
-	// and try a different approach).
-	var spanErr error
-	switch {
-	case execErr != nil:
-		spanErr = execErr
-	case tc.Result != nil && !tc.Result.Success:
-		msg := tc.Result.Error
-		if msg == "" {
-			msg = "tool returned success=false"
-		}
-		spanErr = errors.New(msg)
-	}
 	span.Finish(output, map[string]interface{}{
 		"success":     success,
 		"duration_ms": durationMs,
-	}, spanErr)
+		"redacted":    redacted,
+	}, toolSpanError(tc, execErr, redacted))
+}
+
+func toolSpanError(tc types.ToolCall, execErr error, redacted bool) error {
+	if execErr == nil && (tc.Result == nil || tc.Result.Success) {
+		return nil
+	}
+	if redacted {
+		return errors.New(agenttools.RedactedToolFailureMessage)
+	}
+	if execErr != nil {
+		return execErr
+	}
+	message := tc.Result.Error
+	if message == "" {
+		message = "tool returned success=false"
+	}
+	return errors.New(message)
 }
 
 // dataKeys returns the sorted top-level keys of a tool's Data map.
@@ -342,6 +346,7 @@ func (e *AgentEngine) emitToolOutcome(
 	if result == nil {
 		result = &types.ToolResult{Success: false, Error: "no result"}
 	}
+	eventResult := taskSafeToolResult(ctx, result)
 
 	e.eventBus.Emit(ctx, event.Event{
 		ID:        toolCall.ID + "-tool-result",
@@ -350,9 +355,9 @@ func (e *AgentEngine) emitToolOutcome(
 		Data: event.AgentToolResultData{
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.ExecutionName(),
-			Output:     result.Output,
-			Error:      result.Error,
-			Success:    result.Success,
+			Output:     eventResult.Output,
+			Error:      eventResult.Error,
+			Success:    eventResult.Success,
 			Duration:   toolCall.Duration,
 			Iteration:  iteration,
 			Data:       agenttools.SanitizeToolDataForPersist(toolCall.Name, result.Data),
@@ -366,13 +371,30 @@ func (e *AgentEngine) emitToolOutcome(
 		Data: event.AgentActionData{
 			Iteration:  iteration,
 			ToolName:   toolCall.ExecutionName(),
-			ToolInput:  toolCall.ExecutionArgs(),
-			ToolOutput: result.Output,
-			Success:    result.Success,
-			Error:      result.Error,
+			ToolInput:  taskSafeToolArgs(ctx, toolCall.ExecutionArgs()),
+			ToolOutput: eventResult.Output,
+			Success:    eventResult.Success,
+			Error:      eventResult.Error,
 			Duration:   toolCall.Duration,
 		},
 	})
+}
+
+func taskSafeToolArgs(ctx context.Context, args map[string]any) map[string]any {
+	if agenttools.ToolPayloadsRedacted(ctx) {
+		return nil
+	}
+	return args
+}
+
+func taskSafeToolResult(ctx context.Context, result *types.ToolResult) *types.ToolResult {
+	if !agenttools.ToolPayloadsRedacted(ctx) || result == nil {
+		return result
+	}
+	return &types.ToolResult{
+		Success: result.Success,
+		Error:   agenttools.ToolErrorForObservability(ctx, result.Error),
+	}
 }
 
 // executeSingleToolCall runs one tool call sequentially (original behavior).
@@ -390,11 +412,41 @@ func (e *AgentEngine) executeSingleToolCall(
 func (e *AgentEngine) runToolCall(
 	ctx context.Context, tc types.LLMToolCall, i int,
 	iteration, round int, sessionID, assistantMessageID string,
-) types.ToolCall {
+) (completed types.ToolCall) {
 	tc.ID = agenttools.NormalizeToolCallID(tc.ID, tc.Function.Name, i)
 	total := "?" // unknown in isolation; callers log the batch size
 	toolTag := fmt.Sprintf("[Agent][Round-%d][Tool %s (%d/%s)]",
 		round, tc.Function.Name, i+1, total)
+	taskStart := time.Now()
+	emitTaskEvent(ctx, interfaces.AgentTaskEvent{
+		Kind: taskEventToolStarted, ToolCallID: tc.ID,
+		Round: round, ToolName: tc.Function.Name, Status: "running",
+	})
+	defer func() {
+		success := completed.Result != nil && completed.Result.Success
+		markTerminationTool(ctx, tc.Function.Name, success)
+		status := "failed"
+		if success {
+			status = "succeeded"
+		}
+		duration := completed.Duration
+		if duration == 0 {
+			duration = time.Since(taskStart).Milliseconds()
+		}
+		var failure *types.ToolFailure
+		if completed.Result != nil {
+			failure = completed.Result.Failure
+		}
+		emitTaskEvent(ctx, interfaces.AgentTaskEvent{
+			Kind:       taskEventToolFinished,
+			ToolCallID: tc.ID,
+			Round:      round,
+			ToolName:   tc.Function.Name,
+			Status:     status,
+			DurationMS: duration,
+			Failure:    failure,
+		})
+	}()
 
 	var args map[string]any
 	argsStr := tc.Function.Arguments
@@ -584,7 +636,7 @@ func (e *AgentEngine) runToolCall(
 			toolTag, duration, success, outputLen)
 	}
 
-	finishToolSpan(toolSpan, toolCall, err, duration)
+	finishToolSpan(toolSpan, toolCall, err, duration, agenttools.ToolPayloadsRedacted(ctx))
 
 	// Pipeline event for monitoring
 	toolSuccess := toolCall.Result != nil && toolCall.Result.Success

@@ -18,7 +18,8 @@ test('selects multiple document tags and returns them with the confirmation resu
 test('uses confirmed tags for file and URL imports instead of reading the list filter at upload time', () => {
   assert.match(knowledgeBase, /const tagIds = result\.tagIds \|\| \[\]/)
   assert.match(knowledgeBase, /enqueueUploads\(files, \{[\s\S]*?\btagIds,[\s\S]*?\}\)/)
-  assert.match(knowledgeBase, /executeUrlImport\(url, processConfig, tagIds\)/)
+  assert.match(knowledgeBase, /withoutIngestionAdvisor\(processConfig\)/)
+  assert.match(knowledgeBase, /executeUrlImport\(url, urlProcessConfig, tagIds\)/)
   assert.doesNotMatch(
     knowledgeBase,
     /const tagIdsToUpload = selectedTagIds\.value\.length > 0 \? \[\.\.\.selectedTagIds\.value\] : undefined/,
@@ -65,6 +66,40 @@ test('routes global knowledge file drops through the upload confirmation flow', 
   assert.match(platform, /weknora:knowledge-file-drop/)
   assert.match(knowledgeBase, /handleKnowledgeFileDrop/)
   assert.match(knowledgeBase, /handleUploadSourceFiles\(files\)/)
+})
+
+test('defaults new file uploads to smart analysis while preserving legacy reparse behavior', () => {
+  const initializer = dialog.slice(
+    dialog.indexOf('function initializeIngestionAdvisorMode'),
+    dialog.indexOf('const appendFiles'),
+  )
+  assert.match(initializer, /ingestionAdvisorMode = localFiles\.value\.length > 0 \? 'smart' : 'off'/)
+  assert.match(initializer, /processOverrides\?\.ingestion_advisor\?\.mode === 'smart'/)
+  assert.match(initializer, /ingestionAdvisorMode = 'off'/)
+})
+
+test('only opts eligible file uploads and file reparses into the advisor', () => {
+  const availability = dialog.slice(
+    dialog.indexOf('const advisorModeAvailable'),
+    dialog.indexOf('const isSmartAnalysis'),
+  )
+  assert.match(availability, /props\.mode === 'file'/)
+  assert.match(availability, /localFiles\.value\.length > 0/)
+  assert.match(availability, /knowledgeType === 'file'/)
+  assert.match(availability, /!source\.isDatasource/)
+  const payload = dialog.slice(
+    dialog.indexOf('if (advisorModeAvailable.value)'),
+    dialog.indexOf('if (state.pdfForceScanned)'),
+  )
+  assert.match(payload, /if \(advisorModeAvailable\.value\)/)
+  assert.match(payload, /mode: state\.ingestionAdvisorMode/)
+})
+
+test('keeps external smart tools opt-in and explains source-content transfer', () => {
+  assert.match(dialog, /uploadConfirm\.smartWebAccessDescription/)
+  assert.match(dialog, /uploadConfirm\.smartMcpAccessDescription/)
+  assert.match(dialog, /allowSmartWebAccess/)
+  assert.match(dialog, /allowSmartReadOnlyMcp/)
 })
 
 test('uses section navigation with inline chunking controls and advanced options grouped', () => {

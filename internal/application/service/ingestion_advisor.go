@@ -77,6 +77,11 @@ func (a *modelIngestionAdvisor) analyze(
 	if err != nil {
 		return nil, err
 	}
+	if preparation.SkipAgent {
+		run := newIngestionAgentRun(nil, nil)
+		run.StopReason = preparation.StopReason
+		return buildIngestionAdvisorResult(session, run), nil
+	}
 	webState := a.newIngestionWebSearchState(request, runtime)
 	config := buildIngestionAgentConfig(request)
 	warnings := a.registerOptionalTools(ctx, preparation.Registry, ingestionOptionalToolOptions{

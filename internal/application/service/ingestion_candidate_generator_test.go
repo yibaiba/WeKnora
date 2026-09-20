@@ -28,17 +28,15 @@ func TestGenerateIngestionCandidateSpecsBuildsThreeArchetypes(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, specs, maxIngestionCandidates)
-	require.Equal(t, ingestionCandidateArchetypeRetrievalDense, specs[0].archetype)
-	require.Equal(t, 700, specs[0].config.ChunkSize)
+	require.Equal(t, ingestionCandidateArchetypeSectionParent, specs[0].archetype)
+	require.Equal(t, types.SemanticParentUnitSection, specs[0].config.ParentUnit)
 	require.True(t, specs[0].config.EnableParentChild)
-	require.Equal(t, 700, specs[0].config.ChildChunkSize)
-	require.Equal(t, 2800, specs[0].config.ParentChunkSize)
-	require.Equal(t, ingestionCandidateArchetypeBalanced, specs[1].archetype)
-	require.Equal(t, fallback.ChunkSize, specs[1].config.ChunkSize)
-	require.Equal(t, fallback.EnableParentChild, specs[1].config.EnableParentChild)
-	require.Equal(t, ingestionCandidateArchetypeStructurePreserving, specs[2].archetype)
-	require.Equal(t, 1300, specs[2].config.ChunkSize)
-	require.Zero(t, specs[2].config.ChunkOverlap)
+	require.Equal(t, ingestionCandidateArchetypePageParent, specs[1].archetype)
+	require.Equal(t, types.SemanticParentUnitPage, specs[1].config.ParentUnit)
+	require.True(t, specs[1].config.EnableParentChild)
+	require.Equal(t, ingestionCandidateArchetypeNoParent, specs[2].archetype)
+	require.Equal(t, types.SemanticParentUnitNone, specs[2].config.ParentUnit)
+	require.False(t, specs[2].config.EnableParentChild)
 	require.NotEqual(t, specs[0].config, specs[1].config)
 	require.NotEqual(t, specs[1].config, specs[2].config)
 }
@@ -57,7 +55,9 @@ func TestBalancedCandidateUsesHighConfidenceAtomicP90(t *testing.T) {
 	specs, err := generateIngestionCandidateSpecs(session)
 
 	require.NoError(t, err)
+	require.Equal(t, 1200, specs[0].config.ChunkSize)
 	require.Equal(t, 1200, specs[1].config.ChunkSize)
+	require.Equal(t, 1200, specs[2].config.ChunkSize)
 }
 
 func TestSemanticPackingPolicyMapsOnlyValidatedEvidenceEnums(t *testing.T) {
@@ -73,6 +73,9 @@ func TestSemanticPackingPolicyMapsOnlyValidatedEvidenceEnums(t *testing.T) {
 	require.False(t, policy.TrustSoftHeadings)
 	require.True(t, policy.SeparateRecords)
 	require.True(t, policy.PreserveRepeatedPageRegions)
+	require.False(t, policy.ForbidMixedSections)
+	require.True(t, policy.RepeatRequiredContext)
+	require.Equal(t, types.SemanticParentUnitSection, policy.ParentUnit)
 	require.Equal(t, []string{"record", "table_row", "section"}, policy.StrongBoundaryOrder)
 	require.Equal(t, ingestionContextTokenPercent, policy.ContextTokenPercent)
 	require.Equal(t, ingestionContextTokenLimit, policy.ContextTokenLimit)
@@ -80,19 +83,21 @@ func TestSemanticPackingPolicyMapsOnlyValidatedEvidenceEnums(t *testing.T) {
 	require.Equal(t, "record", policy.StrongBoundaryOrder[0])
 }
 
-func TestCandidateGenerationFailsWhenNormalizationCannotProduceThreeConfigs(t *testing.T) {
+func TestCandidateGenerationKeepsThreePolicyVariantsUnderTightTokenBudget(t *testing.T) {
 	fallback := ingestionTestConfig(100)
 	fallback.ChunkOverlap = 0
 	fallback.EnableParentChild = true
 	fallback.ParentChunkSize = minimumAdvisorParentSize
 	fallback.ChildChunkSize = 100
 	session := newIngestionAgentSessionWithFallback(
-		"short content", types.IngestionChunkingConstraints{TokenLimit: 1}, fallback,
+		"short content", types.IngestionChunkingConstraints{TokenLimit: 8}, fallback,
 	)
 
-	_, err := generateIngestionCandidateSpecs(session)
+	specs, err := generateIngestionCandidateSpecs(session)
 
-	require.ErrorContains(t, err, "无法为")
+	require.NoError(t, err)
+	require.Len(t, specs, maxIngestionCandidates)
+	require.Equal(t, types.SemanticParentUnitNone, specs[2].config.ParentUnit)
 }
 
 func TestCandidateGenerationSurfacesTokenCounterFailure(t *testing.T) {

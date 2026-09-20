@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -14,6 +15,8 @@ type ingestionAgentPreparation struct {
 	SystemPrompt     string
 	Registry         *agenttools.ToolRegistry
 	TerminationTools []string
+	SkipAgent        bool
+	StopReason       string
 }
 
 type ingestionAgentPreparationRequest struct {
@@ -64,6 +67,14 @@ func prepareIngestionAgent(
 			ingestionAdvisorErrorCandidateGeneration, "生成确定性分块候选失败：%s", err,
 		)
 	}
+	if request.Session.hardRulesSeparated() {
+		if err := request.Session.autoSubmitFromEvidence(evidence); err != nil {
+			return ingestionAgentPreparation{}, newIngestionAdvisorRunError(
+				ingestionAdvisorErrorCandidateGeneration, "硬规则无法提交入库决策：%s", err,
+			)
+		}
+		return ingestionAgentPreparation{SkipAgent: true, StopReason: "hard_rules_separated"}, nil
+	}
 	query, err := buildIngestionAgentQuery(request.Session, evidence)
 	if err != nil {
 		return ingestionAgentPreparation{}, newIngestionAdvisorRunError(
@@ -86,6 +97,18 @@ func analyzeFullIngestionDocument(
 	model chat.Chat,
 	request types.IngestionAdvisorRequest,
 ) (ingestionDocumentEvidence, error) {
+	if request.SemanticDocument != nil {
+		if evidence, ok := localIngestionEvidenceFromDocument(*request.SemanticDocument); ok {
+			return evidence, nil
+		}
+	} else {
+		document, err := chunker.AnalyzeSemanticDocument(request.Content, chunker.SemanticAnalysisOptions{})
+		if err == nil {
+			if evidence, ok := localIngestionEvidenceFromDocument(document); ok {
+				return evidence, nil
+			}
+		}
+	}
 	structuredOutputPrompt, err := chat.ResolveStructuredOutputPrompt(
 		model, ingestionDocumentEvidenceSchema,
 	)

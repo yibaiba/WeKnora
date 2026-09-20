@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -24,11 +25,14 @@ func buildIngestionSemanticDiagnostics(
 	documentDiagnostics := run.Document.Diagnostics
 	diagnostics := types.IngestionSemanticDiagnostics{
 		SourceFormat:              ingestionSourceFormat(run.Knowledge),
+		DocumentKind:              ingestionAnalysisDocumentKind(result),
 		HintsProvided:             documentDiagnostics.HintsProvided,
 		HintsAccepted:             documentDiagnostics.HintsAccepted,
 		HintsRejected:             documentDiagnostics.HintsRejected,
 		HintRejectionReasonCounts: ingestionHintRejectionCounts(documentDiagnostics),
 		StructureViolationCounts:  make(map[string]int),
+		KindBlockCounts:           ingestionKindBlockCounts(run.Document),
+		KindViolationCounts:       make(map[string]int),
 		TokenCountModeCounts:      make(map[string]int),
 		CandidateCount:            len(result.Candidates),
 		FallbackApplied:           ingestionAppliedMode(result.Analysis) == types.IngestionAppliedModeFallback,
@@ -54,6 +58,10 @@ func populateCandidateDiagnostics(
 		}
 		for _, violation := range candidate.Violations {
 			diagnostics.StructureViolationCounts[violation]++
+			kind := ingestionViolationKind(violation)
+			if kind != "" {
+				diagnostics.KindViolationCounts[kind+":"+violation]++
+			}
 		}
 		if candidate.TokenCountMode != "" {
 			diagnostics.TokenCountModeCounts[candidate.TokenCountMode]++
@@ -84,6 +92,46 @@ func ingestionHintRejectionCounts(diagnostics types.SemanticDiagnostics) map[str
 		}
 	}
 	return result
+}
+
+func ingestionAnalysisDocumentKind(result *types.IngestionAdvisorResult) string {
+	if result == nil || result.Analysis == nil {
+		return ""
+	}
+	return result.Analysis.DocumentKind
+}
+
+func ingestionKindBlockCounts(document chunker.SemanticDocument) map[string]int {
+	counts := make(map[string]int)
+	for _, block := range document.Blocks {
+		if strings.TrimSpace(block.Kind) == "" {
+			continue
+		}
+		counts[block.Kind]++
+	}
+	return counts
+}
+
+func ingestionViolationKind(violation string) string {
+	switch violation {
+	case ingestionViolationTableHeaderMissing, ingestionViolationTableHeaderInvalid:
+		return "table"
+	case ingestionViolationCodeContextMissing:
+		return "code"
+	case ingestionViolationAtomicSplit:
+		return "atomic"
+	default:
+		if strings.Contains(violation, "table") {
+			return "table"
+		}
+		if strings.Contains(violation, "faq") {
+			return "faq"
+		}
+		if strings.Contains(violation, "record") {
+			return "record"
+		}
+		return ""
+	}
 }
 
 func ingestionSourceFormat(knowledge *types.Knowledge) string {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -40,6 +41,15 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 		content: request.content, config: config, base: base, document: request.document,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "oversize_atomic") {
+			return types.IngestionChunkingCandidate{
+				ID: request.id, Archetype: request.archetype,
+				PackingPolicyVersion: request.policy.Version,
+				Config:               cloneChunkingRecommendation(request.config),
+				HardValid:            false,
+				Violations:           []string{ingestionViolationAtomicSplit},
+			}, nil
+		}
 		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
 			err, ingestionFailureCandidatePreview, "", "semantic_chunking", "语义候选生成失败",
 		)

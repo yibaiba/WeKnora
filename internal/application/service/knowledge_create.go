@@ -1273,6 +1273,7 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	// chunking preview endpoint.
 	clean = chunker.NormalizeLineEndings(clean)
 
+	parserMarkdown := clean
 	processOverrides, _ := knowledge.ProcessOverrides()
 	eff := ResolveProcessConfig(kb, processOverrides)
 
@@ -1281,8 +1282,19 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	// the chunker cannot split. Fenced code examples are left untouched.
 	clean = docparser.NormalizeHTMLTables(clean)
 
-	// Manual content is markdown - chunk directly with Go chunker
-	chunkCfg := buildSplitterConfigFromChunking(eff.ChunkingConfig)
+	semanticDocument, analyzeErr := analyzeFinalSemanticDocument(finalSemanticDocumentRequest{
+		finalMarkdown: clean, parserMarkdown: parserMarkdown,
+	})
+	if analyzeErr != nil {
+		logger.Errorf(ctx, "Failed to analyze manual knowledge %s: %v", knowledge.ID, analyzeErr)
+		return
+	}
+	eff, advisorErr := s.applyIngestionAdvisor(ctx, ingestionAdvisorRun{
+		Knowledge: knowledge, KB: kb, Content: clean, Effective: eff, Document: semanticDocument,
+	})
+	if advisorErr != nil {
+		return
+	}
 
 	var parsed []types.ParsedChunk
 	opts := ProcessChunksOptions{
@@ -1297,41 +1309,25 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 		}
 	}
 
-	if eff.ChunkingConfig.EnableParentChild {
-		parentCfg, childCfg := buildParentChildConfigs(eff.ChunkingConfig, chunkCfg)
-		pcResult := chunker.SplitParentChild(clean, parentCfg, childCfg)
-		parsed = make([]types.ParsedChunk, len(pcResult.Children))
-		for i, c := range pcResult.Children {
-			parsed[i] = types.ParsedChunk{
-				Content:       c.Content,
-				ContextHeader: c.ContextHeader,
-				Seq:           c.Seq,
-				Start:         c.Start,
-				End:           c.End,
-				ParentIndex:   c.ParentIndex,
-			}
+	var productionTokenCounter types.TokenCounter
+	if eff.IngestionAdvisorApplied {
+		counter, counterErr := s.resolveIngestionTokenCounter(ctx, kb)
+		if counterErr != nil {
+			logger.Errorf(ctx, "Failed to resolve token counter for manual knowledge %s: %v", knowledge.ID, counterErr)
+			return
 		}
-		parentChunks := make([]types.ParsedParentChunk, len(pcResult.Parents))
-		for i, p := range pcResult.Parents {
-			parentChunks[i] = types.ParsedParentChunk{
-				Content: p.Content, ContextHeader: p.ContextHeader,
-				Seq: p.Seq, Start: p.Start, End: p.End,
-			}
-		}
-		opts.ParentChunks = parentChunks
-	} else {
-		splitChunks := chunker.Split(clean, chunkCfg)
-		parsed = make([]types.ParsedChunk, len(splitChunks))
-		for i, c := range splitChunks {
-			parsed[i] = types.ParsedChunk{
-				Content:       c.Content,
-				ContextHeader: c.ContextHeader,
-				Seq:           c.Seq,
-				Start:         c.Start,
-				End:           c.End,
-			}
-		}
+		productionTokenCounter = counter
 	}
+	splitResult, splitErr := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
+		content: clean, effective: eff, document: semanticDocument,
+		tokenCounter: productionTokenCounter, embeddingPrefix: knowledge.Title,
+	})
+	if splitErr != nil {
+		logger.Errorf(ctx, "Failed to split manual knowledge %s: %v", knowledge.ID, splitErr)
+		return
+	}
+	parsed = splitResult.chunks
+	opts.ParentChunks = splitResult.parents
 
 	if doSync {
 		s.processChunks(ctx, kb, knowledge, parsed, opts)

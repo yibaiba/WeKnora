@@ -290,15 +290,19 @@ func contextTokensFromUsage(usage types.TokenUsage) int {
 	return usage.PromptTokens + usage.CompletionTokens
 }
 
-// ExecuteTask runs the same ReAct loop with task-only redaction. Origin's
-// Execute is the shared implementation; task-specific iteration caps are not
-// plumbed through this wrapper.
+// ExecuteTask runs the same ReAct loop with task-scoped controls. Origin's
+// Execute remains the shared implementation; per-run options live on context
+// so chat defaults stay unchanged.
 func (e *AgentEngine) ExecuteTask(
 	ctx context.Context,
 	request interfaces.AgentTaskRequest,
 ) (*types.AgentState, error) {
+	if request.Options.MaxIterations < 0 {
+		return nil, fmt.Errorf("agent task max iterations cannot be negative")
+	}
 	ctx = types.WithRedactedLLMTracePayloads(ctx)
 	ctx = agenttools.WithRedactedToolPayloads(ctx)
+	ctx = withTaskRuntime(ctx, request.Options)
 	return e.Execute(ctx, request.SessionID, request.MessageID, request.Query, request.LLMContext)
 }
 
@@ -336,6 +340,7 @@ func (e *AgentEngine) Execute(
 			kbIDs = append(kbIDs, kb.ID)
 		}
 	}
+	maxIterations := maxIterationsForRun(ctx, e.config.MaxIterations)
 	spanCtx, agentSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
 		Name: "agent.execute",
 		Input: map[string]interface{}{
@@ -347,7 +352,7 @@ func (e *AgentEngine) Execute(
 		Metadata: map[string]interface{}{
 			"session_id":          sessionID,
 			"message_id":          messageID,
-			"max_iterations":      e.config.MaxIterations,
+			"max_iterations":      maxIterations,
 			"parallel_tool_calls": e.config.ParallelToolCalls,
 			"web_search":          e.config.WebSearchEnabled,
 			"multi_turn":          e.config.MultiTurnEnabled,
@@ -373,6 +378,12 @@ func (e *AgentEngine) Execute(
 	// Build system prompt using progressive RAG prompt
 	// If skills are enabled, include skills metadata (Level 1 - Progressive Disclosure)
 	systemPrompt := e.buildSystemPrompt(ctx)
+	if custom := taskSystemPrompt(ctx); strings.TrimSpace(custom) != "" {
+		systemPrompt = strings.TrimRight(custom, " \t\r\n")
+		if e.modelContext != nil {
+			systemPrompt += e.modelContext.ProtocolPrompt()
+		}
+	}
 	logger.Debugf(ctx, "[Agent] SystemPrompt: %d chars", len(systemPrompt))
 
 	// Initialize messages with history
@@ -411,6 +422,7 @@ func (e *AgentEngine) Execute(
 			},
 		})
 		finishAgentSpan(agentSpan, state, err)
+		emitTaskEvent(ctx, interfaces.AgentTaskEvent{Kind: taskEventRunFinished, Status: "failed"})
 		return nil, err
 	}
 
@@ -423,6 +435,7 @@ func (e *AgentEngine) Execute(
 		"complete":   state.IsComplete,
 	})
 	finishAgentSpan(agentSpan, state, nil)
+	emitTaskEvent(ctx, interfaces.AgentTaskEvent{Kind: taskEventRunFinished, Status: state.StopReason})
 	return state, nil
 }
 
@@ -470,9 +483,12 @@ func truncateRunes(s string, n int) string {
 // withinIterationBudget reports whether another ReAct round is allowed.
 // A negative MaxIterations is unlimited: the loop still stops on a natural
 // finish, user cancel, empty-response retries, or a repeated-content stall.
-func (e *AgentEngine) withinIterationBudget(round int) bool {
+func (e *AgentEngine) withinIterationBudget(ctx context.Context, round int) bool {
 	if e.config == nil {
 		return false
+	}
+	if runtime := taskRuntimeFromContext(ctx); runtime != nil && runtime.options.MaxIterations > 0 {
+		return round < runtime.options.MaxIterations
 	}
 	if e.config.UnlimitedIterations() {
 		return true
@@ -618,15 +634,16 @@ func (e *AgentEngine) executeLoop(
 
 	guards := &loopGuards{}
 loop:
-	for e.withinIterationBudget(state.CurrentRound) || e.allowSteerOverrun {
+	for e.withinIterationBudget(ctx, state.CurrentRound) || e.allowSteerOverrun {
 		e.allowSteerOverrun = false
 		// Check for context cancellation (request timeout, user cancel, etc.)
 		select {
 		case <-ctx.Done():
+			state.StopReason = "cancelled"
 			logger.Warnf(ctx, "[Agent] Context cancelled at round %d: %v",
 				state.CurrentRound+1, ctx.Err())
 			// Try to salvage existing results
-			if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 {
+			if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 && !shouldSkipFinalAnswer(ctx) {
 				logger.Infof(ctx, "[Agent] Synthesizing final answer from %d existing tool results",
 					totalTC)
 				_ = e.streamFinalAnswerToEventBus(ctx, query, state, sessionID, messages)
@@ -669,8 +686,10 @@ loop:
 	// state.FinalAnswer to the generic "Sorry, I was unable to generate a
 	// complete answer." message, which then leaks to the UI as the final
 	// answer for a conversation the user deliberately stopped.
-	if !state.IsComplete && ctx.Err() == nil {
+	if !state.IsComplete && ctx.Err() == nil && !shouldSkipFinalAnswer(ctx) {
 		e.handleMaxIterations(ctx, query, state, sessionID, messages)
+	} else if !state.IsComplete && ctx.Err() == nil {
+		state.StopReason = "max_iterations"
 	}
 
 	return state, nil
@@ -708,6 +727,10 @@ func (e *AgentEngine) runReActIteration(
 ) (outcome iterOutcome, retErr error) {
 	roundStart := time.Now()
 	round := state.CurrentRound + 1
+	maxIterations := maxIterationsForRun(parentCtx, e.config.MaxIterations)
+	emitTaskEvent(parentCtx, interfaces.AgentTaskEvent{
+		Kind: taskEventRoundStarted, Round: round, Status: "running",
+	})
 
 	// Open the round-level Langfuse span. Any chat/tool calls made inside
 	// this iteration will attach under it via ctx, giving the UI a clean
@@ -717,7 +740,7 @@ func (e *AgentEngine) runReActIteration(
 		Input: map[string]interface{}{
 			"round":          round,
 			"message_count":  len(*messagesPtr),
-			"max_iterations": e.config.MaxIterations,
+			"max_iterations": maxIterations,
 		},
 		Metadata: map[string]interface{}{
 			"iteration":  state.CurrentRound,
@@ -990,7 +1013,7 @@ func (e *AgentEngine) runReActIteration(
 		// anything after that stays in the queue for a follow-up turn.
 		if response.FinishReason != "content_filter" {
 			nextRound := state.CurrentRound + 1
-			canContinue := e.withinIterationBudget(nextRound) || e.steerOverruns < maxSteerOverruns
+			canContinue := e.withinIterationBudget(ctx, nextRound) || e.steerOverruns < maxSteerOverruns
 			if canContinue {
 				*messagesPtr = append(*messagesPtr, chat.Message{
 					Role:               "assistant",
@@ -1003,7 +1026,7 @@ func (e *AgentEngine) runReActIteration(
 				if injected > 0 {
 					verdict.step.IntermediateAnswer = true
 					state.RoundSteps = append(state.RoundSteps, verdict.step)
-					if !e.withinIterationBudget(nextRound) {
+					if !e.withinIterationBudget(ctx, nextRound) {
 						e.steerOverruns++
 						e.allowSteerOverrun = true
 					}
@@ -1037,6 +1060,12 @@ func (e *AgentEngine) runReActIteration(
 	state.RoundSteps = append(state.RoundSteps, step)
 	*messagesPtr = e.appendToolResults(*messagesPtr, step)
 	*messagesPtr = e.appendToolImages(ctx, *messagesPtr, step)
+	if toolName, terminated := terminationToolHit(ctx); terminated {
+		state.IsComplete = true
+		state.StopReason = "termination_tool"
+		state.TerminatedByTool = toolName
+		return iterOutcomeBreak, nil
+	}
 	common.PipelineInfo(ctx, "Agent", "round_end", map[string]interface{}{
 		"iteration":   state.CurrentRound,
 		"round":       round,

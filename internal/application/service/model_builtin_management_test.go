@@ -22,16 +22,16 @@ func TestModelServiceRejectsInvalidContextWindowBeforePersistence(t *testing.T) 
 		update: func(*types.Model) error { persisted = true; return nil },
 	}
 	svc := NewModelService(repo, nil, nil, nil, nil, nil)
-	invalid := types.ModelParameters{ContextWindowTokens: types.MinModelContextWindowTokens - 1}
+	invalid := types.ModelParameters{ContextWindow: types.MinModelContextWindowTokens - 1}
 
 	err := svc.CreateModel(context.Background(), &types.Model{
 		Source: types.ModelSourceRemote, Parameters: invalid,
 	})
-	require.ErrorContains(t, err, "context_window_tokens")
+	require.ErrorContains(t, err, "context_window")
 	assert.False(t, persisted)
 
 	err = svc.UpdateModel(builtinModelContext(true), &types.Model{ID: "model", Parameters: invalid})
-	require.ErrorContains(t, err, "context_window_tokens")
+	require.ErrorContains(t, err, "context_window")
 	assert.False(t, persisted)
 }
 

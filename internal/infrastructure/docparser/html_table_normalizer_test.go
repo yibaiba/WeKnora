@@ -37,6 +37,23 @@ func TestNormalizeHTMLTables_ConvertsStyledTableToMarkdown(t *testing.T) {
 	}
 }
 
+func TestNormalizeHTMLTables_PromotesTdOnlyFirstRowToHeader(t *testing.T) {
+	input := `<table><tr><td>Case</td><td>Result</td></tr>` +
+		`<tr><td>TC-LOGIN</td><td>Pass</td></tr></table>`
+
+	got := NormalizeHTMLTables(input)
+	sep := strings.Index(got, "---")
+	if sep < 0 {
+		t.Fatalf("expected GFM separator, got:\n%s", got)
+	}
+	if !strings.Contains(got[:sep], "Case") || !strings.Contains(got[:sep], "Result") {
+		t.Fatalf("expected first <td> row to become the GFM header, got:\n%s", got)
+	}
+	if strings.Index(got, "TC-LOGIN") < sep {
+		t.Fatalf("expected data row to stay below the separator, got:\n%s", got)
+	}
+}
+
 func TestNormalizeHTMLTables_NoTableUnchanged(t *testing.T) {
 	input := "# 标题\n\n普通段落，没有表格。\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"
 	if got := NormalizeHTMLTables(input); got != input {

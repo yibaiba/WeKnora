@@ -210,6 +210,15 @@ func validateIngestionChunkingRecommendation(
 			"child_chunk_size 不能大于 parent_chunk_size",
 		)
 	}
+	if value.ParentUnit != "" &&
+		value.ParentUnit != types.SemanticParentUnitSection &&
+		value.ParentUnit != types.SemanticParentUnitPage &&
+		value.ParentUnit != types.SemanticParentUnitNone {
+		return newIngestionToolError(
+			ingestionFailureParentChildInvalid, "parent_unit", "section_page_or_none",
+			fmt.Sprintf("parent_unit %q 不受支持", value.ParentUnit),
+		)
+	}
 	if len(value.Separators) == 0 {
 		return newIngestionToolError(
 			ingestionFailureSeparatorsInvalid, "separators", "non_empty_supported_separators",

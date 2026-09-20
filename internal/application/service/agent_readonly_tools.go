@@ -160,11 +160,21 @@ func (f *readOnlyAgentToolFactory) Build(
 		if f.params.WebSearchService == nil {
 			return nil, fmt.Errorf("Web 搜索服务未配置")
 		}
+		if f.params.KnowledgeBaseService == nil || options.WebSearchKnowledge == nil ||
+			options.WebSearchState == nil {
+			return nil, fmt.Errorf("Web 搜索 RAG 压缩服务未配置")
+		}
 		return agenttools.NewWebSearchTool(
 			f.params.WebSearchService,
 			options.Config.WebSearchMaxResults,
 			options.Config.WebSearchProviderID,
-		), nil
+		).WithRAGCompression(agenttools.WebSearchRAGCompressionOptions{
+			KnowledgeBaseService:  f.params.KnowledgeBaseService,
+			KnowledgeService:      options.WebSearchKnowledge,
+			WebSearchStateService: options.WebSearchState,
+			SessionID:             options.SessionID,
+			Strict:                options.StrictWebCompression,
+		}), nil
 	case agenttools.ToolWebFetch:
 		return agenttools.NewWebFetchTool(), nil
 	case agenttools.ToolWikiReadPage:

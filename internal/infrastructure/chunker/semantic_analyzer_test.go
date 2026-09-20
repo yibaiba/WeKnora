@@ -35,6 +35,23 @@ func TestAnalyzeSemanticDocumentRecognizesMarkdownStructures(t *testing.T) {
 	require.False(t, firstSemanticKind(document.Blocks, SemanticKindRecord).Atomic)
 }
 
+func TestAnalyzeSemanticDocumentPromotesEmptyMarkdownTableHeader(t *testing.T) {
+	content := "|          |        |\n|----------|--------|\n| Case     | Result |\n| TC-LOGIN | Pass   |\n"
+
+	document, err := AnalyzeSemanticDocument(content, SemanticAnalysisOptions{})
+
+	require.NoError(t, err)
+	require.NoError(t, ValidateSemanticDocument(document))
+	require.Equal(t, 1, countSemanticKind(document.Blocks, SemanticKindTableHeader))
+	require.Equal(t, 1, countSemanticKind(document.Blocks, SemanticKindTableRow))
+	header := firstSemanticKind(document.Blocks, SemanticKindTableHeader)
+	row := firstSemanticKind(document.Blocks, SemanticKindTableRow)
+	require.Contains(t, string([]rune(content)[header.Start:header.End]), "Case")
+	require.Contains(t, string([]rune(content)[row.Start:row.End]), "TC-LOGIN")
+	require.NotContains(t, string([]rune(content)[row.Start:row.End]), "Case")
+	require.Equal(t, header.TableID, row.TableID)
+}
+
 func TestAnalyzeSemanticDocumentRecognizesHTMLTableRows(t *testing.T) {
 	content := "<h1>Report</h1>\n<table><tr><th>Name</th><th>State</th></tr>\n" +
 		"<tr><td>A</td><td>OK</td></tr></table>\n"

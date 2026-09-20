@@ -150,6 +150,9 @@ type IngestionChunkingRecommendation struct {
 	ParentChunkSize   int      `json:"parent_chunk_size"`
 	ChildChunkSize    int      `json:"child_chunk_size"`
 	Separators        []string `json:"separators"`
+	// ParentUnit selects the parent mapping for a policy variant:
+	// section, page, or none. Empty keeps the historical size-based parent pack.
+	ParentUnit string `json:"parent_unit,omitempty"`
 }
 
 type IngestionLengthDistribution struct {
@@ -236,16 +239,41 @@ type IngestionCandidateComparisonFacts struct {
 	ReasonCodes          []string `json:"reason_codes"`
 }
 
+const (
+	SemanticParentUnitSection = "section"
+	SemanticParentUnitPage    = "page"
+	SemanticParentUnitNone    = "none"
+	SemanticChildUnitAtomic   = "atomic"
+)
+
 // SemanticPackingPolicy is derived from validated full-document evidence.
 // Callers receive value copies so an Agent cannot alter packing behavior.
 type SemanticPackingPolicy struct {
-	Version                     string   `json:"version"`
-	TrustSoftHeadings           bool     `json:"trust_soft_headings"`
-	StrongBoundaryOrder         []string `json:"strong_boundary_order"`
+	Version                     string                   `json:"version"`
+	TrustSoftHeadings           bool                     `json:"trust_soft_headings"`
+	StrongBoundaryOrder         []string                 `json:"strong_boundary_order"`
+	SeparateRecords             bool                     `json:"separate_records"`
+	PreserveRepeatedPageRegions bool                     `json:"preserve_repeated_page_regions"`
+	RepeatRequiredContext       bool                     `json:"repeat_required_context"`
+	ForbidMixedSections         bool                     `json:"forbid_mixed_sections"`
+	ChildUnit                   string                   `json:"child_unit,omitempty"`
+	ParentUnit                  string                   `json:"parent_unit,omitempty"`
+	ContextTokenPercent         int                      `json:"context_token_percent"`
+	ContextTokenLimit           int                      `json:"context_token_limit"`
+	RegionRules                 []SemanticPackRegionRule `json:"region_rules,omitempty"`
+}
+
+// SemanticPackRegionRule overlays packing flags on a source span.
+type SemanticPackRegionRule struct {
+	Start                       int      `json:"start"`
+	End                         int      `json:"end"`
+	StrongBoundaryOrder         []string `json:"strong_boundary_order,omitempty"`
 	SeparateRecords             bool     `json:"separate_records"`
 	PreserveRepeatedPageRegions bool     `json:"preserve_repeated_page_regions"`
-	ContextTokenPercent         int      `json:"context_token_percent"`
-	ContextTokenLimit           int      `json:"context_token_limit"`
+	RepeatRequiredContext       bool     `json:"repeat_required_context"`
+	ForbidMixedSections         bool     `json:"forbid_mixed_sections"`
+	ChildUnit                   string   `json:"child_unit,omitempty"`
+	ParentUnit                  string   `json:"parent_unit,omitempty"`
 }
 
 // IngestionAnalysis is persisted in knowledge.metadata.ingestion_analysis.

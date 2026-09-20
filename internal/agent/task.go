@@ -32,6 +32,14 @@ func taskRuntimeFromContext(ctx context.Context) *taskRuntime {
 	return runtime
 }
 
+func taskSystemPrompt(ctx context.Context) string {
+	runtime := taskRuntimeFromContext(ctx)
+	if runtime == nil {
+		return ""
+	}
+	return runtime.options.SystemPrompt
+}
+
 func maxIterationsForRun(ctx context.Context, configured int) int {
 	runtime := taskRuntimeFromContext(ctx)
 	if runtime != nil && runtime.options.MaxIterations > 0 {

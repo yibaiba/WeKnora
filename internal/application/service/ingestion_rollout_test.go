@@ -58,7 +58,9 @@ func TestIngestionTenantShadowSamplingIsStableAndHasBoundaries(t *testing.T) {
 
 func TestBuildIngestionSemanticDiagnosticsAggregatesCandidateFacts(t *testing.T) {
 	result := &types.IngestionAdvisorResult{
-		Analysis: &types.IngestionAnalysis{AppliedMode: types.IngestionAppliedModeSmart},
+		Analysis: &types.IngestionAnalysis{
+			AppliedMode: types.IngestionAppliedModeSmart, DocumentKind: types.IngestionDocumentKindPolicyManual,
+		},
 		Candidates: []types.IngestionChunkingCandidate{
 			{
 				ID: "selected", HardValid: true, TokenCountMode: chunker.TokenCountModeExact,
@@ -80,12 +82,20 @@ func TestBuildIngestionSemanticDiagnosticsAggregatesCandidateFacts(t *testing.T)
 			HintsProvided: 3, HintsAccepted: 1, HintsRejected: 2,
 			ReasonCodes:      []string{"hint_source_unmatched"},
 			ReasonCodeCounts: map[string]int{"hint_source_unmatched": 2},
+		}, Blocks: []chunker.SemanticBlock{
+			{ID: "h", Kind: chunker.SemanticKindHeading, Start: 0, End: 1},
+			{ID: "t", Kind: chunker.SemanticKindTableRow, Start: 1, End: 2},
 		}},
 	}
 
 	diagnostics := buildIngestionSemanticDiagnostics(result, run)
 
 	require.Equal(t, "docx", diagnostics.SourceFormat)
+	require.Equal(t, "policy_manual", diagnostics.DocumentKind)
+	require.Equal(t, map[string]int{
+		chunker.SemanticKindHeading: 1, chunker.SemanticKindTableRow: 1,
+	}, diagnostics.KindBlockCounts)
+	require.Equal(t, map[string]int{"atomic:atomic_block_split": 1}, diagnostics.KindViolationCounts)
 	require.InDelta(t, 1.0/3.0, diagnostics.HintAcceptanceRate, 0.000001)
 	require.Equal(t, map[string]int{"hint_source_unmatched": 2}, diagnostics.HintRejectionReasonCounts)
 	require.Equal(t, map[string]int{

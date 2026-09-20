@@ -61,6 +61,26 @@ type WebSearchTool struct {
 	pages            *WebFetchTool
 	maxResults       int
 	providerID       string // WebSearchProviderEntity ID (resolved from agent config or tenant default)
+	rag              *webSearchRAGCompression
+}
+
+type webSearchRAGCompression struct {
+	knowledgeBaseService  interfaces.WebSearchTemporaryKnowledgeBaseService
+	knowledgeService      interfaces.WebSearchTemporaryKnowledgeService
+	webSearchStateService interfaces.WebSearchStateService
+	sessionID             string
+	strict                bool
+	mu                    sync.Mutex
+}
+
+// WebSearchRAGCompressionOptions enables optional RAG compression of search
+// hits into a temporary knowledge base. Chat web search leaves this unset.
+type WebSearchRAGCompressionOptions struct {
+	KnowledgeBaseService  interfaces.WebSearchTemporaryKnowledgeBaseService
+	KnowledgeService      interfaces.WebSearchTemporaryKnowledgeService
+	WebSearchStateService interfaces.WebSearchStateService
+	SessionID             string
+	Strict                bool
 }
 
 // NewWebSearchTool creates a new web search tool
@@ -88,6 +108,18 @@ func NewWebSearchTool(
 // WithPageReader shares page snapshots and full-output storage with web_fetch.
 func (t *WebSearchTool) WithPageReader(reader *WebFetchTool) *WebSearchTool {
 	t.pages = reader
+	return t
+}
+
+// WithRAGCompression attaches scoped RAG compression used by document analysis.
+func (t *WebSearchTool) WithRAGCompression(options WebSearchRAGCompressionOptions) *WebSearchTool {
+	t.rag = &webSearchRAGCompression{
+		knowledgeBaseService:  options.KnowledgeBaseService,
+		knowledgeService:      options.KnowledgeService,
+		webSearchStateService: options.WebSearchStateService,
+		sessionID:             options.SessionID,
+		strict:                options.Strict,
+	}
 	return t
 }
 
@@ -163,8 +195,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 	}
 	searchConfig.MaxResults = maxResults
 	searchConfig.Filters = filters
-	// Agent reads selected pages explicitly; RAG compression belongs to the quick-answer pipeline.
-	searchConfig.CompressionMethod = "none"
+	if t.rag == nil {
+		// Agent reads selected pages explicitly; RAG compression belongs to the
+		// quick-answer pipeline unless a caller attached scoped compression.
+		searchConfig.CompressionMethod = "none"
+	}
 
 	// Perform web search
 	logger.Infof(
@@ -208,6 +243,12 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		}
 	}
 	webResults = filtered
+
+	if compressed, err := t.compressSearchResults(ctx, query, webResults, searchConfig); err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	} else if compressed != nil {
+		webResults = compressed
+	}
 
 	// Format output
 	if len(webResults) == 0 {
@@ -297,6 +338,57 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 			"display_type": "web_search_results",
 		},
 	}, nil
+}
+
+type webSearchCompressionRequest struct {
+	query   string
+	results []*types.WebSearchResult
+	config  *types.WebSearchConfig
+}
+
+func (t *WebSearchTool) compressSearchResults(
+	ctx context.Context,
+	query string,
+	results []*types.WebSearchResult,
+	config *types.WebSearchConfig,
+) ([]*types.WebSearchResult, error) {
+	if t.rag == nil || len(results) == 0 || config == nil {
+		return nil, nil
+	}
+	if config.CompressionMethod == "" || config.CompressionMethod == "none" {
+		return nil, nil
+	}
+	logger.Infof(ctx, "[Tool][WebSearch] Applying RAG compression")
+	compressed, err := t.compressWithRAG(ctx, webSearchCompressionRequest{
+		query: query, results: results, config: config,
+	})
+	if err != nil {
+		if t.rag.strict {
+			return nil, fmt.Errorf("web search RAG compression failed: %w", err)
+		}
+		logger.Warnf(ctx, "[Tool][WebSearch] RAG compression failed, using raw results: %v", err)
+		return nil, nil
+	}
+	logger.Infof(ctx, "[Tool][WebSearch] RAG compression completed, %d results", len(compressed))
+	return compressed, nil
+}
+
+func (t *WebSearchTool) compressWithRAG(
+	ctx context.Context,
+	request webSearchCompressionRequest,
+) ([]*types.WebSearchResult, error) {
+	t.rag.mu.Lock()
+	defer t.rag.mu.Unlock()
+	tempKBID, seen, ids := t.rag.webSearchStateService.GetWebSearchTempKBState(ctx, t.rag.sessionID)
+	compressed, kbID, newSeen, newIDs, err := t.webSearchService.CompressWithRAG(
+		ctx, t.rag.sessionID, tempKBID, []string{strings.TrimSpace(request.query)},
+		request.results, request.config, t.rag.knowledgeBaseService, t.rag.knowledgeService, seen, ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	t.rag.webSearchStateService.SaveWebSearchTempKBState(ctx, t.rag.sessionID, kbID, newSeen, newIDs)
+	return compressed, nil
 }
 
 func (t *WebSearchTool) fetchLeadingPages(ctx context.Context, results []*types.WebSearchResult) []*webFetchItemResult {

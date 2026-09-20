@@ -4,12 +4,15 @@ package types
 // codes. It deliberately excludes source text, structure IDs, and positions.
 type IngestionSemanticDiagnostics struct {
 	SourceFormat                 string         `json:"source_format"`
+	DocumentKind                 string         `json:"document_kind,omitempty"`
 	HintsProvided                int            `json:"hints_provided"`
 	HintsAccepted                int            `json:"hints_accepted"`
 	HintsRejected                int            `json:"hints_rejected"`
 	HintAcceptanceRate           float64        `json:"hint_acceptance_rate"`
 	HintRejectionReasonCounts    map[string]int `json:"hint_rejection_reason_counts"`
 	StructureViolationCounts     map[string]int `json:"structure_violation_counts"`
+	KindBlockCounts              map[string]int `json:"kind_block_counts"`
+	KindViolationCounts          map[string]int `json:"kind_violation_counts"`
 	TokenCountModeCounts         map[string]int `json:"token_count_mode_counts"`
 	CandidateCount               int            `json:"candidate_count"`
 	ValidCandidateCount          int            `json:"valid_candidate_count"`

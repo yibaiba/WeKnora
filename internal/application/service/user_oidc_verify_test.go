@@ -67,7 +67,7 @@ func oidcVerifyCfg(jwksURL string) *config.OIDCAuthConfig {
 	}
 }
 
-func unsignedJWT(claims jwt.MapClaims) string {
+func unsignedOIDCVerifyJWT(claims jwt.MapClaims) string {
 	header, _ := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
 	payload, _ := json.Marshal(claims)
 	return base64.RawURLEncoding.EncodeToString(header) + "." +
@@ -327,7 +327,7 @@ func TestResolveOIDCUserInfo_NoJwksDoesNotTrustUnsignedIDToken(t *testing.T) {
 	cfg := oidcVerifyCfg("")
 	cfg.JwksURI = ""
 	cfg.UserInfoEndpoint = userinfo.URL
-	forged := unsignedJWT(jwt.MapClaims{
+	forged := unsignedOIDCVerifyJWT(jwt.MapClaims{
 		"sub":   "attacker",
 		"email": "admin@example.com",
 		"name":  "Admin",
@@ -360,7 +360,7 @@ func TestResolveOIDCUserInfo_UserinfoFailureDoesNotFallBackToUnsignedToken(t *te
 	cfg := oidcVerifyCfg("")
 	cfg.JwksURI = ""
 	cfg.UserInfoEndpoint = userinfo.URL
-	forged := unsignedJWT(baseClaims("https://idp.example", "weknora-client"))
+	forged := unsignedOIDCVerifyJWT(baseClaims("https://idp.example", "weknora-client"))
 
 	svc := &userService{}
 	_, err := svc.resolveOIDCUserInfo(context.Background(), cfg, &oidcTokenResponse{

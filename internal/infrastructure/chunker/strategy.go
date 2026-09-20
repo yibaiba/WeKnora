@@ -188,16 +188,7 @@ func splitParentChild(text string, parentCfg, childCfg SplitterConfig, withDiagn
 // NormalizeSplitterConfig applies the same base splitter defaults used by
 // knowledge ingestion before parent-child derivation or single-pass splitting.
 func NormalizeSplitterConfig(cfg SplitterConfig) SplitterConfig {
-	if cfg.ChunkSize <= 0 {
-		cfg.ChunkSize = DefaultChunkSize
-	}
-	if cfg.ChunkOverlap <= 0 {
-		cfg.ChunkOverlap = DefaultChunkOverlap
-	}
-	if len(cfg.Separators) == 0 {
-		cfg.Separators = []string{"\n\n", "\n", "。"}
-	}
-	return cfg
+	return applySplitterDefaults(cfg)
 }
 
 // NormalizeLineEndings canonicalizes text before chunking. Browser textareas
@@ -225,19 +216,27 @@ func DeriveParentChildConfigs(base SplitterConfig, parentSize, childSize int) (p
 		childSize = 384
 	}
 	parent = SplitterConfig{
-		ChunkSize:    parentSize,
-		ChunkOverlap: base.ChunkOverlap,
-		Separators:   base.Separators,
-		Strategy:     base.Strategy,
-		Languages:    base.Languages,
+		ChunkSize:             parentSize,
+		ChunkOverlap:          base.ChunkOverlap,
+		Separators:            base.Separators,
+		Strategy:              base.Strategy,
+		Languages:             base.Languages,
+		TokenCounter:          base.TokenCounter,
+		EmbeddingPrefix:       base.EmbeddingPrefix,
+		SemanticPackingPolicy: base.SemanticPackingPolicy,
+		AllowZeroOverlap:      true,
 	}
 	child = SplitterConfig{
-		ChunkSize:    childSize,
-		ChunkOverlap: childSize / 5,
-		Separators:   base.Separators,
-		Strategy:     base.Strategy,
-		TokenLimit:   base.TokenLimit,
-		Languages:    base.Languages,
+		ChunkSize:             childSize,
+		ChunkOverlap:          childSize / 5,
+		Separators:            base.Separators,
+		Strategy:              base.Strategy,
+		TokenLimit:            base.TokenLimit,
+		Languages:             base.Languages,
+		TokenCounter:          base.TokenCounter,
+		EmbeddingPrefix:       base.EmbeddingPrefix,
+		SemanticPackingPolicy: base.SemanticPackingPolicy,
+		AllowZeroOverlap:      true,
 	}
 	return
 }
@@ -288,7 +287,8 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 		fallthrough
 	default:
 		profile := ProfileDocument(text)
-		return SelectStrategy(profile), profile
+		chain := append([]StrategyTier{TierSemantic}, SelectStrategy(profile)...)
+		return chain, profile
 	}
 }
 
@@ -303,6 +303,16 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 // profile compute one on demand.
 func runTier(tier StrategyTier, text string, cfg SplitterConfig, profile *DocProfile) []Chunk {
 	switch tier {
+	case TierSemantic:
+		document, err := AnalyzeSemanticDocument(text, SemanticAnalysisOptions{})
+		if err != nil {
+			return nil
+		}
+		chunks, err := SplitSemanticDocument(text, cfg, document)
+		if err != nil {
+			return nil
+		}
+		return chunks
 	case TierHeading:
 		return splitByHeadings(text, cfg, profile)
 	case TierHeuristic:
@@ -321,10 +331,14 @@ func runTier(tier StrategyTier, text string, cfg SplitterConfig, profile *DocPro
 // that fits within that token limit (with a 10% safety factor). This makes
 // chunks safe for embedding APIs that have hard token caps.
 func ensureDefaults(cfg SplitterConfig) SplitterConfig {
+	return applySplitterDefaults(cfg)
+}
+
+func applySplitterDefaults(cfg SplitterConfig) SplitterConfig {
 	if cfg.ChunkSize <= 0 {
 		cfg.ChunkSize = DefaultChunkSize
 	}
-	if cfg.ChunkOverlap <= 0 {
+	if cfg.ChunkOverlap < 0 || (cfg.ChunkOverlap == 0 && !cfg.AllowZeroOverlap) {
 		cfg.ChunkOverlap = DefaultChunkOverlap
 	}
 	if len(cfg.Separators) == 0 {
@@ -340,10 +354,6 @@ func ensureDefaults(cfg SplitterConfig) SplitterConfig {
 			cfg.ChunkSize = charBudget
 		}
 	}
-	// Guard against pathological overlap configurations: if Overlap exceeds
-	// half of ChunkSize, almost every chunk is duplicate content. Cap it at
-	// ChunkSize/2 so Overlap stays a useful smoothing band rather than a
-	// near-clone of the previous chunk.
 	if cfg.ChunkOverlap > cfg.ChunkSize/2 && cfg.ChunkSize > 0 {
 		cfg.ChunkOverlap = cfg.ChunkSize / 2
 	}

@@ -1,6 +1,11 @@
 package chunker
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 type SemanticParentChildRequest struct {
 	Content      string
@@ -10,36 +15,175 @@ type SemanticParentChildRequest struct {
 }
 
 func SplitParentChildSemanticDocument(request SemanticParentChildRequest) (ParentChildResult, error) {
-	parents, err := SplitSemanticDocument(request.Content, request.ParentConfig, request.Document)
+	childConfig := request.ChildConfig
+	if childConfig.SemanticPackingPolicy.Version == "" &&
+		request.ParentConfig.SemanticPackingPolicy.Version != "" {
+		childConfig.SemanticPackingPolicy = request.ParentConfig.SemanticPackingPolicy
+	}
+	children, err := SplitSemanticDocument(request.Content, childConfig, request.Document)
 	if err != nil {
 		return ParentChildResult{}, err
 	}
-	var storedParents []Chunk
-	var children []ChildChunk
-	childSequence := 0
-	for _, parent := range parents {
-		subDocument, sliceErr := sliceSemanticDocument(request.Document, parent.Start, parent.End)
-		if sliceErr != nil {
-			return ParentChildResult{}, sliceErr
+	parentUnit := semanticParentUnit(request)
+	if parentUnit == types.SemanticParentUnitNone {
+		result := ParentChildResult{Children: make([]ChildChunk, len(children))}
+		for index, child := range children {
+			result.Children[index] = ChildChunk{Chunk: child, ParentIndex: -1}
 		}
-		subs, splitErr := SplitSemanticDocument(parent.Content, request.ChildConfig, subDocument)
-		if splitErr != nil {
-			return ParentChildResult{}, splitErr
-		}
-		parentIndex := semanticStoredParentIndex(parent, subs, &storedParents)
-		for _, sub := range subs {
-			sub.Seq = childSequence
-			sub.Start += parent.Start
-			sub.End += parent.Start
-			sub, splitErr = mergeSemanticChildContext(parent, sub, request.ChildConfig)
-			if splitErr != nil {
-				return ParentChildResult{}, splitErr
+		return result, nil
+	}
+	return packSemanticParentTree(semanticParentTreeRequest{
+		content: request.Content, children: children, document: request.Document,
+		parentConfig: request.ParentConfig, childConfig: childConfig, parentUnit: parentUnit,
+	})
+}
+
+func semanticParentUnit(request SemanticParentChildRequest) string {
+	if unit := request.ChildConfig.SemanticPackingPolicy.ParentUnit; unit != "" {
+		return unit
+	}
+	if unit := request.ParentConfig.SemanticPackingPolicy.ParentUnit; unit != "" {
+		return unit
+	}
+	return types.SemanticParentUnitSection
+}
+
+type semanticParentTreeRequest struct {
+	content      string
+	children     []Chunk
+	document     SemanticDocument
+	parentConfig SplitterConfig
+	childConfig  SplitterConfig
+	parentUnit   string
+}
+
+func packSemanticParentTree(request semanticParentTreeRequest) (ParentChildResult, error) {
+	index := newSemanticContextIndex(request.content, request.document, request.childConfig.SemanticPackingPolicy)
+	packer := semanticPacker{runes: []rune(request.content), config: request.parentConfig, context: index}
+	type parentGroup struct {
+		key      string
+		start    int
+		end      int
+		children []int
+	}
+	groups := make([]parentGroup, 0)
+	current := parentGroup{start: -1}
+	for childIndex, child := range request.children {
+		key := semanticParentKey(index, request.document, child, request.parentUnit)
+		if current.start >= 0 {
+			sameKey := key == current.key
+			fits, err := packer.fits(current.start, child.End, "")
+			if err != nil {
+				return ParentChildResult{}, err
 			}
-			children = append(children, ChildChunk{Chunk: sub, ParentIndex: parentIndex})
-			childSequence++
+			if sameKey && fits {
+				current.end = child.End
+				current.children = append(current.children, childIndex)
+				continue
+			}
+			groups = append(groups, current)
+		}
+		current = parentGroup{
+			key: key, start: child.Start, end: child.End, children: []int{childIndex},
 		}
 	}
-	return ParentChildResult{Parents: storedParents, Children: children}, nil
+	if current.start >= 0 {
+		groups = append(groups, current)
+	}
+
+	var parents []Chunk
+	mapped := make([]ChildChunk, len(request.children))
+	for _, group := range groups {
+		subs := make([]Chunk, len(group.children))
+		for index, childIndex := range group.children {
+			subs[index] = request.children[childIndex]
+		}
+		parent := semanticParentChunk(packer.runes, group.start, group.end, subs)
+		parentIndex := semanticStoredParentIndex(parent, subs, &parents)
+		for _, childIndex := range group.children {
+			child := request.children[childIndex]
+			merged, err := mergeSemanticChildContext(parent, child, request.childConfig)
+			if err != nil {
+				return ParentChildResult{}, err
+			}
+			mapped[childIndex] = ChildChunk{Chunk: merged, ParentIndex: parentIndex}
+		}
+	}
+	for index := range parents {
+		parents[index].Seq = index
+	}
+	for index := range mapped {
+		mapped[index].Seq = index
+	}
+	return ParentChildResult{Parents: parents, Children: mapped}, nil
+}
+
+func semanticParentChunk(runes []rune, start, end int, children []Chunk) Chunk {
+	parent := Chunk{
+		Content: string(runes[start:end]),
+		Start:   start, End: end,
+	}
+	if len(children) == 0 {
+		return parent
+	}
+	header := strings.TrimSpace(children[0].ContextHeader)
+	if header == "" || strings.Contains(parent.Content, header) {
+		return parent
+	}
+	parent.ContextHeader = children[0].ContextHeader
+	parent.ContextReasonCodes = append([]string(nil), children[0].ContextReasonCodes...)
+	return parent
+}
+
+func semanticParentKey(
+	index semanticContextIndex,
+	document SemanticDocument,
+	child Chunk,
+	parentUnit string,
+) string {
+	if parentUnit == types.SemanticParentUnitPage {
+		if pageID := nearestSemanticPageID(document, child.Start); pageID != "" {
+			return "page:" + pageID
+		}
+	}
+	block := overlappingSemanticBlock(document, child.Start, child.End)
+	root := index.headingRootID(block)
+	if root == "" {
+		return "root"
+	}
+	return "section:" + root
+}
+
+func nearestSemanticPageID(document SemanticDocument, start int) string {
+	pageID := ""
+	for _, block := range document.Blocks {
+		if block.Kind != SemanticKindPageRegion || block.Start > start {
+			continue
+		}
+		pageID = block.ID
+	}
+	return pageID
+}
+
+func overlappingSemanticBlock(document SemanticDocument, start, end int) SemanticBlock {
+	for _, block := range document.Blocks {
+		if block.End <= start || block.Start >= end {
+			continue
+		}
+		if block.Kind != SemanticKindHeading && stringsTrimSpaceNonEmpty(block) {
+			return block
+		}
+	}
+	for _, block := range document.Blocks {
+		if block.End > start && block.Start < end {
+			return block
+		}
+	}
+	return SemanticBlock{}
+}
+
+func stringsTrimSpaceNonEmpty(block SemanticBlock) bool {
+	return block.End > block.Start
 }
 
 func mergeSemanticChildContext(

@@ -61,7 +61,7 @@ func TestAnthropicMapUsesRetryAfterWhenRateLimitBodyInterrupted(t *testing.T) {
 	handler := &anthropicRetryContractServer{}
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	model, err := chat.NewAnthropicChat(&chat.ChatConfig{
+	model, err := chat.NewRemoteChat(&chat.ChatConfig{
 		Source: types.ModelSourceRemote, BaseURL: server.URL,
 		ModelName: "claude-sonnet-4-5", ModelID: "model-id", APIKey: "test-key",
 		Provider: string(provider.ProviderAnthropic),

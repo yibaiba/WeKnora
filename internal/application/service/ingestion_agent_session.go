@@ -129,7 +129,7 @@ func (s *ingestionAgentSession) submit(input submitIngestionDecisionInput) (*typ
 		ReasonCodes:            append([]string(nil), input.ReasonCodes...),
 		Summary:                input.Summary,
 		RecommendedChunking:    cloneChunkingRecommendation(candidate.Config),
-		PackingPolicy:          cloneSemanticPackingPolicy(s.policy),
+		PackingPolicy:          packingPolicyForCandidate(s.policy, candidate.Config),
 	}
 	if err := validateIngestionAnalysisWithConstraints(analysis, s.constraints); err != nil {
 		return nil, err
@@ -212,7 +212,24 @@ func cloneIngestionCandidate(value types.IngestionChunkingCandidate) types.Inges
 	return value
 }
 
+func packingPolicyForCandidate(
+	policy types.SemanticPackingPolicy,
+	config types.IngestionChunkingRecommendation,
+) types.SemanticPackingPolicy {
+	policy = cloneSemanticPackingPolicy(policy)
+	if config.ParentUnit != "" {
+		policy.ParentUnit = config.ParentUnit
+	}
+	return policy
+}
+
 func cloneSemanticPackingPolicy(value types.SemanticPackingPolicy) types.SemanticPackingPolicy {
 	value.StrongBoundaryOrder = append([]string(nil), value.StrongBoundaryOrder...)
+	value.RegionRules = append([]types.SemanticPackRegionRule(nil), value.RegionRules...)
+	for index := range value.RegionRules {
+		value.RegionRules[index].StrongBoundaryOrder = append(
+			[]string(nil), value.RegionRules[index].StrongBoundaryOrder...,
+		)
+	}
 	return value
 }

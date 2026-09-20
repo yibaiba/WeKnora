@@ -499,7 +499,7 @@ func TestIngestItem_URLCreationAttachesDataSourceMetadata(t *testing.T) {
 	isUpdate, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
 		ExternalID: "url:1",
 		URL:        "https://example.com/doc",
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	assert.False(t, isUpdate)
 	require.Len(t, repo.metadataUpdates, 1)
@@ -523,7 +523,7 @@ func TestIngestItem_PersistsSourceUpdatedAt(t *testing.T) {
 		URL:        "https://example.com/doc",
 		UpdatedAt:  edited,
 		CreatedAt:  created,
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, repo.metadataUpdates, 1)
 	assert.Equal(t, "2023-04-04T22:07:08Z", repo.metadataUpdates[0]["source_updated_at"])
@@ -535,7 +535,7 @@ func TestIngestItem_PersistsSourceUpdatedAt(t *testing.T) {
 	_, err = svc.ingestItem(context.Background(), ds, &types.FetchedItem{
 		ExternalID: "url:2",
 		URL:        "https://example.com/doc2",
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, repo.metadataUpdates, 1)
 	_, present := repo.metadataUpdates[0]["source_updated_at"]
@@ -648,7 +648,7 @@ func TestApplyFetchedItem_SyncDeletionScopedPerDataSource(t *testing.T) {
 	svc.applyFetchedItem(context.Background(), dsA, &types.FetchedItem{
 		ExternalID: "file:shared",
 		IsDeleted:  true,
-	}, nil, result)
+	}, nil, result, nil)
 
 	assert.Equal(t, 1, result.Deleted)
 	assert.Equal(t, []string{"knowledge-a"}, ks.deleted)
@@ -744,7 +744,7 @@ func TestIngestItem_URLCreationMetadataAttachFailure(t *testing.T) {
 	_, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
 		ExternalID: "url:1",
 		URL:        "https://example.com/doc",
-	}, nil)
+	}, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attach datasource metadata")
 }

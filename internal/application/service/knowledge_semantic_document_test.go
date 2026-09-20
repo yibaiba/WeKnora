@@ -1,9 +1,11 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
+	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +32,42 @@ func TestAnalyzeFinalSemanticDocumentRelocatesHintsAfterImageReplacement(t *test
 	require.Contains(t, document.Diagnostics.ReasonCodes, "hint_source_unmatched")
 	require.NoError(t, chunker.ValidateSemanticDocument(document))
 	requireSemanticDocumentCoversSource(t, finalMarkdown, document)
+}
+
+func TestProductionIngestGeometrySurvivesCRLFHTMLTableAndImageRewrite(t *testing.T) {
+	parserMarkdown := "# Report\r\n\r\n<table><tr><td>Case</td><td>Result</td></tr>" +
+		"<tr><td>TC-LOGIN</td><td>Pass</td></tr></table>\r\n\r\n" +
+		"![chart](old.png)\r\nVerified result.\r\n"
+	normalized := chunker.NormalizeLineEndings(parserMarkdown)
+	normalized = docparser.NormalizeHTMLTables(normalized)
+	finalMarkdown := strings.ReplaceAll(normalized, "old.png", "stored/chart-long-name.png")
+
+	document, err := analyzeFinalSemanticDocument(finalSemanticDocumentRequest{
+		finalMarkdown: finalMarkdown, parserMarkdown: parserMarkdown,
+	})
+	require.NoError(t, err)
+	require.Equal(t, len([]rune(finalMarkdown)), document.ContentLength)
+	require.NoError(t, chunker.ValidateSemanticDocument(document))
+	requireSemanticDocumentCoversSource(t, finalMarkdown, document)
+
+	result, err := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
+		content: finalMarkdown, document: document,
+		effective: semanticEffectiveConfig(false, 80),
+	})
+	require.NoError(t, err)
+	requireParsedChunksCoverSource(t, finalMarkdown, result.chunks)
+	require.True(t, strings.Contains(finalMarkdown, "TC-LOGIN"))
+	headerSeen := false
+	for _, current := range result.chunks {
+		if !strings.Contains(current.Content, "TC-LOGIN") {
+			continue
+		}
+		if strings.Contains(current.EmbeddingContent(), "Case") &&
+			strings.Contains(current.EmbeddingContent(), "Result") {
+			headerSeen = true
+		}
+	}
+	require.True(t, headerSeen, "table continuation lost its header after production preprocess")
 }
 
 func requireSemanticDocumentCoversSource(

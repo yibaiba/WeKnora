@@ -128,7 +128,6 @@ func TestMapIngestionDocumentUsesFourWorkersAndRestoresOrder(t *testing.T) {
 	for _, call := range calls {
 		require.True(t, call.redacted)
 		require.Equal(t, float64(0), call.options.Temperature)
-		require.True(t, call.options.TemperatureSet)
 		require.Equal(t, ingestionDocumentAnalysisCompletionTokens, call.options.MaxTokens)
 		require.Zero(t, call.options.MaxCompletionTokens)
 		require.JSONEq(t, string(ingestionDocumentEvidenceSchema), string(call.options.Format))

@@ -26,7 +26,7 @@ func TestSemanticRetrievalWorkflowContract(t *testing.T) {
 		{
 			path: filepath.Join(root, ".github", "workflows", "docreader.yml"),
 			required: []string{
-				"Run DocReader Python test suite", "python -m unittest discover",
+				"Run Python tests", "python -m unittest discover",
 				"go test -timeout=60s ./docreader/client ./docreader/proto",
 			},
 		},

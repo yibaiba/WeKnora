@@ -77,16 +77,16 @@ func TestHTMLEmbeddedTableWiring_CallSitesPresent(t *testing.T) {
 	if lastCallBefore(process, call, "s.imageResolver.ResolveAndStore") < 0 {
 		t.Fatalf("knowledge_process.go: %s must run before image resolution", call)
 	}
-	if lastCallBefore(process, call, "chunkCfg := buildSplitterConfigFromChunking") < 0 {
-		t.Fatalf("knowledge_process.go: %s must run before the chunking step", call)
+	if lastCallBefore(process, call, "analyzeFinalSemanticDocument") < 0 {
+		t.Fatalf("knowledge_process.go: %s must run before semantic analysis / chunking", call)
 	}
 
 	createSrc, err := os.ReadFile("knowledge_create.go")
 	if err != nil {
 		t.Fatalf("read knowledge_create.go: %v", err)
 	}
-	if lastCallBefore(string(createSrc), call, "chunkCfg := buildSplitterConfigFromChunking") < 0 {
-		t.Fatalf("knowledge_create.go: %s must run before buildSplitterConfigFromChunking", call)
+	if lastCallBefore(string(createSrc), call, "analyzeFinalSemanticDocument") < 0 {
+		t.Fatalf("knowledge_create.go: %s must run before semantic analysis / chunking", call)
 	}
 
 	tempSrc, err := os.ReadFile("temporary_document.go")

@@ -126,18 +126,36 @@ func (index semanticContextIndex) contextItems(
 ) []semanticContextItem {
 	items := make([]semanticContextItem, 0, 6)
 	if block.Kind == SemanticKindTableRow {
+		// Table headers stay required even when RepeatRequiredContext is unset.
 		items = appendContextItem(items, index.blockText(index.tableHeaders[block.TableID]), true)
 	}
-	if continuation && block.Kind == SemanticKindRecord {
+	repeat := continuation || index.policy.RepeatRequiredContext
+	if repeat && block.Kind == SemanticKindRecord {
 		items = appendContextItem(items, firstSemanticSourceLine(index.blockText(index.records[block.RecordID])), true)
 	}
-	if continuation && block.Kind == SemanticKindCodeBlock {
+	if repeat && block.Kind == SemanticKindCodeBlock {
 		items = appendContextItem(items, firstSemanticSourceLine(index.blockText(block)), true)
+	}
+	if repeat && block.Kind == SemanticKindFAQ {
+		items = appendContextItem(items, firstSemanticSourceLine(index.blockText(block)), true)
+	}
+	if semanticAtomicContextKind(block.Kind) {
+		return items
 	}
 	for _, heading := range index.headingAncestorsNearestFirst(block.ParentID) {
 		items = appendContextItem(items, heading, false)
 	}
 	return items
+}
+
+func semanticAtomicContextKind(kind string) bool {
+	switch kind {
+	case SemanticKindTableHeader, SemanticKindTableRow, SemanticKindFAQ,
+		SemanticKindCodeBlock, SemanticKindRecord:
+		return true
+	default:
+		return false
+	}
 }
 
 func fitSemanticContext(
@@ -185,6 +203,30 @@ func semanticContextCandidateFits(
 		return false, err
 	}
 	return overhead.Count < budget.totalTokenLimit, nil
+}
+
+func (index semanticContextIndex) headingRootID(block SemanticBlock) string {
+	if block.Kind == SemanticKindHeading {
+		return block.ID
+	}
+	root := block.ParentID
+	parentID := block.ParentID
+	seen := make(map[string]struct{})
+	for parentID != "" {
+		if _, duplicate := seen[parentID]; duplicate {
+			break
+		}
+		seen[parentID] = struct{}{}
+		parent, ok := index.byID[parentID]
+		if !ok {
+			break
+		}
+		if parent.Kind == SemanticKindHeading {
+			root = parent.ID
+		}
+		parentID = parent.ParentID
+	}
+	return root
 }
 
 func (index semanticContextIndex) headingAncestorsNearestFirst(parentID string) []string {

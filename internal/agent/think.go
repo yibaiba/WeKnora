@@ -562,8 +562,10 @@ func (e *AgentEngine) callLLMWithRetry(
 		response, err = e.streamThinkingToEventBus(ctx, messages, tools, iteration, sessionID)
 	}
 
-	if err != nil && isTransientError(err) {
-		// Retry transient errors (timeout, rate limit, server errors) up to maxLLMRetries times
+	if err != nil && isTransientError(err) && ctx.Err() == nil {
+		// Retry transient errors (timeout, rate limit, server errors) up to maxLLMRetries times.
+		// A cancelled parent context is not retryable: sleeping would ignore the
+		// caller's deadline (ingestion advisor total timeout, user stop).
 		for retry := 1; retry <= maxLLMRetries; retry++ {
 			retryDelay := time.Duration(retry) * time.Second
 			logger.Warnf(ctx, "[Agent][Round-%d] LLM transient error (attempt %d/%d), retrying in %v: %v",

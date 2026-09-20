@@ -59,7 +59,16 @@ export interface ExtractConfigOverride {
   custom_instructions?: string
 }
 
+export type IngestionAdvisorMode = 'smart' | 'off'
+
+export interface IngestionAdvisorConfig {
+  mode?: IngestionAdvisorMode
+  allow_web_access?: boolean
+  allow_read_only_mcp?: boolean
+}
+
 export interface KnowledgeProcessOverrides {
+  ingestion_advisor?: IngestionAdvisorConfig
   summary_enabled?: boolean
   parser_engine_rules?: ParserEngineRule[]
   chunking_config?: ChunkingConfigOverride

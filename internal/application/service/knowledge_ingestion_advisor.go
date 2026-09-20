@@ -200,7 +200,7 @@ func applyIngestionAnalysis(
 	mode := ingestionAppliedMode(analysis)
 	effective.IngestionAppliedMode = mode
 	effective.IngestionAdvisorApplied = mode == types.IngestionAppliedModeSmart
-	effective.SemanticPackingPolicy = cloneSemanticPackingPolicy(analysis.PackingPolicy)
+	effective.SemanticPackingPolicy = packingPolicyForCandidate(analysis.PackingPolicy, analysis.RecommendedChunking)
 	analysis.AppliedMode = mode
 	if mode == types.IngestionAppliedModeFallback {
 		return effective
