@@ -85,6 +85,10 @@ type TenantSandboxResolverDeps struct {
 	Store   SessionSandboxBindingStore
 	Checker SessionExistenceChecker
 
+	// Bootstrapper customises the first sandbox create of individual sessions
+	// (session fork). Optional: nil is the ordinary path.
+	Bootstrapper SessionBootstrapper
+
 	// SharedTransport is reused by every tenant's HTTP client. Optional; a
 	// guarded transport is installed when nil.
 	SharedTransport *http.Transport
@@ -175,6 +179,9 @@ func (r *tenantSandboxResolver) Resolve(
 	if err != nil {
 		return nil, err
 	}
+	if err := EnsureDockerBackendAllowed(effective.Type); err != nil {
+		return nil, err
+	}
 
 	switch effective.Type {
 	case SandboxTypeDisabled:
@@ -191,13 +198,8 @@ func (r *tenantSandboxResolver) Resolve(
 			Checker:         r.deps.Checker,
 			SkipHealthProbe: true,
 			ConfigID:        configID,
+			Bootstrapper:    r.deps.Bootstrapper,
 		})
-	case SandboxTypeLocal:
-		// The local backend runs scripts on the application host, so falling
-		// back to it silently is never right: a workspace that selected it did
-		// so knowingly, and one that selected something else must fail loudly.
-		effective.FallbackEnabled = false
-		return NewManager(effective)
 	default:
 		return NewDisabledManager(), nil
 	}
@@ -254,6 +256,9 @@ func NewRemoteClientForCheck(cfg *Config) (RemoteSandboxClient, error) {
 		return NewE2BRemoteClientWithPool(cfg, NewSandboxGatewayTransportPoolWithPolicy(nil,
 			OutboundURLPolicy{AllowPrivate: cfg.AllowPrivateEndpoints}))
 	case SandboxTypeDocker:
+		if err := EnsureDockerBackendAllowed(SandboxTypeDocker); err != nil {
+			return nil, err
+		}
 		return NewDockerRemoteClientForCheck(cfg)
 	default:
 		return nil, fmt.Errorf("sandbox: provider %q cannot be probed", cfg.Type)

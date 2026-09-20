@@ -48,11 +48,10 @@ func (a *modelIngestionAdvisor) registerOptionalTools(
 }
 
 func ingestionReadOnlyToolNames(request types.IngestionAdvisorRequest) ([]string, []string) {
-	names := []string{agenttools.ToolThinking, agenttools.ToolReadSkill}
+	names := []string{agenttools.ToolThinking}
 	if request.VectorEnabled || request.KeywordEnabled {
 		names = append(names,
-			agenttools.ToolKnowledgeSearch, agenttools.ToolGrepChunks,
-			agenttools.ToolListKnowledgeChunks, agenttools.ToolGetDocumentInfo,
+			agenttools.ToolSearchKnowledge, agenttools.ToolReadDocument, agenttools.ToolListDocuments,
 			agenttools.ToolDatabaseQuery, agenttools.ToolDataAnalysis, agenttools.ToolDataSchema,
 		)
 	}
@@ -63,8 +62,7 @@ func ingestionReadOnlyToolNames(request types.IngestionAdvisorRequest) ([]string
 	if request.WikiEnabled {
 		wikiKBIDs = []string{request.KnowledgeBaseID}
 		names = append(names,
-			agenttools.ToolWikiReadPage, agenttools.ToolWikiSearch,
-			agenttools.ToolWikiReadSourceDoc, agenttools.ToolWikiReadIssue,
+			agenttools.ToolWikiReadPage, agenttools.ToolWikiSearch, agenttools.ToolWikiReadIssue,
 		)
 	}
 	if request.AllowWebAccess {

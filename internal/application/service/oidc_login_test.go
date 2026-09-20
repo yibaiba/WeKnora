@@ -171,7 +171,7 @@ func TestVerifyOIDCIDTokenRejectsBreakglass(t *testing.T) {
 	})
 	err := verifyOIDCIDToken(context.Background(), &config.OIDCAuthConfig{
 		IssuerURL:        server.URL,
-		JWKSURI:          server.URL + "/jwks",
+		JwksURI:          server.URL + "/jwks",
 		ClientID:         "weknora-web",
 		ResourceAudience: "weknora",
 	}, raw, "n1")
@@ -192,7 +192,7 @@ func TestVerifyOIDCIDTokenNonceMismatch(t *testing.T) {
 	})
 	err := verifyOIDCIDToken(context.Background(), &config.OIDCAuthConfig{
 		IssuerURL:        server.URL,
-		JWKSURI:          server.URL + "/jwks",
+		JwksURI:          server.URL + "/jwks",
 		ClientID:         "weknora-web",
 		ResourceAudience: "weknora",
 	}, raw, "n1")
@@ -212,7 +212,7 @@ func TestVerifyOIDCIDTokenRejectsUnsigned(t *testing.T) {
 	})
 	err := verifyOIDCIDToken(context.Background(), &config.OIDCAuthConfig{
 		IssuerURL: server.URL,
-		JWKSURI:   server.URL + "/jwks",
+		JwksURI:   server.URL + "/jwks",
 		ClientID:  "weknora-web",
 	}, raw, "n1")
 	if err == nil {
@@ -316,7 +316,7 @@ func TestLoginWithOIDCKeysBySubjectWithoutTokenExchange(t *testing.T) {
 			AuthorizationEndpoint: server.URL + "/authorize",
 			TokenEndpoint:         server.URL + "/token",
 			UserInfoEndpoint:      server.URL + "/userinfo",
-			JWKSURI:               server.URL + "/jwks",
+			JwksURI:               server.URL + "/jwks",
 			Scopes:                []string{"openid", "profile"},
 			UserInfoMapping:       &config.OIDCUserInfoMapping{Username: "name", Email: "email"},
 		}},

@@ -23,15 +23,39 @@ test('agent actions reuse the fully-rendered answer state', () => {
   assert.match(agentStream, /v-if="answerFullyRendered && event\.done/)
 })
 
-test('artifact download uses a muted count overlay instead of t-badge', () => {
+test('artifact count is a top-right overlay instead of t-badge', () => {
   assert.match(botMessage, /class="answer-toolbar__artifact"/)
   assert.match(agentStream, /class="answer-toolbar__artifact"/)
   assert.match(botMessage, /class="answer-toolbar__artifact-count"/)
   assert.match(agentStream, /class="answer-toolbar__artifact-count"/)
   assert.match(sharedStyles, /answer-toolbar__artifact-count/)
-  assert.match(sharedStyles, /td-bg-color-secondarycontainer/)
+  assert.match(sharedStyles, /position: absolute/)
+  assert.match(sharedStyles, /td-brand-color/)
+  assert.match(sharedStyles, /artifact-toolbar-arrive/)
+  assert.match(botMessage, /is-arrived': artifactArrived/)
+  assert.match(agentStream, /is-arrived': artifactArrived/)
+  assert.match(botMessage, /useArtifactArriveMotion/)
+  assert.match(agentStream, /useArtifactArriveMotion/)
   assert.doesNotMatch(botMessage, /<t-badge/)
   assert.doesNotMatch(agentStream, /<t-badge/)
+})
+
+test('artifact toolbar opens the sandbox panel artifacts tab', () => {
+  assert.match(botMessage, /sandboxPanel.open\('artifacts'/)
+  assert.match(agentStream, /sandboxPanel.open\('artifacts'/)
+  assert.match(botMessage, /v-if="hasArtifacts && embeddedMode"/)
+  assert.match(agentStream, /v-if="hasArtifacts && embeddedMode/)
+})
+
+test('artifact toolbar uses a folder icon and replaces it while collecting', () => {
+  assert.match(botMessage, /answer-toolbar__artifact[\s\S]{0,800}name="folder"/)
+  assert.match(agentStream, /answer-toolbar__artifact[\s\S]{0,800}name="folder"/)
+  assert.match(botMessage, /class="answer-toolbar__artifact-spinner"/)
+  assert.match(agentStream, /class="answer-toolbar__artifact-spinner"/)
+  // 旋转动画统一为 theme.css 里的全局 wk-spin
+  assert.match(sharedStyles, /answer-toolbar__artifact-spinner[\s\S]{0,400}animation: wk-spin/)
+  assert.doesNotMatch(botMessage, /answer-toolbar__artifact[\s\S]{0,800}:loading=/)
+  assert.doesNotMatch(agentStream, /answer-toolbar__artifact[\s\S]{0,800}:loading=/)
 })
 
 test('follow-up loading is shown compactly inside both answer toolbars', () => {
@@ -42,7 +66,7 @@ test('follow-up loading is shown compactly inside both answer toolbars', () => {
   assert.match(botMessage, /transition name="follow-up-toolbar-loading"/)
   assert.match(agentStream, /transition name="follow-up-toolbar-loading"/)
   assert.match(sharedStyles, /border-left: 1px solid/)
-  assert.match(sharedStyles, /font-size: 12px/)
+  assert.match(sharedStyles, /font-size: (?:12px|var\(--app-text-sm\))/)
   assert.match(sharedStyles, /followUpToolbarShimmer 1\.5s linear infinite/)
   assert.match(sharedStyles, /background-clip: text/)
   assert.match(sharedStyles, /follow-up-toolbar-loading-leave-to/)
@@ -64,7 +88,7 @@ test('follow-up suggestions wait until the answer is fully rendered', () => {
   )
   assert.match(
     chatView,
-    /<FollowUpSuggestions v-if="session\.answerFullyRendered && !session\.suggestionsDismissed"/,
+    /<FollowUpSuggestions v-if="session\.answerFullyRendered && !session\.steerForked && !session\.suggestionsDismissed"/,
   )
   assert.match(botMessage, /emit\('render-complete-change', ready\)/)
   assert.match(agentStream, /emit\('render-complete-change', ready\)/)

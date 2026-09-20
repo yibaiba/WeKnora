@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"mime/multipart"
 	"strings"
 	"testing"
 	"time"
@@ -59,66 +58,9 @@ func TestProcessSyncCancelsWhenKnowledgeBaseDeleted(t *testing.T) {
 	require.NotNil(t, updated.FinishedAt)
 }
 
-func TestProcessSyncPersistsPartialWhenItemIngestionFails(t *testing.T) {
-	config := &types.DataSourceConfig{Type: "partial_test"}
-	configJSON, err := config.ToJSON()
-	require.NoError(t, err)
-
-	ds := &types.DataSource{
-		ID:              "ds-partial",
-		TenantID:        1,
-		KnowledgeBaseID: "kb-1",
-		Name:            "WeDrive",
-		Type:            "partial_test",
-		Config:          configJSON,
-		Status:          types.DataSourceStatusActive,
-		SyncMode:        types.SyncModeFull,
-	}
-	dsRepo := newKBDeleteDSRepo("kb-1", ds)
-	syncLog := &types.SyncLog{
-		ID:           "log-partial",
-		DataSourceID: ds.ID,
-		TenantID:     ds.TenantID,
-		Status:       types.SyncLogStatusRunning,
-		StartedAt:    time.Now().UTC(),
-	}
-	syncLogRepo := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{syncLog.ID: syncLog}}
-	registry := datasource.NewConnectorRegistry()
-	require.NoError(t, registry.Register(&partialTestConnector{}))
-
-	svc := &DataSourceService{
-		dsRepo:            dsRepo,
-		syncLogRepo:       syncLogRepo,
-		kbService:         &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
-		knowledgeService:  &captureKnowledgeService{repo: &captureKnowledgeRepository{}},
-		tenantRepo:        &processSyncTenantRepo{},
-		tagService:        &processSyncTagService{},
-		connectorRegistry: registry,
-	}
-
-	payload, err := json.Marshal(types.DataSourceSyncPayload{
-		DataSourceID: ds.ID,
-		TenantID:     ds.TenantID,
-		SyncLogID:    syncLog.ID,
-		ForceFull:    true,
-	})
-	require.NoError(t, err)
-
-	err = svc.ProcessSync(context.Background(), asynq.NewTask(types.TypeDataSourceSync, payload))
-	require.NoError(t, err)
-
-	updated := syncLogRepo.logs[syncLog.ID]
-	require.NotNil(t, updated)
-	assert.Equal(t, types.SyncLogStatusPartial, updated.Status)
-	assert.Equal(t, 2, updated.ItemsTotal)
-	assert.Equal(t, 1, updated.ItemsCreated)
-	assert.Equal(t, 1, updated.ItemsFailed)
-	assert.Contains(t, updated.ErrorMessage, "Some items failed")
-}
-
 type processSyncKBService struct {
-	kb     *types.KnowledgeBase
 	getErr error
+	kb     *types.KnowledgeBase
 }
 
 func (s *processSyncKBService) CreateKnowledgeBase(context.Context, *types.KnowledgeBase) (*types.KnowledgeBase, error) {
@@ -228,68 +170,6 @@ func (r *processSyncSyncLogRepo) CancelPendingByDataSource(context.Context, stri
 }
 func (r *processSyncSyncLogRepo) CleanupOldLogs(context.Context, int) error { return nil }
 
-type partialTestConnector struct{}
-
-func (c *partialTestConnector) Type() string { return "partial_test" }
-func (c *partialTestConnector) Validate(context.Context, *types.DataSourceConfig) error {
-	return nil
-}
-func (c *partialTestConnector) ListResources(context.Context, *types.DataSourceConfig, string) ([]types.Resource, error) {
-	return nil, nil
-}
-func (c *partialTestConnector) ResolveResourceAncestors(
-	context.Context, *types.DataSourceConfig, []string,
-) ([]string, error) {
-	return nil, nil
-}
-func (c *partialTestConnector) FetchAll(
-	context.Context, *types.DataSourceConfig, []string,
-) ([]types.FetchedItem, error) {
-	return []types.FetchedItem{
-		{
-			ExternalID:       "ok",
-			Title:            "Ok.md",
-			FileName:         "Ok.md",
-			Content:          []byte("# ok"),
-			SourceResourceID: "root",
-		},
-		{
-			ExternalID:       "bad",
-			Title:            "Bad.md",
-			FileName:         "Bad.md",
-			SourceResourceID: "root",
-			Metadata:         map[string]string{"error": "download failed"},
-		},
-	}, nil
-}
-func (c *partialTestConnector) FetchIncremental(
-	context.Context, *types.DataSourceConfig, *types.SyncCursor,
-) ([]types.FetchedItem, *types.SyncCursor, error) {
-	return nil, nil, errors.New("not used")
-}
-
-type processSyncTenantRepo struct {
-	interfaces.TenantRepository
-	tenant *types.Tenant
-}
-
-func (r *processSyncTenantRepo) GetTenantByID(context.Context, uint64) (*types.Tenant, error) {
-	if r.tenant != nil {
-		return r.tenant, nil
-	}
-	return &types.Tenant{ID: 1, Name: "tenant"}, nil
-}
-
-type processSyncTagService struct {
-	interfaces.KnowledgeTagService
-}
-
-func (s *processSyncTagService) FindOrCreateTagByName(
-	context.Context, string, string,
-) (*types.KnowledgeTag, error) {
-	return &types.KnowledgeTag{ID: "tag-1", Name: "WeDrive"}, nil
-}
-
 func TestAllFetchedItemsFailedError(t *testing.T) {
 	err := allFetchedItemsFailedError(&types.SyncResult{
 		Total:  2,
@@ -329,262 +209,6 @@ func TestAllFetchedItemsFailedErrorTruncatesLongDetail(t *testing.T) {
 	assert.Contains(t, err.Error(), "...")
 }
 
-func TestProcessConfigFromSettings(t *testing.T) {
-	raw := map[string]interface{}{
-		"chunking_config": map[string]interface{}{"chunk_size": float64(768)},
-		"parser_engine_overrides": map[string]interface{}{
-			"pdf_force_scanned": "true",
-		},
-	}
-
-	overrides, err := processConfigFromSettings(map[string]interface{}{"process_config": raw})
-	require.NoError(t, err)
-	require.NotNil(t, overrides)
-	require.NotNil(t, overrides.ChunkingConfig)
-	assert.Equal(t, 768, overrides.ChunkingConfig.ChunkSize)
-	assert.Equal(t, "true", overrides.ParserEngineOverrides["pdf_force_scanned"])
-}
-
-func TestSyncStatusFromResultMarksItemFailuresPartial(t *testing.T) {
-	status, message := syncStatusFromResult(&types.SyncResult{Total: 2, Created: 1, Failed: 1}, nil)
-
-	assert.Equal(t, types.SyncLogStatusPartial, status)
-	assert.Contains(t, message, "Some items failed")
-}
-
-func TestIngestItemForwardsProcessOverridesToFileIngestion(t *testing.T) {
-	chunkSize := 512
-	overrides := &types.KnowledgeProcessOverrides{
-		ChunkingConfig: &types.ChunkingConfig{ChunkSize: chunkSize},
-	}
-	knowledgeSvc := &captureKnowledgeService{repo: &captureKnowledgeRepository{}}
-	svc := &DataSourceService{knowledgeService: knowledgeSvc}
-	ds := &types.DataSource{
-		ID:              "ds-1",
-		TenantID:        7,
-		KnowledgeBaseID: "kb-1",
-		Type:            types.ConnectorTypeWeComWeDrive,
-	}
-	item := &types.FetchedItem{
-		ExternalID:       "wecom_wedrive:space:file",
-		Title:            "Doc.md",
-		FileName:         "Doc.md",
-		Content:          []byte("# doc"),
-		SourceResourceID: "folder:space:folder",
-		Metadata:         map[string]string{"provider": "wecom_wedrive"},
-	}
-
-	_, err := svc.ingestItem(context.Background(), ds, item, []string{"tag-1"}, overrides)
-	require.NoError(t, err)
-	require.Same(t, overrides, knowledgeSvc.fileOverrides)
-	assert.Equal(t, "tag-1", knowledgeSvc.fileTagIDs[0])
-	assert.Equal(t, types.ConnectorTypeWeComWeDrive, knowledgeSvc.fileChannel)
-}
-
-func TestIngestItemUpsertsSourceACLForRestrictedWeDriveItem(t *testing.T) {
-	entries, err := json.Marshal([]types.SourceACLMetadataEntry{
-		{
-			SubjectType: types.SourceACLSubjectWeComUser,
-			SubjectID:   "wx-a",
-			Permission:  types.SourceACLPermissionRead,
-		},
-		{
-			SubjectType: types.SourceACLSubjectWeComDepartment,
-			SubjectID:   "42",
-			Permission:  types.SourceACLPermissionRead,
-		},
-	})
-	require.NoError(t, err)
-
-	knowledgeSvc := &captureKnowledgeService{repo: &captureKnowledgeRepository{}}
-	aclRepo := &captureSourceACLRepository{}
-	svc := &DataSourceService{knowledgeService: knowledgeSvc, sourceACLRepo: aclRepo}
-	ds := &types.DataSource{
-		ID:              "ds-1",
-		TenantID:        7,
-		KnowledgeBaseID: "kb-1",
-		Type:            types.ConnectorTypeWeComWeDrive,
-	}
-	item := &types.FetchedItem{
-		ExternalID:       "wecom_wedrive:space:file-1",
-		Title:            "Doc.md",
-		FileName:         "Doc.md",
-		Content:          []byte("# doc"),
-		SourceResourceID: "folder:space:folder-1",
-		Metadata: map[string]string{
-			"provider":                           types.ConnectorTypeWeComWeDrive,
-			"file_id":                            "file-1",
-			"access_mode":                        "restricted",
-			"queryable_state":                    "restricted",
-			"require_source_acl":                 "true",
-			types.SourceACLMetadataKeyVisibility: "restricted",
-			types.SourceACLMetadataKeyStatus:     "ready",
-			types.SourceACLMetadataKeySourceHash: "acl:abc",
-			types.SourceACLMetadataKeyEntries:    string(entries),
-		},
-	}
-
-	_, err = svc.ingestItem(context.Background(), ds, item, nil, nil)
-	require.NoError(t, err)
-	require.NotNil(t, aclRepo.input.Snapshot)
-	assert.NotContains(t, knowledgeSvc.fileMetadata, types.SourceACLMetadataKeyEntries)
-	assert.Equal(t, "restricted", knowledgeSvc.fileMetadata["access_mode"])
-	assert.Equal(t, uint64(7), aclRepo.input.Snapshot.TenantID)
-	assert.Equal(t, "knowledge-1", aclRepo.input.Snapshot.KnowledgeID)
-	assert.Equal(t, "kb-1", aclRepo.input.Snapshot.KnowledgeBaseID)
-	assert.Equal(t, "file-1", aclRepo.input.Snapshot.SourceItemID)
-	assert.Equal(t, types.SourceACLVisibilityRestricted, aclRepo.input.Snapshot.Visibility)
-	assert.Equal(t, "acl:abc", aclRepo.input.Snapshot.SourceHash)
-	require.Len(t, aclRepo.input.Entries, 2)
-	assert.Equal(t, types.SourceACLSubjectWeComUser, aclRepo.input.Entries[0].SubjectType)
-	assert.Equal(t, "wx-a", aclRepo.input.Entries[0].SubjectID)
-	assert.Equal(t, types.SourceACLSubjectWeComDepartment, aclRepo.input.Entries[1].SubjectType)
-	assert.Equal(t, "42", aclRepo.input.Entries[1].SubjectID)
-}
-
-func TestHandleACLOnlyFetchedItemRefreshesExistingSnapshot(t *testing.T) {
-	repo := &captureKnowledgeRepository{
-		byExternalID: map[string]*types.Knowledge{
-			"wecom_wedrive:space:file-1": {
-				ID:              "knowledge-1",
-				TenantID:        7,
-				KnowledgeBaseID: "kb-1",
-			},
-		},
-	}
-	aclRepo := &captureSourceACLRepository{}
-	svc := &DataSourceService{
-		knowledgeService: &captureKnowledgeService{repo: repo},
-		sourceACLRepo:    aclRepo,
-	}
-	ds := &types.DataSource{
-		ID:              "ds-1",
-		TenantID:        7,
-		KnowledgeBaseID: "kb-1",
-		Type:            types.ConnectorTypeWeComWeDrive,
-	}
-	item := &types.FetchedItem{
-		ExternalID:       "wecom_wedrive:space:file-1",
-		Title:            "Doc.md",
-		SourceResourceID: "folder:space:folder-1",
-		Metadata: map[string]string{
-			"provider":                           types.ConnectorTypeWeComWeDrive,
-			"file_id":                            "file-1",
-			"access_mode":                        "restricted",
-			"queryable_state":                    "restricted",
-			"require_source_acl":                 "true",
-			types.SourceACLMetadataKeyVisibility: "restricted",
-			types.SourceACLMetadataKeyStatus:     types.SourceACLStatusUnmapped,
-			types.SourceACLMetadataKeySourceHash: "acl:revoked",
-			types.SourceACLMetadataKeyEntries:    "[]",
-		},
-	}
-	result := &types.SyncResult{Total: 1}
-
-	handled := svc.handleACLOnlyFetchedItem(context.Background(), ds, item, result)
-	require.True(t, handled)
-	assert.Equal(t, 1, result.Updated)
-	assert.Equal(t, types.SourceACLStatusUnmapped, aclRepo.input.Snapshot.Status)
-	assert.Equal(t, "knowledge-1", aclRepo.input.Snapshot.KnowledgeID)
-	assert.Empty(t, aclRepo.input.Entries)
-}
-
-type captureKnowledgeService struct {
-	interfaces.KnowledgeService
-	repo          interfaces.KnowledgeRepository
-	fileOverrides *types.KnowledgeProcessOverrides
-	fileTagIDs    []string
-	fileChannel   string
-	fileMetadata  map[string]string
-}
-
-type captureSourceACLRepository struct {
-	interfaces.SourceACLRepository
-	input interfaces.SourceACLUpsertInput
-	err   error
-}
-
-func (r *captureSourceACLRepository) UpsertSnapshot(
-	_ context.Context,
-	input interfaces.SourceACLUpsertInput,
-) (*types.SourceACLRecord, error) {
-	r.input = input
-	if r.err != nil {
-		return nil, r.err
-	}
-	return &types.SourceACLRecord{Snapshot: input.Snapshot, Entries: input.Entries}, nil
-}
-
-func (s *captureKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
-	return s.repo
-}
-
-func (s *captureKnowledgeService) CreateKnowledgeFromFile(
-	_ context.Context,
-	kbID string,
-	_ *multipart.FileHeader,
-	metadata map[string]string,
-	_ *bool,
-	_ string,
-	tagIDs []string,
-	channel string,
-	processOverrides *types.KnowledgeProcessOverrides,
-) (*types.Knowledge, error) {
-	s.fileOverrides = processOverrides
-	s.fileTagIDs = tagIDs
-	s.fileChannel = channel
-	s.fileMetadata = metadata
-	return &types.Knowledge{ID: "knowledge-1", KnowledgeBaseID: kbID}, nil
-}
-
-type captureKnowledgeRepository struct {
-	interfaces.KnowledgeRepository
-	byExternalID map[string]*types.Knowledge
-}
-
-func (r *captureKnowledgeRepository) FindByMetadataKey(
-	_ context.Context,
-	tenantID uint64,
-	kbID string,
-	key string,
-	value string,
-) (*types.Knowledge, error) {
-	if key != "external_id" || r.byExternalID == nil {
-		return nil, nil
-	}
-	knowledge := r.byExternalID[value]
-	if knowledge == nil || knowledge.TenantID != tenantID || knowledge.KnowledgeBaseID != kbID {
-		return nil, nil
-	}
-	return knowledge, nil
-}
-
-func (r *captureKnowledgeRepository) CheckKnowledgeExists(
-	context.Context,
-	uint64,
-	string,
-	*types.KnowledgeCheckParams,
-) (bool, *types.Knowledge, error) {
-	return false, nil, nil
-}
-
-func (r *captureKnowledgeRepository) FindByDataSourceExternalID(
-	_ context.Context, tenantID uint64, kbID, _, externalID string,
-) (*types.Knowledge, error) {
-	if r.byExternalID == nil {
-		return nil, nil
-	}
-	knowledge := r.byExternalID[externalID]
-	if knowledge == nil || knowledge.TenantID != tenantID || knowledge.KnowledgeBaseID != kbID {
-		return nil, nil
-	}
-	return knowledge, nil
-}
-
-func (r *captureKnowledgeRepository) HardDeleteKnowledge(context.Context, uint64, string) error {
-	return nil
-}
-
 const deletedItemConnectorType = "test-sync-deletion"
 
 type deletedItemConnector struct{}
@@ -617,6 +241,29 @@ func (deletedItemConnector) FetchIncremental(
 ) ([]types.FetchedItem, *types.SyncCursor, error) {
 	items, err := (deletedItemConnector{}).FetchAll(context.Background(), nil, nil)
 	return items, nil, err
+}
+
+type processSyncTenantRepo struct {
+	interfaces.TenantRepository
+	tenant *types.Tenant
+}
+
+func (r *processSyncTenantRepo) GetTenantByID(context.Context, uint64) (*types.Tenant, error) {
+	return r.tenant, nil
+}
+
+type processSyncTagService struct {
+	interfaces.KnowledgeTagService
+	ctx context.Context
+}
+
+func (s *processSyncTagService) FindOrCreateTagByName(
+	ctx context.Context,
+	_ string,
+	_ string,
+) (*types.KnowledgeTag, error) {
+	s.ctx = ctx
+	return nil, nil
 }
 
 type deletionLookupKnowledgeRepo struct {
@@ -852,12 +499,49 @@ func TestIngestItem_URLCreationAttachesDataSourceMetadata(t *testing.T) {
 	isUpdate, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
 		ExternalID: "url:1",
 		URL:        "https://example.com/doc",
-	}, nil, nil)
+	}, nil)
 	require.NoError(t, err)
 	assert.False(t, isUpdate)
 	require.Len(t, repo.metadataUpdates, 1)
 	assert.Equal(t, ds.ID, repo.metadataUpdates[0]["datasource_id"])
 	assert.Equal(t, "url:1", repo.metadataUpdates[0]["external_id"])
+}
+
+// TestIngestItem_PersistsSourceUpdatedAt verifies that the connector-supplied
+// last-modified time reaches the persisted metadata as an RFC3339 UTC string,
+// and that an item without one gets no key rather than a zero time.
+func TestIngestItem_PersistsSourceUpdatedAt(t *testing.T) {
+	ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1"}
+	edited := time.Date(2023, 4, 5, 6, 7, 8, 0, time.FixedZone("CST", 8*3600))
+
+	repo := &deletionLookupKnowledgeRepo{}
+	ks := &sweepFakeKS{repo: repo, createURLKnowledge: &types.Knowledge{ID: "url-knowledge-1"}}
+	svc := &DataSourceService{knowledgeService: ks}
+	created := time.Date(2021, 1, 2, 3, 4, 5, 0, time.UTC)
+	_, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
+		ExternalID: "url:1",
+		URL:        "https://example.com/doc",
+		UpdatedAt:  edited,
+		CreatedAt:  created,
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, repo.metadataUpdates, 1)
+	assert.Equal(t, "2023-04-04T22:07:08Z", repo.metadataUpdates[0]["source_updated_at"])
+	assert.Equal(t, "2021-01-02T03:04:05Z", repo.metadataUpdates[0]["source_created_at"])
+
+	repo = &deletionLookupKnowledgeRepo{}
+	ks = &sweepFakeKS{repo: repo, createURLKnowledge: &types.Knowledge{ID: "url-knowledge-2"}}
+	svc = &DataSourceService{knowledgeService: ks}
+	_, err = svc.ingestItem(context.Background(), ds, &types.FetchedItem{
+		ExternalID: "url:2",
+		URL:        "https://example.com/doc2",
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, repo.metadataUpdates, 1)
+	_, present := repo.metadataUpdates[0]["source_updated_at"]
+	assert.False(t, present)
+	_, present = repo.metadataUpdates[0]["source_created_at"]
+	assert.False(t, present)
 }
 
 func TestProcessSync_SyncDeletionsDeletesMatchingKnowledge(t *testing.T) {
@@ -964,7 +648,7 @@ func TestApplyFetchedItem_SyncDeletionScopedPerDataSource(t *testing.T) {
 	svc.applyFetchedItem(context.Background(), dsA, &types.FetchedItem{
 		ExternalID: "file:shared",
 		IsDeleted:  true,
-	}, nil, result, nil)
+	}, nil, result)
 
 	assert.Equal(t, 1, result.Deleted)
 	assert.Equal(t, []string{"knowledge-a"}, ks.deleted)
@@ -1060,7 +744,7 @@ func TestIngestItem_URLCreationMetadataAttachFailure(t *testing.T) {
 	_, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
 		ExternalID: "url:1",
 		URL:        "https://example.com/doc",
-	}, nil, nil)
+	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attach datasource metadata")
 }

@@ -2,9 +2,7 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -20,12 +18,6 @@ type langfuseChat struct {
 
 func (l *langfuseChat) GetModelName() string { return l.inner.GetModelName() }
 func (l *langfuseChat) GetModelID() string   { return l.inner.GetModelID() }
-func (l *langfuseChat) ContextWindowTokens() int {
-	return ResolveContextWindowTokens(l.inner)
-}
-func (l *langfuseChat) StructuredOutputPrompt(schema json.RawMessage) (string, error) {
-	return ResolveStructuredOutputPrompt(l.inner, schema)
-}
 
 func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
 	mgr := langfuse.GetManager()
@@ -34,20 +26,12 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 	}
 
 	purpose, prefixFingerprint := types.LLMCallMetadataFromContext(ctx)
-	redacted := types.LLMTracePayloadsRedacted(ctx)
 	genCtx, gen := mgr.StartGeneration(ctx, langfuse.GenerationOptions{
 		Name:            "chat.completion",
 		Model:           l.inner.GetModelName(),
-		Input:           buildLangfuseGenerationInput(ctx, messages),
+		Input:           buildLangfuseMessages(messages),
 		ModelParameters: buildLangfuseModelParams(opts),
-		Metadata: map[string]interface{}{
-			"model_id":                  l.inner.GetModelID(),
-			"streaming":                 false,
-			"has_tools":                 opts != nil && len(opts.Tools) > 0,
-			"call_purpose":              purpose,
-			"prompt_prefix_fingerprint": prefixFingerprint,
-			"payloads_redacted":         redacted,
-		},
+		Metadata:        buildLangfuseChatMetadata(l.inner.GetModelID(), purpose, prefixFingerprint, false, opts),
 	})
 
 	resp, err := l.inner.Chat(genCtx, messages, opts)
@@ -56,8 +40,7 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 	var output interface{}
 	if resp != nil {
 		usage = convertUsage(&resp.Usage)
-		output = buildLangfuseGenerationOutputForContext(
-			ctx,
+		output = buildLangfuseGenerationOutput(
 			resp.Content, resp.ReasoningContent, resp.FinishReason, resp.ToolCalls,
 		)
 	}
@@ -72,20 +55,12 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 	}
 
 	purpose, prefixFingerprint := types.LLMCallMetadataFromContext(ctx)
-	redacted := types.LLMTracePayloadsRedacted(ctx)
 	genCtx, gen := mgr.StartGeneration(ctx, langfuse.GenerationOptions{
 		Name:            "chat.completion.stream",
 		Model:           l.inner.GetModelName(),
-		Input:           buildLangfuseGenerationInput(ctx, messages),
+		Input:           buildLangfuseMessages(messages),
 		ModelParameters: buildLangfuseModelParams(opts),
-		Metadata: map[string]interface{}{
-			"model_id":                  l.inner.GetModelID(),
-			"streaming":                 true,
-			"has_tools":                 opts != nil && len(opts.Tools) > 0,
-			"call_purpose":              purpose,
-			"prompt_prefix_fingerprint": prefixFingerprint,
-			"payloads_redacted":         redacted,
-		},
+		Metadata:        buildLangfuseChatMetadata(l.inner.GetModelID(), purpose, prefixFingerprint, true, opts),
 	})
 
 	ch, err := l.inner.ChatStream(genCtx, messages, opts)
@@ -139,8 +114,7 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 			wrapped <- resp
 		}
 
-		output := buildLangfuseGenerationOutputForContext(
-			ctx,
+		output := buildLangfuseGenerationOutput(
 			string(contentBuf), string(reasoningBuf), finishReason, toolCalls,
 		)
 		gen.Finish(output, convertUsage(usage), nil)
@@ -150,6 +124,48 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 
 func snapshotLangfuseToolCalls(toolCalls []types.LLMToolCall) []types.LLMToolCall {
 	return append([]types.LLMToolCall(nil), toolCalls...)
+}
+
+const (
+	langfuseDiscoverMCPTool = "discover_mcp_tools"
+	langfuseMCPCatalogRunes = 8000
+)
+
+func buildLangfuseChatMetadata(
+	modelID, purpose, prefixFingerprint string,
+	streaming bool,
+	opts *ChatOptions,
+) map[string]interface{} {
+	meta := map[string]interface{}{
+		"model_id":                  modelID,
+		"streaming":                 streaming,
+		"has_tools":                 opts != nil && len(opts.Tools) > 0,
+		"call_purpose":              purpose,
+		"prompt_prefix_fingerprint": prefixFingerprint,
+	}
+	if opts == nil || len(opts.Tools) == 0 {
+		return meta
+	}
+	names := make([]string, 0, len(opts.Tools))
+	for _, tool := range opts.Tools {
+		names = append(names, tool.Function.Name)
+		if tool.Function.Name == langfuseDiscoverMCPTool && tool.Function.Description != "" {
+			meta["mcp_catalog"] = truncateLangfuseText(tool.Function.Description, langfuseMCPCatalogRunes)
+		}
+	}
+	meta["tool_names"] = names
+	return meta
+}
+
+func truncateLangfuseText(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "…"
 }
 
 func buildLangfuseMessages(messages []Message) []map[string]interface{} {
@@ -181,53 +197,6 @@ func buildLangfuseMessages(messages []Message) []map[string]interface{} {
 	return out
 }
 
-func buildLangfuseGenerationInput(ctx context.Context, messages []Message) interface{} {
-	if !types.LLMTracePayloadsRedacted(ctx) {
-		return buildLangfuseMessages(messages)
-	}
-	return buildRedactedLangfuseMessages(messages)
-}
-
-func buildRedactedLangfuseMessages(messages []Message) []map[string]interface{} {
-	out := make([]map[string]interface{}, 0, len(messages))
-	for _, message := range messages {
-		contentChars, imageCount := summarizeMessageContent(message)
-		entry := map[string]interface{}{
-			"role":                message.Role,
-			"content_chars":       contentChars,
-			"reasoning_chars":     utf8.RuneCountInString(message.ReasoningContent),
-			"multi_content_parts": len(message.MultiContent),
-			"image_count":         imageCount + len(message.Images),
-			"tool_call_count":     len(message.ToolCalls),
-			"tool_names":          chatToolNames(message.ToolCalls),
-		}
-		if message.Role == "tool" && message.Name != "" {
-			entry["tool_name"] = message.Name
-		}
-		out = append(out, entry)
-	}
-	return out
-}
-
-func summarizeMessageContent(message Message) (contentChars, imageCount int) {
-	contentChars = utf8.RuneCountInString(message.Content)
-	for _, part := range message.MultiContent {
-		contentChars += utf8.RuneCountInString(part.Text)
-		if part.ImageURL != nil {
-			imageCount++
-		}
-	}
-	return contentChars, imageCount
-}
-
-func chatToolNames(toolCalls []ToolCall) []string {
-	names := make([]string, 0, len(toolCalls))
-	for _, toolCall := range toolCalls {
-		names = append(names, toolCall.Function.Name)
-	}
-	return names
-}
-
 func buildLangfuseGenerationOutput(
 	content, reasoningContent, finishReason string,
 	toolCalls []types.LLMToolCall,
@@ -243,31 +212,6 @@ func buildLangfuseGenerationOutput(
 	return output
 }
 
-func buildLangfuseGenerationOutputForContext(
-	ctx context.Context,
-	content, reasoningContent, finishReason string,
-	toolCalls []types.LLMToolCall,
-) map[string]interface{} {
-	if !types.LLMTracePayloadsRedacted(ctx) {
-		return buildLangfuseGenerationOutput(content, reasoningContent, finishReason, toolCalls)
-	}
-	return map[string]interface{}{
-		"content_chars":   utf8.RuneCountInString(content),
-		"reasoning_chars": utf8.RuneCountInString(reasoningContent),
-		"finish_reason":   finishReason,
-		"tool_call_count": len(toolCalls),
-		"tool_names":      llmToolNames(toolCalls),
-	}
-}
-
-func llmToolNames(toolCalls []types.LLMToolCall) []string {
-	names := make([]string, 0, len(toolCalls))
-	for _, toolCall := range toolCalls {
-		names = append(names, toolCall.Function.Name)
-	}
-	return names
-}
-
 func buildLangfuseModelParams(opts *ChatOptions) map[string]interface{} {
 	if opts == nil {
 		return nil
@@ -279,11 +223,8 @@ func buildLangfuseModelParams(opts *ChatOptions) map[string]interface{} {
 	if opts.TopP != 0 {
 		params["top_p"] = opts.TopP
 	}
-	if opts.MaxTokens > 0 {
-		params["max_tokens"] = opts.MaxTokens
-	}
-	if opts.MaxCompletionTokens > 0 {
-		params["max_completion_tokens"] = opts.MaxCompletionTokens
+	if budget := opts.CompletionBudget(); budget > 0 {
+		params["max_completion_tokens"] = budget
 	}
 	if opts.FrequencyPenalty != 0 {
 		params["frequency_penalty"] = opts.FrequencyPenalty

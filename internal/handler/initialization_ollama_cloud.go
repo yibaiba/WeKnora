@@ -33,7 +33,7 @@ func ollamaCloudConnectionProbe() ([]chat.Message, *chat.ChatOptions) {
 	return []chat.Message{{
 			Role: "user", Content: `请验证结构化输出能力，并返回 {"ok":true}。`,
 		}}, &chat.ChatOptions{
-			Temperature: 0, TemperatureSet: true, MaxTokens: ollamaCloudConnectionCompletionTokens,
+			Temperature: 0, MaxTokens: ollamaCloudConnectionCompletionTokens,
 			Thinking: &thinking, Format: json.RawMessage(ollamaCloudConnectionResponseSchema),
 		}
 }

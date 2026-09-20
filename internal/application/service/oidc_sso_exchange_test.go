@@ -77,7 +77,7 @@ func TestExchangeSSOAccessIssuesWeKnoraJWT(t *testing.T) {
 			ClientSecret:          "secret",
 			AuthorizationEndpoint: server.URL + "/authorize",
 			TokenEndpoint:         server.URL + "/token",
-			JWKSURI:               server.URL + "/jwks",
+			JwksURI:               server.URL + "/jwks",
 			Scopes:                []string{"openid", "profile"},
 			UserInfoMapping:       &config.OIDCUserInfoMapping{Username: "name", Email: "email"},
 		}},
@@ -135,7 +135,7 @@ func TestExchangeSSOAccessRejectsInactiveIntrospection(t *testing.T) {
 			ClientSecret:          "secret",
 			AuthorizationEndpoint: server.URL + "/authorize",
 			TokenEndpoint:         server.URL + "/token",
-			JWKSURI:               server.URL + "/jwks",
+			JwksURI:               server.URL + "/jwks",
 			UserInfoMapping:       &config.OIDCUserInfoMapping{Username: "name", Email: "email"},
 		}},
 	}
@@ -157,7 +157,7 @@ func TestVerifySSOResourceTokenRejectsLoginAudience(t *testing.T) {
 
 	cfg := &config.OIDCAuthConfig{
 		IssuerURL:        server.URL,
-		JWKSURI:          server.URL + "/jwks",
+		JwksURI:          server.URL + "/jwks",
 		ResourceAudience: "weknora",
 	}
 	raw := mustSignRS256(t, key, jwt.MapClaims{
@@ -185,7 +185,7 @@ func TestVerifySSOResourceTokenRejectsNoneAlg(t *testing.T) {
 
 	cfg := &config.OIDCAuthConfig{
 		IssuerURL: server.URL,
-		JWKSURI:   server.URL + "/jwks",
+		JwksURI:   server.URL + "/jwks",
 	}
 	raw := unsignedJWT(map[string]any{
 		"iss": server.URL,
@@ -211,7 +211,7 @@ func TestVerifySSOResourceTokenRejectsExpired(t *testing.T) {
 
 	cfg := &config.OIDCAuthConfig{
 		IssuerURL: server.URL,
-		JWKSURI:   server.URL + "/jwks",
+		JwksURI:   server.URL + "/jwks",
 	}
 	raw := mustSignRS256(t, key, jwt.MapClaims{
 		"iss": server.URL,
@@ -228,7 +228,7 @@ func TestVerifySSOResourceTokenRejectsExpired(t *testing.T) {
 func TestVerifySSOResourceTokenRejectsArrayAudience(t *testing.T) {
 	cfg := &config.OIDCAuthConfig{
 		IssuerURL: "http://127.0.0.1",
-		JWKSURI:   "http://127.0.0.1/jwks",
+		JwksURI:   "http://127.0.0.1/jwks",
 	}
 	raw := unsignedJWT(map[string]any{
 		"iss": "http://127.0.0.1",
@@ -256,7 +256,7 @@ func TestVerifySSOResourceTokenRejectsEmptyKid(t *testing.T) {
 	}
 	cfg := &config.OIDCAuthConfig{
 		IssuerURL: server.URL,
-		JWKSURI:   server.URL + "/jwks",
+		JwksURI:   server.URL + "/jwks",
 	}
 	if _, err := verifySSOResourceToken(context.Background(), cfg, raw); err == nil || !strings.Contains(err.Error(), "kid") {
 		t.Fatalf("error = %v, want kid required", err)
@@ -273,7 +273,7 @@ func TestVerifySSOResourceTokenRejectsEmptyIssuer(t *testing.T) {
 	})
 	cfg := &config.OIDCAuthConfig{
 		IssuerURL: server.URL,
-		JWKSURI:   server.URL + "/jwks",
+		JwksURI:   server.URL + "/jwks",
 	}
 	if _, err := verifySSOResourceToken(context.Background(), cfg, raw); err == nil || !strings.Contains(err.Error(), "issuer") {
 		t.Fatalf("error = %v, want issuer mismatch", err)
@@ -328,7 +328,7 @@ func TestExchangeSSOAccessMembershipsIncludeAutoJoinedTenant(t *testing.T) {
 			ClientSecret:          "secret",
 			AuthorizationEndpoint: server.URL + "/authorize",
 			TokenEndpoint:         server.URL + "/token",
-			JWKSURI:               server.URL + "/jwks",
+			JwksURI:               server.URL + "/jwks",
 			UserInfoMapping:       &config.OIDCUserInfoMapping{Username: "name", Email: "email"},
 		}},
 	}
@@ -363,7 +363,7 @@ func mustRSAJWKS(t *testing.T) (*rsa.PrivateKey, oidcJWKSet) {
 	}
 	n := base64.RawURLEncoding.EncodeToString(key.N.Bytes())
 	e := base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1})
-	return key, oidcJWKSet{Keys: []oidcJWK{{
+	return key, oidcJWKSet{Keys: []oidcCachedJWK{{
 		Kid: "k1",
 		Kty: "RSA",
 		Alg: "RS256",

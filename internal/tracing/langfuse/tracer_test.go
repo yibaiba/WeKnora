@@ -3,22 +3,19 @@ package langfuse
 import (
 	"context"
 	"errors"
-	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/types"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
-
-type safeTraceError struct{ message string }
-
-func (e safeTraceError) Error() string              { return e.message }
-func (e safeTraceError) SafeForObservability() bool { return true }
 
 // newTestManager builds a Manager wired to an in-memory span exporter via the
 // SimpleSpanProcessor (synchronous export on span End), so tests can assert on
@@ -43,6 +40,94 @@ func newTestManager(t *testing.T) (*Manager, *tracetest.InMemoryExporter) {
 	}
 	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
 	return m, exp
+}
+
+func TestStartChildSpanSkipsUntracedPolling(t *testing.T) {
+	m, exp := newTestManager(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		for _, name := range []string{"sandbox.connect", "sandbox.exec"} {
+			childCtx, child := m.StartChildSpan(ctx, SpanOptions{Name: name})
+			child.Finish(nil, nil, nil)
+			if childCtx != ctx || oteltrace.SpanContextFromContext(childCtx).IsValid() {
+				t.Fatal("polling without a parent must not create a trace")
+			}
+		}
+	}
+	if spans := exp.GetSpans(); len(spans) != 0 {
+		t.Fatalf("untraced polling exported %d spans", len(spans))
+	}
+}
+
+func TestStartChildSpanPreservesTaskHierarchy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	// The Docker SDK uses this transport, which obtains its tracer provider
+	// from the active context rather than the global provider.
+	client := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport,
+		otelhttp.WithSpanNameFormatter(func(_ string, _ *http.Request) string { return "docker.http" }))}
+	for _, async := range []bool{false, true} {
+		t.Run(map[bool]string{false: "agent", true: "async_install"}[async], func(t *testing.T) {
+			m, exp := newTestManager(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			ctx, task := m.StartSpan(ctx, SpanOptions{Name: "task"})
+			if async {
+				ctx = context.WithoutCancel(ctx)
+				cancel()
+			}
+			for _, name := range []string{"sandbox.connect", "sandbox.exec", "sandbox.create_snapshot"} {
+				childCtx, child := m.StartChildSpan(ctx, SpanOptions{Name: name})
+				req, err := http.NewRequestWithContext(childCtx, http.MethodGet, server.URL, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = resp.Body.Close()
+				child.Finish(nil, nil, nil)
+			}
+			task.Finish(nil, nil, nil)
+			cancel()
+			spans := exp.GetSpans()
+			if len(spans) != 8 {
+				t.Fatalf("expected task root, task span and 6 child spans, got %d", len(spans))
+			}
+			children := map[oteltrace.SpanID]bool{}
+			for _, span := range spans {
+				if span.SpanContext.TraceID() != spans[0].SpanContext.TraceID() {
+					t.Fatal("task spans were split across traces")
+				}
+				if strings.HasPrefix(span.Name, "sandbox.") {
+					if span.Parent.SpanID().String() != task.ID {
+						t.Fatalf("%s is not under task", span.Name)
+					}
+					children[span.SpanContext.SpanID()] = true
+				}
+			}
+			for _, span := range spans {
+				if span.Name == "docker.http" && !children[span.Parent.SpanID()] {
+					t.Fatal("Docker SDK span is not under sandbox operation")
+				}
+			}
+		})
+	}
+}
+
+func TestStartChildSpanSupportsOTelParentWithoutLangfuseTrace(t *testing.T) {
+	m, exp := newTestManager(t)
+	ctx, parent := m.Tracer().Start(context.Background(), "upstream")
+	_, child := m.StartChildSpan(ctx, SpanOptions{Name: "sandbox.exec"})
+	child.Finish(nil, nil, nil)
+	parent.End()
+	spans := exp.GetSpans()
+	if len(spans) != 2 || spans[0].Parent.SpanID() != spans[1].SpanContext.SpanID() ||
+		spans[0].SpanContext.TraceID() != spans[1].SpanContext.TraceID() {
+		t.Fatal("OTel parent must be preserved without an extra automatic root")
+	}
 }
 
 // spanAttr returns the string value of a span attribute, or "" if absent.
@@ -138,93 +223,6 @@ func TestSpan_FinishWithError(t *testing.T) {
 		return
 	}
 	t.Fatal("boom span not exported")
-}
-
-func TestSpanFinishRedactsErrorDetailsFromSensitiveContext(t *testing.T) {
-	m, exp := newTestManager(t)
-	const sensitive = "agent error echoed aggregated document evidence"
-	ctx := types.WithRedactedLLMTracePayloads(context.Background())
-
-	_, span := m.StartSpan(ctx, SpanOptions{Name: "redacted-agent"})
-	span.Finish(nil, nil, errors.New(sensitive))
-
-	exported := exportedSpanByName(t, exp.GetSpans(), "redacted-agent")
-	if strings.Contains(exported.Status.Description, sensitive) {
-		t.Fatalf("redacted span status leaked error: %q", exported.Status.Description)
-	}
-	for _, event := range exported.Events {
-		if strings.Contains(fmt.Sprint(event.Attributes), sensitive) {
-			t.Fatalf("redacted span error event leaked error: %v", event.Attributes)
-		}
-	}
-}
-
-func TestGenerationFinishRedactsErrorDetailsFromSensitiveContext(t *testing.T) {
-	m, exp := newTestManager(t)
-	const sensitive = "provider echoed private document body"
-	ctx := types.WithRedactedLLMTracePayloads(context.Background())
-
-	_, generation := m.StartGeneration(ctx, GenerationOptions{Name: "redacted-llm", Model: "m"})
-	generation.Finish(nil, nil, errors.New(sensitive))
-
-	span := exportedSpanByName(t, exp.GetSpans(), "redacted-llm")
-	if span.Status.Code != codes.Error {
-		t.Fatalf("span status = %v; want Error", span.Status.Code)
-	}
-	if strings.Contains(span.Status.Description, sensitive) {
-		t.Fatalf("redacted status leaked provider error: %q", span.Status.Description)
-	}
-	for _, event := range span.Events {
-		if strings.Contains(fmt.Sprint(event.Attributes), sensitive) {
-			t.Fatalf("redacted error event leaked provider error: %v", event.Attributes)
-		}
-	}
-}
-
-func TestGenerationFinishPreservesUnredactedErrorDetails(t *testing.T) {
-	m, exp := newTestManager(t)
-	const providerError = "provider unavailable"
-
-	_, generation := m.StartGeneration(
-		context.Background(), GenerationOptions{Name: "unredacted-llm", Model: "m"},
-	)
-	generation.Finish(nil, nil, errors.New(providerError))
-
-	span := exportedSpanByName(t, exp.GetSpans(), "unredacted-llm")
-	if span.Status.Description != providerError {
-		t.Fatalf("status description = %q; want %q", span.Status.Description, providerError)
-	}
-}
-
-func TestGenerationFinishPreservesTypedSafeErrorInRedactedContext(t *testing.T) {
-	m, exp := newTestManager(t)
-	const sensitiveWrapper = "private document wrapper"
-	ctx := types.WithRedactedLLMTracePayloads(context.Background())
-
-	_, generation := m.StartGeneration(ctx, GenerationOptions{Name: "safe-llm", Model: "m"})
-	generation.Finish(
-		nil, nil,
-		fmt.Errorf("%s: %w", sensitiveWrapper, safeTraceError{message: "status=400 parameter=response_format"}),
-	)
-
-	span := exportedSpanByName(t, exp.GetSpans(), "safe-llm")
-	if span.Status.Description != "status=400 parameter=response_format" {
-		t.Fatalf("status description = %q", span.Status.Description)
-	}
-	if strings.Contains(span.Status.Description, sensitiveWrapper) {
-		t.Fatalf("status description leaked wrapper: %q", span.Status.Description)
-	}
-}
-
-func exportedSpanByName(t *testing.T, spans tracetest.SpanStubs, name string) tracetest.SpanStub {
-	t.Helper()
-	for _, span := range spans {
-		if span.Name == name {
-			return span
-		}
-	}
-	t.Fatalf("span %q not exported", name)
-	return tracetest.SpanStub{}
 }
 
 // TestManager_FullRoundTrip asserts a generation carries the model name and
@@ -404,4 +402,84 @@ func TestTraceparentPropagation(t *testing.T) {
 		return
 	}
 	t.Fatal("weknora-root span not exported")
+}
+
+// TestAttachTraceparent_FollowUpJoinsOriginatingTrace is the follow-up
+// suggestion regression: generation often runs on a later HTTP request
+// (POST .../suggestions) after the chat handler has already ended its root
+// span. Without AttachTraceparent, StartGeneration auto-opens an orphan
+// root named after the LLM call. With it, the follow-up span and generation
+// inherit the originating chat trace id.
+func TestAttachTraceparent_FollowUpJoinsOriginatingTrace(t *testing.T) {
+	m, exp := newTestManager(t)
+
+	httpCtx, httpTrace := m.StartTrace(context.Background(), TraceOptions{Name: "POST /api/v1/agent-chat/:session_id"})
+	traceparent := TraceparentFromContext(httpCtx)
+	if traceparent == "" {
+		t.Fatal("expected a traceparent on the HTTP trace")
+	}
+	httpTrace.Finish(nil, nil)
+
+	// Separate request: no *Trace, no OTel span — this is POST /suggestions.
+	followCtx := AttachTraceparent(context.Background(), traceparent)
+	followCtx, span := m.StartSpan(followCtx, SpanOptions{Name: "follow_up.suggestions"})
+	_, gen := m.StartGeneration(followCtx, GenerationOptions{Name: "chat.completion", Model: "m"})
+	gen.Finish("qs", nil, nil)
+	span.Finish(nil, nil, nil)
+
+	var followSpan, generation tracetest.SpanStub
+	var autoRoot bool
+	for _, s := range exp.GetSpans() {
+		switch {
+		case s.Name == "follow_up.suggestions" && spanType(s) == obsTypeSpan:
+			followSpan = s
+		case s.Name == "chat.completion" && spanType(s) == obsTypeGeneration:
+			generation = s
+		case s.Name == "chat.completion" && spanType(s) == obsTypeTrace:
+			autoRoot = true
+		}
+	}
+	if followSpan.Name == "" {
+		t.Fatal("follow_up.suggestions span not exported")
+	}
+	if generation.Name == "" {
+		t.Fatal("chat.completion generation not exported")
+	}
+	if followSpan.SpanContext.TraceID().String() != httpTrace.ID {
+		t.Errorf("follow-up span trace id = %s, want HTTP %s", followSpan.SpanContext.TraceID(), httpTrace.ID)
+	}
+	if generation.SpanContext.TraceID().String() != httpTrace.ID {
+		t.Errorf("generation trace id = %s, want HTTP %s", generation.SpanContext.TraceID(), httpTrace.ID)
+	}
+	if autoRoot {
+		t.Error("StartGeneration opened an orphan chat.completion root; traceparent was not attached")
+	}
+}
+
+// TestAttachTraceparent_LeavesExistingTrace ensures same-request background
+// work (completeAssistantMessage) is not re-parented onto a stale remote
+// span when ctx already carries a live *Trace.
+func TestAttachTraceparent_LeavesExistingTrace(t *testing.T) {
+	m, exp := newTestManager(t)
+
+	otherCtx, other := m.StartTrace(context.Background(), TraceOptions{Name: "other"})
+	otherParent := TraceparentFromContext(otherCtx)
+	other.Finish(nil, nil)
+
+	ctx, live := m.StartTrace(context.Background(), TraceOptions{Name: "live"})
+	ctx = AttachTraceparent(ctx, otherParent)
+	_, gen := m.StartGeneration(ctx, GenerationOptions{Name: "chat.completion", Model: "m"})
+	gen.Finish("out", nil, nil)
+	live.Finish(nil, nil)
+
+	for _, s := range exp.GetSpans() {
+		if spanType(s) != obsTypeGeneration {
+			continue
+		}
+		if s.SpanContext.TraceID().String() != live.ID {
+			t.Errorf("generation joined foreign trace %s, want live %s", s.SpanContext.TraceID(), live.ID)
+		}
+		return
+	}
+	t.Fatal("generation span not exported")
 }

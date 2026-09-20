@@ -84,8 +84,8 @@ func buildKnowledgeChunkSet(
 		return knowledgeChunkSet{chunks: chunks, overlap: base.ChunkOverlap}, err
 	}
 	parent, child := buildParentChildConfigs(request.effective.ChunkingConfig, base)
-	parent = chunker.NormalizeConfig(parent)
-	child = chunker.NormalizeConfig(child)
+	parent = chunker.NormalizeSplitterConfig(parent)
+	child = chunker.NormalizeSplitterConfig(child)
 	result, err := splitKnowledgeParentChild(request, parent, child)
 	if err != nil {
 		return knowledgeChunkSet{}, err

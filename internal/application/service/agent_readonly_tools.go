@@ -21,20 +21,17 @@ import (
 
 var sharedReadOnlyAgentTools = map[string]struct{}{
 	agenttools.ToolThinking:            {},
-	agenttools.ToolKnowledgeSearch:     {},
-	agenttools.ToolGrepChunks:          {},
-	agenttools.ToolListKnowledgeChunks: {},
+	agenttools.ToolSearchKnowledge:     {},
+	agenttools.ToolReadDocument:        {},
+	agenttools.ToolListDocuments:       {},
 	agenttools.ToolQueryKnowledgeGraph: {},
-	agenttools.ToolGetDocumentInfo:     {},
 	agenttools.ToolDatabaseQuery:       {},
 	agenttools.ToolDataAnalysis:        {},
 	agenttools.ToolDataSchema:          {},
 	agenttools.ToolWebSearch:           {},
 	agenttools.ToolWebFetch:            {},
-	agenttools.ToolReadSkill:           {},
 	agenttools.ToolWikiReadPage:        {},
 	agenttools.ToolWikiSearch:          {},
-	agenttools.ToolWikiReadSourceDoc:   {},
 	agenttools.ToolWikiReadIssue:       {},
 }
 
@@ -43,6 +40,7 @@ type readOnlyAgentToolFactoryParams struct {
 
 	Config               *config.Config
 	KnowledgeBaseService interfaces.KnowledgeBaseService
+	KnowledgeService     interfaces.KnowledgeService
 	KnowledgeRepository  interfaces.KnowledgeRepository
 	ChunkService         interfaces.ChunkService
 	SourceACLGuard       interfaces.SourceACLGuardService
@@ -106,40 +104,38 @@ func (f *readOnlyAgentToolFactory) Build(
 	switch name {
 	case agenttools.ToolThinking:
 		return agenttools.NewSequentialThinkingTool(), nil
-	case agenttools.ToolReadSkill:
-		manager, err := f.readOnlySkillsManager(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return agenttools.NewReadSkillTool(manager), nil
-	case agenttools.ToolKnowledgeSearch:
+	case agenttools.ToolSearchKnowledge:
 		if err := f.requireKnowledgeTools(reader); err != nil {
 			return nil, err
 		}
-		return agenttools.NewKnowledgeSearchTool(
-			f.params.KnowledgeBaseService, reader, f.params.ChunkService,
-			targets, options.RerankModel, options.ChatModel, f.params.Config,
+		if f.params.KnowledgeService == nil {
+			return nil, fmt.Errorf("知识读取服务未完整配置")
+		}
+		return agenttools.NewSearchKnowledgeTool(
+			f.params.KnowledgeBaseService, f.params.KnowledgeService, f.params.ChunkService,
+			targets, options.RerankModel, f.params.Config,
 		), nil
-	case agenttools.ToolGrepChunks:
-		if err := f.requireKnowledgeTools(reader); err != nil || f.params.DB == nil {
-			return nil, joinToolDependencyError(err, "数据库未配置")
-		}
-		return agenttools.NewGrepChunksTool(f.params.DB, reader, f.params.SourceACLGuard, targets), nil
-	case agenttools.ToolListKnowledgeChunks:
+	case agenttools.ToolReadDocument:
 		if err := f.requireKnowledgeTools(reader); err != nil {
 			return nil, err
 		}
-		return agenttools.NewListKnowledgeChunksTool(reader, f.params.ChunkService, f.params.SourceACLGuard, targets), nil
+		if f.params.KnowledgeService == nil {
+			return nil, fmt.Errorf("知识读取服务未完整配置")
+		}
+		return agenttools.NewReadDocumentTool(f.params.KnowledgeService, f.params.ChunkService, targets), nil
+	case agenttools.ToolListDocuments:
+		if err := f.requireKnowledgeTools(reader); err != nil {
+			return nil, err
+		}
+		if f.params.KnowledgeService == nil {
+			return nil, fmt.Errorf("知识读取服务未完整配置")
+		}
+		return agenttools.NewListDocumentsTool(f.params.KnowledgeService, targets), nil
 	case agenttools.ToolQueryKnowledgeGraph:
 		if err := f.requireKnowledgeTools(reader); err != nil {
 			return nil, err
 		}
 		return agenttools.NewQueryKnowledgeGraphTool(f.params.KnowledgeBaseService, targets).WithKnowledgeScope(reader), nil
-	case agenttools.ToolGetDocumentInfo:
-		if err := f.requireKnowledgeTools(reader); err != nil {
-			return nil, err
-		}
-		return agenttools.NewGetDocumentInfoTool(reader, f.params.ChunkService, f.params.SourceACLGuard, targets), nil
 	case agenttools.ToolDatabaseQuery:
 		if f.params.DB == nil {
 			return nil, fmt.Errorf("数据库未配置")
@@ -164,40 +160,26 @@ func (f *readOnlyAgentToolFactory) Build(
 		if f.params.WebSearchService == nil {
 			return nil, fmt.Errorf("Web 搜索服务未配置")
 		}
-		if f.params.KnowledgeBaseService == nil || options.WebSearchKnowledge == nil ||
-			options.WebSearchState == nil {
-			return nil, fmt.Errorf("Web 搜索 RAG 压缩服务未配置")
-		}
-		return agenttools.NewWebSearchTool(agenttools.WebSearchToolOptions{
-			WebSearchService:      f.params.WebSearchService,
-			KnowledgeBaseService:  f.params.KnowledgeBaseService,
-			KnowledgeService:      options.WebSearchKnowledge,
-			WebSearchStateService: options.WebSearchState,
-			SessionID:             options.SessionID,
-			MaxResults:            options.Config.WebSearchMaxResults,
-			ProviderID:            options.Config.WebSearchProviderID,
-			StrictCompression:     options.StrictWebCompression,
-		}), nil
+		return agenttools.NewWebSearchTool(
+			f.params.WebSearchService,
+			options.Config.WebSearchMaxResults,
+			options.Config.WebSearchProviderID,
+		), nil
 	case agenttools.ToolWebFetch:
-		if options.ChatModel == nil {
-			return nil, fmt.Errorf("web_fetch 需要聊天模型")
-		}
-		return agenttools.NewWebFetchTool(options.ChatModel), nil
+		return agenttools.NewWebFetchTool(), nil
 	case agenttools.ToolWikiReadPage:
 		if f.params.WikiPageService == nil || reader == nil {
 			return nil, fmt.Errorf("Wiki 读取服务未配置")
 		}
-		return agenttools.NewWikiReadPageTool(f.params.WikiPageService, reader, options.WikiScopes, options.WikiRoutes), nil
-	case agenttools.ToolWikiSearch:
-		if f.params.WikiPageService == nil || reader == nil {
+		if f.params.KnowledgeService == nil {
 			return nil, fmt.Errorf("Wiki 读取服务未配置")
 		}
-		return agenttools.NewWikiSearchTool(f.params.WikiPageService, reader, options.WikiScopes, options.WikiRoutes), nil
-	case agenttools.ToolWikiReadSourceDoc:
-		if err := f.requireKnowledgeTools(reader); err != nil {
-			return nil, err
+		return agenttools.NewWikiReadPageTool(f.params.WikiPageService, f.params.KnowledgeService, options.WikiScopes, options.WikiRoutes), nil
+	case agenttools.ToolWikiSearch:
+		if f.params.WikiPageService == nil || f.params.KnowledgeService == nil {
+			return nil, fmt.Errorf("Wiki 读取服务未配置")
 		}
-		return agenttools.NewWikiReadSourceDocTool(reader, f.params.ChunkService, f.params.SourceACLGuard, targets), nil
+		return agenttools.NewWikiSearchTool(f.params.WikiPageService, f.params.KnowledgeService, options.WikiScopes, options.WikiRoutes), nil
 	case agenttools.ToolWikiReadIssue:
 		if f.params.WikiPageService == nil {
 			return nil, fmt.Errorf("Wiki 读取服务未配置")
@@ -214,9 +196,7 @@ func (f *readOnlyAgentToolFactory) readOnlySkillsManager(ctx context.Context) (*
 	if f.skillsReader != nil {
 		return f.skillsReader, nil
 	}
-	manager := skills.NewManager(&skills.ManagerConfig{
-		SkillDirs: []string{getPreloadedSkillsDir()}, Enabled: true,
-	}, sandbox.NewDisabledManager())
+	manager := skills.NewManager(&skills.ManagerConfig{Enabled: true}, sandbox.NewDisabledManager())
 	if err := manager.Initialize(ctx); err != nil {
 		return nil, fmt.Errorf("初始化只读 skill 目录失败: %w", err)
 	}

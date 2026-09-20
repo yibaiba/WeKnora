@@ -1,41 +1,12 @@
 package chat
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
-
-type langfuseErrorChat struct {
-	err error
-}
-
-func (c *langfuseErrorChat) Chat(
-	context.Context, []Message, *ChatOptions,
-) (*types.ChatResponse, error) {
-	return nil, c.err
-}
-
-func (c *langfuseErrorChat) ChatStream(
-	context.Context, []Message, *ChatOptions,
-) (<-chan types.StreamResponse, error) {
-	return nil, c.err
-}
-
-func (c *langfuseErrorChat) GetModelName() string { return "error-model" }
-func (c *langfuseErrorChat) GetModelID() string   { return "error-model-id" }
 
 func TestBuildLangfuseGenerationOutput(t *testing.T) {
 	toolCalls := []types.LLMToolCall{{ID: "call_1", Type: "function"}}
@@ -87,115 +58,6 @@ func TestBuildLangfuseMessagesReasoningContent(t *testing.T) {
 	}
 }
 
-func TestBuildLangfuseGenerationInputRedactsSensitiveTaskMessages(t *testing.T) {
-	ctx := types.WithRedactedLLMTracePayloads(context.Background())
-	messages := []Message{
-		{Role: "system", Content: "sensitive system prompt"},
-		{
-			Role:             "assistant",
-			Content:          "private answer",
-			ReasoningContent: "private chain of thought",
-			ToolCalls: []ToolCall{{
-				Function: FunctionCall{
-					Name:      "preview_ingestion_chunking",
-					Arguments: `{"strategy":"private"}`,
-				},
-			}},
-		},
-		{Role: "tool", Name: "preview_ingestion_chunking", Content: "private source excerpt"},
-	}
-
-	encoded, err := json.Marshal(buildLangfuseGenerationInput(ctx, messages))
-	if err != nil {
-		t.Fatalf("marshal redacted input: %v", err)
-	}
-	tracePayload := string(encoded)
-	for _, sensitive := range []string{
-		"sensitive system prompt", "private answer", "private chain of thought",
-		`\"strategy\"`, "private source excerpt",
-	} {
-		if strings.Contains(tracePayload, sensitive) {
-			t.Fatalf("redacted input contains %q: %s", sensitive, tracePayload)
-		}
-	}
-	if !strings.Contains(tracePayload, "preview_ingestion_chunking") {
-		t.Fatalf("redacted input omitted tool name: %s", tracePayload)
-	}
-}
-
-func TestBuildLangfuseGenerationOutputRedactsSensitiveTaskResponse(t *testing.T) {
-	ctx := types.WithRedactedLLMTracePayloads(context.Background())
-	output := buildLangfuseGenerationOutputForContext(
-		ctx,
-		"private answer",
-		"private chain of thought",
-		"tool_calls",
-		[]types.LLMToolCall{{Function: types.FunctionCall{
-			Name:      "preview_ingestion_chunking",
-			Arguments: `{"separators":["private source"]}`,
-		}}},
-	)
-	encoded, err := json.Marshal(output)
-	if err != nil {
-		t.Fatalf("marshal redacted output: %v", err)
-	}
-	tracePayload := string(encoded)
-	for _, sensitive := range []string{"private answer", "private chain of thought", "private source"} {
-		if strings.Contains(tracePayload, sensitive) {
-			t.Fatalf("redacted output contains %q: %s", sensitive, tracePayload)
-		}
-	}
-	if !strings.Contains(tracePayload, "preview_ingestion_chunking") {
-		t.Fatalf("redacted output omitted tool name: %s", tracePayload)
-	}
-}
-
-func TestLangfuseWrapperRedactsExportedErrorsWithoutChangingCallerError(t *testing.T) {
-	const sensitive = "provider echoed private document body"
-	providerErr := errors.New(sensitive)
-	var exported bytes.Buffer
-	var exportedMu sync.Mutex
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		payload, _ := io.ReadAll(request.Body)
-		exportedMu.Lock()
-		exported.Write(payload)
-		exportedMu.Unlock()
-		writer.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-	manager, err := langfuse.Init(langfuse.Config{
-		Enabled: true, Host: server.URL, PublicKey: "pk", SecretKey: "sk",
-		FlushAt: 1, FlushInterval: time.Second, QueueSize: 16,
-		RequestTimeout: time.Second, SampleRate: 1,
-	})
-	if err != nil {
-		t.Fatalf("init Langfuse: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = manager.Shutdown(context.Background())
-		_, _ = langfuse.Init(langfuse.Config{Enabled: false})
-	})
-	wrapped := &langfuseChat{inner: &langfuseErrorChat{err: providerErr}}
-	ctx := types.WithRedactedLLMTracePayloads(context.Background())
-
-	_, chatErr := wrapped.Chat(ctx, []Message{{Role: "user", Content: "private"}}, nil)
-	_, streamErr := wrapped.ChatStream(ctx, []Message{{Role: "user", Content: "private"}}, nil)
-	if !errors.Is(chatErr, providerErr) || !errors.Is(streamErr, providerErr) {
-		t.Fatalf("caller errors changed: chat=%v stream=%v", chatErr, streamErr)
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := manager.Shutdown(shutdownCtx); err != nil {
-		t.Fatalf("shutdown Langfuse: %v", err)
-	}
-	_, _ = langfuse.Init(langfuse.Config{Enabled: false})
-	exportedMu.Lock()
-	defer exportedMu.Unlock()
-	if bytes.Contains(exported.Bytes(), []byte(sensitive)) {
-		t.Fatalf("OTLP export leaked provider error: %q", exported.String())
-	}
-}
-
 func TestConvertUsageIncludesPromptCacheCounters(t *testing.T) {
 	got := convertUsage(&types.TokenUsage{
 		PromptTokens: 1000, CompletionTokens: 50, TotalTokens: 1050,
@@ -206,5 +68,35 @@ func TestConvertUsageIncludesPromptCacheCounters(t *testing.T) {
 	}
 	if got.CacheRead != 800 || got.CacheWrite != 100 || got.CacheMiss != 200 {
 		t.Fatalf("cache usage = read:%d write:%d miss:%d", got.CacheRead, got.CacheWrite, got.CacheMiss)
+	}
+}
+
+func TestBuildLangfuseChatMetadataIncludesMCPCatalog(t *testing.T) {
+	meta := buildLangfuseChatMetadata("model-1", "agent", "fp", true, &ChatOptions{
+		Tools: []Tool{
+			{Function: FunctionDef{Name: "knowledge_search", Description: "search kb"}},
+			{Function: FunctionDef{
+				Name:        langfuseDiscoverMCPTool,
+				Description: "MCP tools are available without an @mention.\n{\"server_id\":\"svc\"}",
+			}},
+			{Function: FunctionDef{Name: "call_mcp_tool", Description: "call"}},
+		},
+	})
+	if meta["has_tools"] != true || meta["streaming"] != true {
+		t.Fatalf("flags = %#v", meta)
+	}
+	names, _ := meta["tool_names"].([]string)
+	if !reflect.DeepEqual(names, []string{"knowledge_search", langfuseDiscoverMCPTool, "call_mcp_tool"}) {
+		t.Fatalf("tool_names = %#v", names)
+	}
+	catalog, _ := meta["mcp_catalog"].(string)
+	if !strings.Contains(catalog, `"server_id":"svc"`) {
+		t.Fatalf("mcp_catalog = %q", catalog)
+	}
+}
+
+func TestTruncateLangfuseText(t *testing.T) {
+	if got := truncateLangfuseText("一二三四五", 3); got != "一二三…" {
+		t.Fatalf("got %q", got)
 	}
 }

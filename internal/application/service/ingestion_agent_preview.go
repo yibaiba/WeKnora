@@ -139,7 +139,7 @@ func splitIngestionPreview(request ingestionPreviewSplitRequest) (ingestionPrevi
 	parentConfig, childConfig := buildParentChildConfigs(request.config, request.base)
 	_, diagnostics := chunker.SplitWithDiagnostics(request.content, parentConfig)
 	result := chunker.SplitParentChild(request.content, parentConfig, childConfig)
-	return ingestionParentChildSplitResult(result, diagnostics, chunker.NormalizeConfig(childConfig)), nil
+	return ingestionParentChildSplitResult(result, diagnostics, chunker.NormalizeSplitterConfig(childConfig)), nil
 }
 
 func splitSemanticIngestionPreview(
@@ -155,7 +155,7 @@ func splitSemanticIngestionPreview(
 		}, err
 	}
 	parentConfig, childConfig := buildParentChildConfigs(request.config, request.base)
-	childConfig = chunker.NormalizeConfig(childConfig)
+	childConfig = chunker.NormalizeSplitterConfig(childConfig)
 	result, err := chunker.SplitParentChildSemanticDocument(chunker.SemanticParentChildRequest{
 		Content: request.content, ParentConfig: parentConfig, ChildConfig: childConfig,
 		Document: request.document,

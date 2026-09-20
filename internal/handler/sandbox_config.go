@@ -28,14 +28,19 @@ type sandboxConfigService interface {
 }
 
 type sandboxTemplateQueryRequest struct {
-	Config         *types.TenantSandboxConfig `json:"config"`
-	ConfigID       string                     `json:"config_id,omitempty"`
-	EnsureStandard bool                       `json:"ensure_standard"`
+	Config          *types.TenantSandboxConfig `json:"config"`
+	ConfigID        string                     `json:"config_id,omitempty"`
+	EnsureStandard  bool                       `json:"ensure_standard"`
+	ReplaceStandard bool                       `json:"replace_standard"`
+	EnsureDesktop   bool                       `json:"ensure_desktop"`
+	ReplaceDesktop  bool                       `json:"replace_desktop"`
 }
 
 // QueryTemplates returns the templates visible through an unsaved workspace
-// connection. When requested, it also starts provisioning the standard
-// WeKnora image if that cluster does not have one yet.
+// connection. ensure_standard / ensure_desktop start a build only when that
+// WeKnora template is missing (from the published Hub image); replace_standard
+// / replace_desktop rebuild it so a new spec (DNS, image) can take effect.
+// Replace requires config_id.
 func (h *SandboxConfigHandler) QueryTemplates(c *gin.Context) {
 	var req sandboxTemplateQueryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -44,11 +49,17 @@ func (h *SandboxConfigHandler) QueryTemplates(c *gin.Context) {
 	}
 	result, err := h.service.QueryTemplates(c.Request.Context(), sandboxConfigTenantID(c),
 		service.SandboxTemplateQueryInput{
-			Config:         req.Config,
-			ConfigID:       req.ConfigID,
-			EnsureStandard: req.EnsureStandard,
+			Config:          req.Config,
+			ConfigID:        req.ConfigID,
+			EnsureStandard:  req.EnsureStandard,
+			ReplaceStandard: req.ReplaceStandard,
+			EnsureDesktop:   req.EnsureDesktop,
+			ReplaceDesktop:  req.ReplaceDesktop,
 		})
 	if err != nil {
+		if respondSandboxConfigRefusal(c, err) {
+			return
+		}
 		respondSandboxConfigServiceError(c, err)
 		return
 	}
@@ -136,6 +147,16 @@ func respondSkillSnapshotReleaseFailed(c *gin.Context, remaining []string) {
 	})
 }
 
+func respondSkillSnapshotBlocksTemplate(c *gin.Context) {
+	c.JSON(http.StatusConflict, gin.H{
+		"success": false,
+		"error": gin.H{
+			"code":    "skill_snapshot_blocks_template",
+			"message": "该配置已安装 Skill，不能更换连接、DNS 或重建运行模板。请新建一份沙箱后再装 Skill。",
+		},
+	})
+}
+
 func respondSandboxConfigCordoned(c *gin.Context) {
 	c.JSON(http.StatusLocked, gin.H{
 		"success": false,
@@ -165,6 +186,10 @@ func respondSandboxConfigRefusal(c *gin.Context, err error) bool {
 		respondSkillSnapshotReleaseFailed(c, nil)
 		return true
 	}
+	if stderrors.Is(err, service.ErrSkillSnapshotBlocksTemplateChange) {
+		respondSkillSnapshotBlocksTemplate(c)
+		return true
+	}
 	if stderrors.Is(err, repository.ErrSandboxConfigCordoned) {
 		respondSandboxConfigCordoned(c)
 		return true
@@ -181,7 +206,8 @@ func respondSandboxConfigServiceError(c *gin.Context, err error) {
 		stderrors.Is(err, service.ErrNamedSandboxBackendUnsupported),
 		stderrors.Is(err, sandbox.ErrUnsupportedSandboxType),
 		stderrors.Is(err, sandbox.ErrUnsafeOutboundURL),
-		stderrors.Is(err, sandbox.ErrSandboxConfigIncomplete):
+		stderrors.Is(err, sandbox.ErrSandboxConfigIncomplete),
+		stderrors.Is(err, sandbox.ErrDockerBackendDisabled):
 		c.Error(apperrors.NewBadRequestError(err.Error()))
 	default:
 		c.Error(err)

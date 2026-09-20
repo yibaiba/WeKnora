@@ -14,13 +14,13 @@
 //	Get/List → GET  /containers/json?filters=label=…
 //	Delete   → DELETE /containers/{id}?force=1
 //	Exec     → POST /containers/{id}/exec → /exec/{id}/start (hijack)
+//	Snapshot → POST /commit (skill images under weknora-skill/, fork images under weknora-fork/)
 //
-// Every file operation — WriteFile, ReadFile, Stat, MakeDir, Remove, ListDir —
-// is an exec running as the sandbox account, NOT a call to /archive. The
-// archive endpoints run as root and resolve symlinks, so a session that plants
-// a link inside its own workspace could read or overwrite anything in the
-// container through them. Going through exec puts the kernel back in charge of
-// who may touch what. Do not "simplify" these back onto /archive.
+// Every file operation uses exec with an explicit account (root by default),
+// timeout and activity tracking. Archive endpoints bypass those exec settings.
+// Neither root exec nor archive provides containment under a path prefix:
+// intermediate symlinks may reach other paths inside the same container.
+// See WriteFile for the limits of the file API's path guards.
 //
 // ListDir and Stat use `find -printf`, which needs GNU findutils in the image;
 // the standard WeKnora sandbox image provides it.
@@ -62,13 +62,13 @@ const dockerActivityMarker = "/var/lib/weknora-sandbox-activity"
 // the container is a place to exec into, not a service — and prepares the
 // activity marker on the way.
 //
-// The marker has to be writable by the sandbox account. PID 1 runs as root so
-// that it can create the file at all, but every exec that would refresh it —
-// scripts, shell commands, filesystem helpers — runs as the unprivileged user.
-// Creating it here, in the container's own entrypoint, avoids an extra API
-// round trip per sandbox, and the chmod that follows is what lets that account
-// touch it. Without this the idle sweeper would see a session that only ever
-// ran scripts as untouched, and reclaim it out from under the user.
+// The marker has to be writable by whichever account the execs land on, which
+// is DefaultSandboxExecUser by default but stays selectable per call and can
+// be a non-root account on a custom image. Creating it here, in the
+// container's own entrypoint, avoids an extra API round trip per sandbox, and
+// the chmod that follows is what lets a non-root account touch it. Without
+// this the idle sweeper would see a session that only ever ran scripts as
+// untouched, and reclaim it out from under the user.
 var dockerSandboxEntrypoint = []string{
 	"/bin/sh", "-c",
 	"touch " + dockerActivityMarker + " 2>/dev/null; " +
@@ -225,7 +225,11 @@ func (c *DockerRemoteClient) Capabilities() RemoteSandboxCapabilities {
 		SupportsPauseResume:           true,
 		SupportsTimeoutRefresh:        false,
 		SupportsFilesystemEnumeration: true,
-		SupportsVolumes:               false,
+		// docker commit produces a local image whose tag is a template ID,
+		// which is what skill install uses on Cube/E2B. The snapshot is
+		// filesystem-only (no memory) and lives on this daemon.
+		SupportsSnapshots: true,
+		SupportsVolumes:   false,
 	}
 }
 
@@ -263,9 +267,10 @@ func (c *DockerRemoteClient) Create(
 	created, err := c.api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Image: image,
 		Config: &container.Config{
-			// The standard image ends with USER user. The entrypoint has to
-			// create and chmod the activity marker under /var/lib, which only
-			// root can do; exec still names DefaultSandboxExecUser per call.
+			// The entrypoint has to create and chmod the activity marker under
+			// /var/lib, which only root can do. Pinning PID 1 to uid 0 keeps
+			// that working for a custom image that ends with a non-root USER;
+			// exec still names DefaultSandboxExecUser per call.
 			User: dockerSandboxPID1User,
 			// Entrypoint rather than Cmd, with Cmd explicitly emptied: the
 			// daemon prepends the image's own ENTRYPOINT to Cmd, so an image
@@ -289,6 +294,15 @@ func (c *DockerRemoteClient) Create(
 		// as an unbound leftover the sweep only reclaims much later.
 		c.removeQuietly(ctx, created.ID)
 		return nil, dockerError("Create", err)
+	}
+	// ContainerStart returning is not the same as State.Running: the daemon
+	// accepts the start, then PID 1 still has to replace sh. ExecCreate on a
+	// container that is still "created" comes back as 409 Conflict
+	// ("container is not running"), which used to fail skill install on
+	// the first attempt and succeed on retry.
+	if err := c.waitUntilRunning(ctx, created.ID, "Create"); err != nil {
+		c.removeQuietly(ctx, created.ID)
+		return nil, err
 	}
 	c.sweepInBackground(ctx)
 	return &dockerSandboxHandle{id: created.ID, metadata: dockerSandboxMetadata(labels)}, nil
@@ -346,7 +360,8 @@ var dockerInitProcess = true
 // RemoteNetworkPolicy cannot be honoured here; the one thing that maps
 // cleanly is "no egress at all", which AllowInternetAccess=false expresses.
 // Domain rules are silently not applied — the config surface refuses them
-// before they get this far (see RequireCompleteConfig).
+// before they get this far (see types.ValidateSandboxNetworkPolicy, which
+// rejects any allow/deny list or L7 rule on a docker config at save time).
 func (c *DockerRemoteClient) networkMode(policy RemoteNetworkPolicy) string {
 	if policy.AllowInternetAccess != nil && !*policy.AllowInternetAccess {
 		return "none"
@@ -363,8 +378,11 @@ func (c *DockerRemoteClient) networkMode(policy RemoteNetworkPolicy) string {
 // left off instead of losing everything it installed.
 func (c *DockerRemoteClient) Connect(
 	ctx context.Context,
-	sandboxID string,
+	request RemoteConnectRequest,
 ) (RemoteSandboxHandle, error) {
+	// Docker containers are not fronted by a provider gateway, so there is no
+	// inbound credential to restore; TrafficAccessToken is ignored.
+	sandboxID := request.SandboxID
 	inspected, err := c.api.ContainerInspect(ctx, sandboxID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, dockerError("Connect", err)
@@ -382,7 +400,10 @@ func (c *DockerRemoteClient) Connect(
 			Message:  "container is dead",
 		}
 	case RemoteStatePaused:
-		if err := c.resume(ctx, inspected.Container.ID, string(state.Status)); err != nil {
+		if err := c.resume(ctx, inspected.Container.ID, string(state.Status), "Connect"); err != nil {
+			return nil, err
+		}
+		if err := c.waitUntilRunning(ctx, inspected.Container.ID, "Connect"); err != nil {
 			return nil, err
 		}
 	}
@@ -398,18 +419,137 @@ func (c *DockerRemoteClient) Connect(
 	}, nil
 }
 
+// ConnectSession already gets the lifecycle state from Connect's container
+// inspection, including terminal detection and resuming a stopped container.
+func (c *DockerRemoteClient) ConnectSession(
+	ctx context.Context, req RemoteConnectRequest,
+) (RemoteSandboxHandle, error) {
+	return c.Connect(ctx, req)
+}
+
+// dockerStartReadyTimeout bounds how long Create/Connect/Exec wait for PID 1
+// after the daemon has accepted a start. The window is milliseconds on a
+// healthy daemon; this is only the ceiling for a wedged one.
+var dockerStartReadyTimeout = 15 * time.Second
+
+// dockerStartReadyPoll is the inspect interval inside waitUntilRunning.
+var dockerStartReadyPoll = 50 * time.Millisecond
+
 // resume brings a paused or stopped container back to running.
-func (c *DockerRemoteClient) resume(ctx context.Context, id, status string) error {
+func (c *DockerRemoteClient) resume(ctx context.Context, id, status, op string) error {
+	if op == "" {
+		op = "Connect"
+	}
 	if strings.EqualFold(status, "paused") {
 		if _, err := c.api.ContainerUnpause(ctx, id, client.ContainerUnpauseOptions{}); err != nil {
-			return dockerError("Connect", err)
+			return dockerError(op, err)
 		}
 		return nil
 	}
 	if _, err := c.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
-		return dockerError("Connect", err)
+		return dockerError(op, err)
 	}
 	return nil
+}
+
+// dockerContainerNotRunning reports the Engine 409 that ExecCreate returns
+// when the target is not in State.Running. The message is the signal: Kind
+// Conflict also covers "already exists" and is not replaceable, so callers
+// that want to resume have to look here rather than at CanReplaceRemoteBinding.
+func dockerContainerNotRunning(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "is not running")
+}
+
+// waitUntilRunning polls inspect until the container is running, or until it
+// is clear waiting will not help (exited, paused, dead).
+func (c *DockerRemoteClient) waitUntilRunning(ctx context.Context, id, op string) error {
+	deadline := time.Now().Add(dockerStartReadyTimeout)
+	var lastStatus string
+	for {
+		if err := ctx.Err(); err != nil {
+			return dockerError(op, err)
+		}
+		inspected, err := c.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+		if err != nil {
+			return dockerError(op, err)
+		}
+		state := inspected.Container.State
+		if state == nil {
+			return dockerError(op, errors.New("daemon returned no container state"))
+		}
+		lastStatus = strings.TrimSpace(string(state.Status))
+		switch dockerStateOf(state.Status) {
+		case RemoteStateRunning:
+			return nil
+		case RemoteStateTerminal:
+			return &RemoteError{
+				Kind:     RemoteErrorKindTerminal,
+				Provider: SandboxTypeDocker,
+				Op:       op,
+				Message:  "container is dead",
+			}
+		}
+		switch strings.ToLower(lastStatus) {
+		case "exited", "paused":
+			return &RemoteError{
+				Kind:     RemoteErrorKindConflict,
+				Provider: SandboxTypeDocker,
+				Op:       op,
+				Message:  "container is not running: " + lastStatus,
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return &RemoteError{
+				Kind:     RemoteErrorKindTimeout,
+				Provider: SandboxTypeDocker,
+				Op:       op,
+				Message:  fmt.Sprintf("container did not reach running (last state %q)", lastStatus),
+			}
+		}
+		timer := time.NewTimer(dockerStartReadyPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return dockerError(op, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+// ensureRunning resumes a stopped/paused container and waits until exec can
+// succeed. It is the Exec counterpart of Connect: the first command of a
+// newly created sandbox used to race PID 1, and a later command can hit a
+// container the host or the idle sweep stopped.
+func (c *DockerRemoteClient) ensureRunning(ctx context.Context, id, op string) error {
+	inspected, err := c.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return dockerError(op, err)
+	}
+	state := inspected.Container.State
+	if state == nil {
+		return dockerError(op, errors.New("daemon returned no container state"))
+	}
+	switch dockerStateOf(state.Status) {
+	case RemoteStateRunning:
+		return nil
+	case RemoteStateTerminal:
+		return &RemoteError{
+			Kind:     RemoteErrorKindTerminal,
+			Provider: SandboxTypeDocker,
+			Op:       op,
+			Message:  "container is dead",
+		}
+	case RemoteStatePaused:
+		if err := c.resume(ctx, inspected.Container.ID, string(state.Status), op); err != nil {
+			return err
+		}
+		return c.waitUntilRunning(ctx, id, op)
+	default:
+		return c.waitUntilRunning(ctx, id, op)
+	}
 }
 
 // Get returns one sandbox summary.
@@ -539,7 +679,7 @@ func (c *DockerRemoteClient) Exec(
 	execCtx, cancel := context.WithTimeout(ctx, timeout+dockerExecGrace)
 	defer cancel()
 
-	created, err := c.api.ExecCreate(execCtx, id, client.ExecCreateOptions{
+	execOpts := client.ExecCreateOptions{
 		Cmd:          dockerExecCommand(req, timeout),
 		User:         dockerExecUser(req.User),
 		WorkingDir:   req.WorkDir,
@@ -547,13 +687,20 @@ func (c *DockerRemoteClient) Exec(
 		AttachStdin:  req.Stdin != "",
 		AttachStdout: true,
 		AttachStderr: true,
-	})
+	}
+	created, err := c.api.ExecCreate(execCtx, id, execOpts)
+	if err != nil && dockerContainerNotRunning(err) {
+		if readyErr := c.ensureRunning(execCtx, id, "Exec"); readyErr != nil {
+			return nil, readyErr
+		}
+		created, err = c.api.ExecCreate(execCtx, id, execOpts)
+	}
 	if err != nil {
 		return nil, dockerError("Exec", err)
 	}
 
 	start := time.Now()
-	stdout, stderr, err := c.streamExec(execCtx, created.ID, req.Stdin)
+	stdout, stderr, err := c.streamExec(execCtx, created.ID, req.Stdin, req.OnOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -585,6 +732,7 @@ func (c *DockerRemoteClient) streamExec(
 	ctx context.Context,
 	execID string,
 	stdin string,
+	output ...func(string, []byte),
 ) (string, string, error) {
 	attached, err := c.api.ExecAttach(ctx, execID, client.ExecAttachOptions{})
 	if err != nil {
@@ -614,7 +762,12 @@ func (c *DockerRemoteClient) streamExec(
 	var stdout, stderr bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		_, copyErr := stdcopy.StdCopy(&stdout, &stderr, attached.Reader)
+		var out, errOut io.Writer = &stdout, &stderr
+		if len(output) > 0 && output[0] != nil {
+			out = io.MultiWriter(&stdout, remoteOutputWriter{stream: "stdout", callback: output[0]})
+			errOut = io.MultiWriter(&stderr, remoteOutputWriter{stream: "stderr", callback: output[0]})
+		}
+		_, copyErr := stdcopy.StdCopy(out, errOut, attached.Reader)
 		done <- copyErr
 	}()
 
@@ -657,7 +810,7 @@ func dockerExecCommand(req RemoteExecRequest, timeout time.Duration) []string {
 	if req.Shell {
 		return []string{
 			"/bin/sh", "-c",
-			touch + `exec timeout -s KILL ` + seconds + ` /bin/sh -c "$1"`,
+			touch + `exec timeout -s KILL ` + seconds + ` /bin/bash --noprofile --norc -c "$1"`,
 			"weknora-exec", req.Command,
 		}
 	}
@@ -671,19 +824,16 @@ func dockerExecCommand(req RemoteExecRequest, timeout time.Duration) []string {
 
 // dockerExecUser resolves which account a command runs as.
 //
-// A blank user resolves to the sandbox account. It must never resolve to root:
-// this function is the single choke point for every exec the daemon runs, so a
-// caller that forgets to name an account has to lose privileges here, not
-// silently gain them. It also makes the backends agree — E2B authenticates its
-// data plane as DefaultSandboxExecUser and Cube hands a blank field to envd,
-// which defaults the same way.
+// A blank user resolves to DefaultSandboxExecUser, which is root: this
+// function is the single choke point for every exec the daemon runs, so the
+// account a caller lands on when it names none is decided here rather than by
+// whatever the image happens to declare. It also makes the backends agree —
+// E2B authenticates its data plane as DefaultSandboxExecUser and Cube hands a
+// blank field to envd, which defaults the same way.
 //
-// This used to fall back to root for the manager's artifact-directory
-// bootstrap. That was a container-escape primitive: chown follows symlinks, so
-// a session that replaced its own artifact directory with a link to /etc got
-// the root-run bootstrap to hand it ownership of /etc, and from there uid 0 by
-// rewriting passwd. The bootstrap now names the account like everyone else and
-// simply fails when it is aimed at something the account does not own.
+// Root is safe to default to because a sandbox belongs to exactly one session:
+// there is no second account inside it whose files the kernel would be keeping
+// apart. Host and cross-tenant isolation live at the container boundary.
 func dockerExecUser(user string) string {
 	if trimmed := strings.TrimSpace(user); trimmed != "" {
 		return trimmed
@@ -698,22 +848,19 @@ func dockerExecWasKilled(exitCode int) bool {
 	return exitCode == 137 || exitCode == 124
 }
 
-// WriteFile writes one file as the sandbox account.
+// WriteFile writes one file through exec as remoteFileUser(ctx).
 //
-// This and its Read/Stat counterparts deliberately avoid the Engine's archive
-// endpoints (CopyToContainer, CopyFromContainer, ContainerStatPath). Those are
-// served by the daemon, which means two things at once: they ignore the exec
-// user and act as root, and they resolve symlinks on the way. That combination
-// is unsafe here, because the sandbox account can write anywhere under
-// /workspace while every caller-facing path guard in this repository is a
-// string prefix test. A model that runs `ln -s /root /workspace/output/esc`
-// leaves /workspace/output/esc/secret.txt passing those guards, and the daemon
-// then reads it out as root — confirmed against a real daemon, not theorised.
+// Read/Stat and the other file operations use the same exec path for explicit
+// identity, bounded execution and activity tracking. Archive endpoints run in
+// the daemon and do not honor these per-exec settings.
 //
-// Running these as DefaultSandboxExecUser hands the decision to the kernel
-// instead: a path the sandbox account cannot reach on its own stays
-// unreachable regardless of what a link points at, and there is no window
-// between checking and using in which the link could be repointed.
+// The default account is root. Exec still follows intermediate symlinks, and
+// lexical path guards do not confine access to /workspace or protect /root
+// and /etc inside this container. Host and cross-session isolation depend on
+// the container and its mount configuration, not in-container ownership.
+// Root cannot bypass a read-only mount. A future file API requiring path
+// containment must enforce it during resolution and use, not rely on root
+// exec or a separate prefix/Stat check.
 func (c *DockerRemoteClient) WriteFile(
 	ctx context.Context,
 	handle RemoteSandboxHandle,
@@ -738,7 +885,7 @@ func (c *DockerRemoteClient) WriteFile(
 		Command: "sh",
 		Args:    []string{"-c", `cat > "$1"`, "weknora-write", clean},
 		Stdin:   string(content),
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -773,7 +920,7 @@ func (c *DockerRemoteClient) ReadFile(
 	result, err := c.Exec(ctx, &dockerSandboxHandle{id: id}, RemoteExecRequest{
 		Command: "cat",
 		Args:    []string{"--", clean},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -817,7 +964,7 @@ func (c *DockerRemoteClient) Stat(
 			clean, "-maxdepth", "0",
 			"-printf", `%y\t%s\t%T@\t%p\n`,
 		},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -885,7 +1032,7 @@ func (c *DockerRemoteClient) makeDir(ctx context.Context, id, dir, op string) er
 	result, err := c.Exec(ctx, &dockerSandboxHandle{id: id}, RemoteExecRequest{
 		Command: "mkdir",
 		Args:    []string{"-p", dir},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -922,7 +1069,7 @@ func (c *DockerRemoteClient) Remove(
 	result, err := c.Exec(ctx, &dockerSandboxHandle{id: id}, RemoteExecRequest{
 		Command: "rm",
 		Args:    []string{"-rf", clean},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -963,7 +1110,7 @@ func (c *DockerRemoteClient) ListDir(
 			clean, "-mindepth", "1", "-maxdepth", "1",
 			"-printf", `%y\t%s\t%T@\t%p\n`,
 		},
-		User:    DefaultSandboxExecUser,
+		User:    remoteFileUser(ctx),
 		Timeout: dockerFilesystemOpTimeout,
 	})
 	if err != nil {
@@ -1041,6 +1188,16 @@ func (c *DockerRemoteClient) ensureImage(ctx context.Context, image string) erro
 	if _, err := c.api.ImageInspect(ctx, image); err == nil {
 		return nil
 	}
+	// Skill snapshots are daemon-local commits, not registry tags. Pulling
+	// one would hit Docker Hub for a name we minted and never pushed, and a
+	// miss here means "this daemon does not have the image", not "fetch it".
+	if dockerIsLocalSnapshotRef(image) {
+		kind := "skill"
+		if dockerIsForkSnapshotRef(image) {
+			kind = "fork"
+		}
+		return dockerInvalidRequest("Create", kind+" snapshot image "+image+" is not on this daemon")
+	}
 	pullCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerImagePullBudget)
 	defer cancel()
 	body, err := c.api.ImagePull(pullCtx, image, client.ImagePullOptions{})
@@ -1097,12 +1254,10 @@ func dockerCleanPath(op, raw string) (string, error) {
 
 // dockerReservedPathPrefixes are refused for every file operation.
 //
-// File operations run as the sandbox account (see WriteFile), so the kernel
-// already decides what is reachable and this list is not what keeps /etc or
-// another session's data safe. It exists for the paths the sandbox account
-// legitimately can touch but never should through this API: /proc and /sys
-// expose the container's own runtime state, and the activity marker is the
-// sweeper's bookkeeping, which a session must not be able to backdate.
+// These are lexical API restrictions on runtime paths and the activity marker.
+// Root exec can still reach them through intermediate symlinks or shell_exec;
+// the list is not a filesystem or tenant boundary. Mounts and container
+// isolation remain authoritative.
 var dockerReservedPathPrefixes = []string{
 	"/proc",
 	"/sys",
@@ -1147,4 +1302,15 @@ func firstNonEmptyLine(output string) string {
 	return ""
 }
 
-var _ RemoteSandboxClient = (*DockerRemoteClient)(nil)
+var (
+	_ RemoteSandboxClient   = (*DockerRemoteClient)(nil)
+	_ RemoteSnapshotManager = (*DockerRemoteClient)(nil)
+)
+
+// remoteOutputWriter observes bytes without changing buffered exec results.
+type remoteOutputWriter struct {
+	stream   string
+	callback func(string, []byte)
+}
+
+func (w remoteOutputWriter) Write(p []byte) (int, error) { w.callback(w.stream, p); return len(p), nil }

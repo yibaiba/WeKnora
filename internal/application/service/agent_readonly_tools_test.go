@@ -30,20 +30,17 @@ type inertKnowledgeBaseService struct {
 func TestIngestionReadOnlyToolPolicyAllowsReadsAndRejectsSideEffects(t *testing.T) {
 	allowed := []string{
 		agenttools.ToolThinking,
-		agenttools.ToolKnowledgeSearch,
-		agenttools.ToolGrepChunks,
-		agenttools.ToolListKnowledgeChunks,
+		agenttools.ToolSearchKnowledge,
+		agenttools.ToolReadDocument,
+		agenttools.ToolListDocuments,
 		agenttools.ToolQueryKnowledgeGraph,
-		agenttools.ToolGetDocumentInfo,
 		agenttools.ToolDatabaseQuery,
 		agenttools.ToolDataAnalysis,
 		agenttools.ToolDataSchema,
 		agenttools.ToolWebSearch,
 		agenttools.ToolWebFetch,
-		agenttools.ToolReadSkill,
 		agenttools.ToolWikiReadPage,
 		agenttools.ToolWikiSearch,
-		agenttools.ToolWikiReadSourceDoc,
 		agenttools.ToolWikiReadIssue,
 	}
 	for _, toolName := range allowed {
@@ -52,7 +49,7 @@ func TestIngestionReadOnlyToolPolicyAllowsReadsAndRejectsSideEffects(t *testing.
 
 	forbidden := []string{
 		agenttools.ToolTodoWrite,
-		agenttools.ToolExecuteSkillScript,
+		agenttools.LegacyToolExecuteSkillScript,
 		agenttools.ToolWikiWritePage,
 		agenttools.ToolWikiReplaceText,
 		agenttools.ToolWikiRenamePage,
@@ -73,11 +70,11 @@ func TestIngestionReadOnlyToolNamesRespectExplicitCapabilities(t *testing.T) {
 
 	names, wikiKBIDs := ingestionReadOnlyToolNames(request)
 
-	require.Contains(t, names, agenttools.ToolReadSkill)
+	require.Contains(t, names, agenttools.ToolSearchKnowledge)
 	require.Contains(t, names, agenttools.ToolQueryKnowledgeGraph)
 	require.Contains(t, names, agenttools.ToolWikiReadPage)
 	require.Contains(t, names, agenttools.ToolWebSearch)
-	require.NotContains(t, names, agenttools.ToolExecuteSkillScript)
+	require.NotContains(t, names, agenttools.LegacyToolExecuteSkillScript)
 	require.Equal(t, []string{request.KnowledgeBaseID}, wikiKBIDs)
 }
 

@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/sandbox"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/robfig/cron/v3"
 )
@@ -102,6 +104,12 @@ func (s *TenantSkillService) ReapStuckRuns(ctx context.Context) (int, error) {
 		snapshotID, serving, known := s.skillFilesInLiveImage(ctx, row)
 		switch row.Status {
 		case types.SkillStatusInstalling:
+			if row.Served != nil {
+				if s.reapStuckUpgrade(ctx, row, snapshotID, serving, known) {
+					reaped++
+				}
+				continue
+			}
 			// An unreadable config or ledger must not be treated as a failed
 			// install: the image may still be serving this skill.
 			if serving || !known {
@@ -134,15 +142,20 @@ func (s *TenantSkillService) ReapStuckRuns(ctx context.Context) (int, error) {
 			}
 			reaped++
 		case types.SkillStatusRemoving:
-			// Deleting the row and its bundle is the one irreversible thing
-			// the reaper does, so a run it cannot judge is left for the next
-			// sweep rather than guessed at.
+			// Deleting the leftover install row is irreversible, so a run the
+			// reaper cannot judge is left for the next sweep rather than
+			// guessed at. The catalog archive is not touched: this is a
+			// sandbox install, not a definition delete.
 			if !known {
 				continue
 			}
 			if serving {
+				// A row whose upgrade never landed goes back to the version
+				// the image has, exactly as a failed removal restores it.
+				abandoned := ""
 				if err := s.updateSkillFields(ctx, row.TenantID, row.SandboxConfigID, row.ID,
 					func(e *types.TenantSkillEntity) {
+						abandoned = restoreServedVersion(e)
 						e.Status = types.SkillStatusReady
 						e.Error = ""
 						e.InstallingSince = nil
@@ -153,15 +166,20 @@ func (s *TenantSkillService) ReapStuckRuns(ctx context.Context) (int, error) {
 					logger.Warnf(ctx, "[skill] restore abandoned removal %s failed: %v", row.ID, err)
 					continue
 				}
+				s.releaseInstallBundle(ctx, row.TenantID, abandoned)
 				reaped++
 				continue
 			}
+			pinned := installBundleRefs(row)
 			if err := s.skills.DeleteSkill(ctx, row.TenantID, row.SandboxConfigID, row.ID); err != nil {
 				logger.Warnf(ctx, "[skill] drop abandoned removal %s failed: %v", row.ID, err)
 				continue
 			}
-			if row.BundleRef != "" {
-				s.deleteBundleBestEffort(ctx, row.TenantID, row.BundleRef)
+			// The row was the last thing naming an archive it owned outright,
+			// so the sweep that drops it is what makes those bytes reachable
+			// by nothing. A definition's own object has other names and stays.
+			for _, ref := range pinned {
+				s.releaseInstallBundle(ctx, row.TenantID, ref)
 			}
 			reaped++
 		}
@@ -170,6 +188,59 @@ func (s *TenantSkillService) ReapStuckRuns(ctx context.Context) (int, error) {
 		logger.Infof(ctx, "[skill] reaped %d stuck install/remove run(s)", reaped)
 	}
 	return reaped, nil
+}
+
+// reapStuckUpgrade settles an install that died while a previous version was
+// being served. That version keeps the skill available for as long as the row
+// stays installing, so nothing here is urgent enough to guess: a chain the
+// reaper cannot read is left for the next sweep.
+//
+// The nearest install generation of this skill on the live chain says what
+// happened. The served version's own generation means the pointer never moved,
+// so the row goes back to that version. A newer one means the upgrade landed and
+// only its terminal write was lost, so the row is ready as it stands. None means
+// the image carries nothing of the skill, and there is nothing left to serve.
+func (s *TenantSkillService) reapStuckUpgrade(
+	ctx context.Context, row *types.TenantSkillEntity, snapshotID string, serving, known bool,
+) bool {
+	if !known {
+		return false
+	}
+	var released []string
+	err := s.updateSkillFields(ctx, row.TenantID, row.SandboxConfigID, row.ID,
+		func(e *types.TenantSkillEntity) {
+			e.InstallingSince = nil
+			if e.Served == nil {
+				return
+			}
+			switch {
+			case serving && snapshotID != "" && snapshotID != e.Served.SnapshotID:
+				released = append(released, strings.TrimSpace(e.Served.BundleRef))
+				e.Served = nil
+				e.Status = types.SkillStatusReady
+				e.Error = ""
+				e.InstalledSnapshotID = snapshotID
+			case serving:
+				// The catalog still differs from the restored row, so the
+				// console offers the upgrade again.
+				released = append(released, restoreServedVersion(e))
+				e.Status = types.SkillStatusReady
+				e.Error = ""
+			default:
+				released = append(released, strings.TrimSpace(e.Served.BundleRef))
+				e.Served = nil
+				e.Status = types.SkillStatusFailed
+				e.Error = skillInstallInterruptedMessage
+			}
+		})
+	if err != nil {
+		logger.Warnf(ctx, "[skill] settle abandoned upgrade %s failed: %v", row.ID, err)
+		return false
+	}
+	for _, ref := range released {
+		s.releaseInstallBundle(ctx, row.TenantID, ref)
+	}
+	return true
 }
 
 // skillFilesInLiveImage reports whether the image every new session boots
@@ -310,6 +381,7 @@ func (s *TenantSkillService) ReconcileSnapshots(
 	if err != nil {
 		return 0, err
 	}
+	listed = snapshotsNotFromOtherConfig(listed, skillSnapshotNamePrefix(tenantID, configID))
 	extras := 0
 	for _, snap := range listed {
 		id := strings.TrimSpace(snap.ID)
@@ -404,6 +476,12 @@ func configuredSandboxTTL(cfg *types.TenantSandboxConfig) time.Duration {
 	if cfg.E2B != nil && cfg.E2B.E2BSandboxTTLSeconds > seconds {
 		seconds = cfg.E2B.E2BSandboxTTLSeconds
 	}
+	// Docker's equivalent is the idle TTL: the daemon has none of its own, so
+	// that is how long a container created from the previous image may still
+	// be sitting there unused.
+	if cfg.Docker != nil && cfg.Docker.IdleTTLSeconds > seconds {
+		seconds = cfg.Docker.IdleTTLSeconds
+	}
 	if seconds <= 0 {
 		return 0
 	}
@@ -415,10 +493,10 @@ func configuredSandboxTTL(cfg *types.TenantSandboxConfig) time.Duration {
 // image is never touched, nor is anything the ledger does not name: extras
 // belong to other environments on a shared provider account.
 //
-// A live sandbox does not need the template it was created from in order to
-// keep running, so the only reason to wait is in-flight creates that resolved
-// the previous pointer. Twenty-four hours is far past every backend's default
-// TTL; a config that sets a longer one extends the wait.
+// Retention is a lower bound, not a guarantee the provider will accept the
+// delete. Session sandboxes pause instead of dying when idle, and a paused
+// sandbox still pins its template; a Conflict is left on the ledger for the
+// next sweep.
 func (s *TenantSkillService) PruneSupersededSnapshots(ctx context.Context) (int, error) {
 	if s == nil || s.skills == nil {
 		return 0, nil
@@ -490,6 +568,12 @@ func (s *TenantSkillService) pruneConfigSnapshots(
 			continue
 		}
 		if err := deleter.DeleteSnapshot(ctx, row.SnapshotID); err != nil && !sandbox.IsRemoteNotFound(err) {
+			if sandbox.IsRemoteConflict(err) {
+				logger.Infof(ctx,
+					"[skill] snapshot %s still in use; leaving it until sandboxes release it: %s",
+					row.SnapshotID, sandbox.RemoteErrorDiagnostics(err))
+				continue
+			}
 			logger.Warnf(ctx, "[skill] delete superseded snapshot %s failed: %v", row.SnapshotID, err)
 			continue
 		}
@@ -501,7 +585,179 @@ func (s *TenantSkillService) pruneConfigSnapshots(
 		}
 		pruned++
 	}
-	return pruned, nil
+	return pruned + s.reapAbandonedBuilds(ctx, cfg, rows), nil
+}
+
+// reapAbandonedBuilds deletes the provider snapshot of a build that never
+// reached the ledger. It is the only path that can.
+//
+// A row is written as building, the provider commit runs, and only then is the
+// snapshot's ID recorded. A process that dies in that window leaves a real,
+// billed snapshot whose ID exists nowhere: PruneSupersededSnapshots skips the
+// row because building is not a prunable state and its SnapshotID is empty,
+// ReconcileSnapshots reports it as an extra but deliberately never deletes, and
+// the config-delete path reads an empty SnapshotID as nothing to release.
+// PlannedName is what closes that, because it is written before the commit.
+//
+// Only a positive match is acted on. A listing that names nothing we recognise
+// cannot tell "the commit never happened" from "this provider does not echo
+// names back", and marking the row deleted on that guess would throw away the
+// last record of a snapshot that is still there.
+func (s *TenantSkillService) reapAbandonedBuilds(
+	ctx context.Context, cfg *types.TenantSandboxConfigEntity,
+	rows []*types.TenantSkillSnapshotEntity,
+) int {
+	cutoff := s.clock()().Add(-skillInstallStuckTTL)
+	pending := make([]*types.TenantSkillSnapshotEntity, 0, len(rows))
+	for _, row := range rows {
+		if abandonedBuild(row, cutoff) && !s.buildStillRunning(ctx, row) {
+			pending = append(pending, row)
+		}
+	}
+	if len(pending) == 0 {
+		return 0
+	}
+	if s.configHasInFlightSkill(ctx, cfg.TenantID, cfg.ID) {
+		return 0
+	}
+
+	lister := snapshotListerFrom(ctx, s.sandboxes, cfg.TenantID, cfg.ID)
+	deleter := snapshotDeleterFrom(ctx, s.sandboxes, cfg.TenantID, cfg.ID)
+	if lister == nil || deleter == nil {
+		return 0
+	}
+	listed, err := lister.ListSnapshots(ctx, "")
+	if err != nil {
+		logger.Warnf(ctx, "[skill] list snapshots to reap abandoned builds of config %s failed: %v",
+			cfg.ID, err)
+		return 0
+	}
+	listed = snapshotsNotFromOtherConfig(listed, skillSnapshotNamePrefix(cfg.TenantID, cfg.ID))
+
+	live := strings.TrimSpace(currentSnapshotID(cfg))
+	reaped := 0
+	for _, row := range pending {
+		found := matchSnapshotByName(listed, row.PlannedName)
+		// Unreachable by construction — the pointer moves after the ID is
+		// recorded, so a building row cannot be live — but the delete is
+		// irreversible, so the guard stays.
+		if found == "" || found == live {
+			continue
+		}
+		if err := deleter.DeleteSnapshot(ctx, found); err != nil && !sandbox.IsRemoteNotFound(err) {
+			if sandbox.IsRemoteConflict(err) {
+				logger.Infof(ctx,
+					"[skill] abandoned build %s of config %s still in use; leaving it until sandboxes release it: %s",
+					found, cfg.ID, sandbox.RemoteErrorDiagnostics(err))
+				continue
+			}
+			logger.Warnf(ctx, "[skill] delete abandoned build %s of config %s failed: %v",
+				found, cfg.ID, err)
+			continue
+		}
+		if err := s.skills.MarkSnapshotState(
+			ctx, cfg.TenantID, row.ID, types.SkillSnapshotStateDeleted, found,
+		); err != nil {
+			logger.Warnf(ctx, "[skill] mark abandoned build %s deleted failed: %v", row.ID, err)
+			continue
+		}
+		logger.Infof(ctx, "[skill] reclaimed abandoned build %s of config %s", found, cfg.ID)
+		reaped++
+	}
+	return reaped
+}
+
+// abandonedBuild reports a building row old enough that the commit it was
+// waiting on cannot still be running. The row is written immediately before the
+// provider call and marked active immediately after, so the window is one
+// commit wide; skillInstallStuckTTL is the same silence budget ReapStuckRuns
+// gives a whole install.
+func abandonedBuild(row *types.TenantSkillSnapshotEntity, cutoff time.Time) bool {
+	if row == nil || row.State != types.SkillSnapshotStateBuilding {
+		return false
+	}
+	if strings.TrimSpace(row.PlannedName) == "" {
+		// Written before PlannedName existed. Nothing can name its snapshot.
+		return false
+	}
+	return row.CreatedAt.Before(cutoff)
+}
+
+func (s *TenantSkillService) configHasInFlightSkill(
+	ctx context.Context, tenantID uint64, configID string,
+) bool {
+	if s == nil || s.skills == nil || strings.TrimSpace(configID) == "" {
+		return false
+	}
+	rows, err := s.skills.ListSkillsByConfig(ctx, tenantID, configID)
+	if err != nil {
+		logger.Warnf(ctx, "[skill] cannot read skills of config %s while reaping abandoned builds: %v",
+			configID, err)
+		return true
+	}
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		switch row.Status {
+		case types.SkillStatusInstalling, types.SkillStatusRemoving:
+			return true
+		}
+	}
+	return false
+}
+
+// buildStillRunning reports whether the run that opened this row is alive.
+//
+// The age check alone would be enough for any commit that finishes in the
+// minutes it normally takes, but a huge image on a slow remote daemon could
+// exceed it — and deleting the snapshot of a commit that then succeeds would
+// switch the config's pointer to an image that no longer exists. The install
+// keeps stamping InstallingSince, so that is what says "still working".
+func (s *TenantSkillService) buildStillRunning(
+	ctx context.Context, row *types.TenantSkillSnapshotEntity,
+) bool {
+	skill, err := s.skills.GetSkill(ctx, row.TenantID, row.SandboxConfigID, row.SkillID)
+	if err != nil {
+		// Cannot tell; refuse to guess before an irreversible delete.
+		return true
+	}
+	if skill == nil || skill.InstallingSince == nil {
+		return false
+	}
+	switch skill.Status {
+	case types.SkillStatusInstalling, types.SkillStatusRemoving:
+		return skill.InstallingSince.After(s.clock()().Add(-skillInstallStuckTTL))
+	}
+	return false
+}
+
+// matchSnapshotByName finds the provider snapshot a planned name refers to.
+//
+// Cube and E2B mint their own ID and echo the requested name in Names. Docker's
+// ID *is* the name, prefixed with the local repository it commits into, which
+// is why a trailing path segment counts as a match.
+func matchSnapshotByName(listed []sandbox.RemoteSnapshotRef, plannedName string) string {
+	want := strings.TrimSpace(plannedName)
+	if want == "" {
+		return ""
+	}
+	for _, ref := range listed {
+		candidates := append([]string{ref.ID}, ref.Names...)
+		for _, candidate := range candidates {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				continue
+			}
+			if candidate == want || strings.HasSuffix(candidate, "/"+want) {
+				if id := strings.TrimSpace(ref.ID); id != "" {
+					return id
+				}
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 // snapshotEligibleForPrune is the ledger-side gate. The provider delete is
@@ -568,10 +824,15 @@ func (s *TenantSkillService) reconcileAllSnapshots(ctx context.Context) {
 }
 
 func (s *TenantSkillService) runSkillReaper(ctx context.Context) {
+	ctx, span := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{Name: "skill.maintenance"})
+	var sweepErr error
+	defer func() { span.Finish(nil, nil, sweepErr) }()
 	if _, err := s.ReapStuckRuns(ctx); err != nil {
+		sweepErr = errors.Join(sweepErr, err)
 		logger.Warnf(ctx, "[skill] reap stuck runs failed: %v", err)
 	}
 	if _, err := s.PruneSupersededSnapshots(ctx); err != nil {
+		sweepErr = errors.Join(sweepErr, err)
 		logger.Warnf(ctx, "[skill] prune superseded snapshots failed: %v", err)
 	}
 	s.reconcileAllSnapshots(ctx)

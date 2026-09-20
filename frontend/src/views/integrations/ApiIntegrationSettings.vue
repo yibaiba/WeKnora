@@ -1816,7 +1816,7 @@ onBeforeUnmount(stopPlayground)
 }
 
 .link-icon {
-  font-size: 13px;
+  font-size: var(--app-text-md);
 }
 
 .desktop-api-control {
@@ -1836,7 +1836,7 @@ onBeforeUnmount(stopPlayground)
 
   :deep(input) {
     font-family: var(--app-font-family-mono);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
   }
 }
 
@@ -1867,7 +1867,7 @@ onBeforeUnmount(stopPlayground)
     display: block;
     margin-bottom: 6px;
     color: var(--td-text-color-primary);
-    font-size: 15px;
+    font-size: var(--app-text-lg);
     font-weight: 600;
     line-height: 1.4;
   }
@@ -1875,7 +1875,7 @@ onBeforeUnmount(stopPlayground)
   p {
     margin: 0;
     color: var(--td-text-color-secondary);
-    font-size: 13px;
+    font-size: var(--app-text-md);
     line-height: 1.55;
   }
 }
@@ -1888,7 +1888,7 @@ onBeforeUnmount(stopPlayground)
   display: flex;
   flex-direction: column;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   background: var(--td-bg-color-container);
   overflow: hidden;
 }
@@ -1900,7 +1900,7 @@ onBeforeUnmount(stopPlayground)
   gap: 8px;
   min-height: 88px;
   color: var(--td-text-color-secondary);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
 }
 
 .api-key-table-wrap {
@@ -1925,14 +1925,14 @@ onBeforeUnmount(stopPlayground)
   th {
     background: var(--td-bg-color-secondarycontainer);
     color: var(--td-text-color-placeholder);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     font-weight: 500;
     line-height: 1.4;
   }
 
   td {
     color: var(--td-text-color-secondary);
-    font-size: 13px;
+    font-size: var(--app-text-md);
     line-height: 1.45;
   }
 
@@ -1986,7 +1986,7 @@ onBeforeUnmount(stopPlayground)
   display: block;
   min-width: 0;
   color: var(--td-text-color-primary);
-  font-size: 13px;
+  font-size: var(--app-text-md);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1998,7 +1998,7 @@ onBeforeUnmount(stopPlayground)
   max-width: 100%;
   color: var(--td-text-color-secondary);
   font-family: var(--app-font-family-mono);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2021,10 +2021,10 @@ onBeforeUnmount(stopPlayground)
   height: 24px;
   padding: 0 9px;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-primary);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 600;
   line-height: 22px;
   overflow: hidden;
@@ -2051,10 +2051,10 @@ onBeforeUnmount(stopPlayground)
   max-width: 100%;
   height: 22px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: color-mix(in srgb, var(--td-success-color) 10%, var(--td-bg-color-container));
   color: var(--td-success-color);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   font-weight: 500;
   line-height: 20px;
   overflow: hidden;
@@ -2086,7 +2086,7 @@ onBeforeUnmount(stopPlayground)
   gap: 12px;
   min-height: 24px;
   color: var(--td-text-color-primary);
-  font-size: 13px;
+  font-size: var(--app-text-md);
   font-weight: 600;
 }
 
@@ -2141,7 +2141,7 @@ onBeforeUnmount(stopPlayground)
       align-items: center;
       gap: 8px;
       color: var(--td-text-color-primary);
-      font-size: 14px;
+      font-size: var(--app-text-base);
       font-weight: 600;
       line-height: 1.45;
 
@@ -2158,14 +2158,14 @@ onBeforeUnmount(stopPlayground)
     p {
       margin: 2px 0 0;
       color: var(--td-text-color-placeholder);
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       line-height: 1.5;
     }
   }
 
   :deep(.t-input),
   :deep(.t-select__wrap) {
-    border-radius: 4px;
+    border-radius: var(--app-radius-xs);
   }
 
   :deep(.t-input) {
@@ -2184,7 +2184,7 @@ onBeforeUnmount(stopPlayground)
 .scope-hint {
   margin: 8px 0 0;
   color: var(--td-text-color-placeholder);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 18px;
 }
 
@@ -2200,14 +2200,14 @@ onBeforeUnmount(stopPlayground)
     display: block;
     margin-bottom: 6px;
     color: var(--td-text-color-primary);
-    font-size: 15px;
+    font-size: var(--app-text-lg);
     font-weight: 600;
   }
 
   p {
     margin: 0;
     color: var(--td-text-color-secondary);
-    font-size: 13px;
+    font-size: var(--app-text-md);
     line-height: 1.55;
   }
 }
@@ -2215,7 +2215,7 @@ onBeforeUnmount(stopPlayground)
 .principal-section__scope {
   margin-top: 6px !important;
   color: var(--td-text-color-placeholder) !important;
-  font-size: 12px !important;
+  font-size: var(--app-text-sm) !important;
 }
 
 .mode-radio {
@@ -2234,7 +2234,7 @@ onBeforeUnmount(stopPlayground)
 .mode-callout {
   position: relative;
   padding: 12px 14px;
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   border: 1px solid var(--td-component-stroke);
   background: var(--td-bg-color-secondarycontainer);
   overflow: hidden;
@@ -2251,7 +2251,7 @@ onBeforeUnmount(stopPlayground)
       display: block;
       margin-bottom: 5px;
       color: var(--td-text-color-primary);
-      font-size: 13px;
+      font-size: var(--app-text-md);
       font-weight: 600;
       line-height: 1.4;
     }
@@ -2260,7 +2260,7 @@ onBeforeUnmount(stopPlayground)
     p {
       margin: 0;
       color: var(--td-text-color-secondary);
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       line-height: 1.6;
     }
   }
@@ -2270,7 +2270,7 @@ onBeforeUnmount(stopPlayground)
   display: flex;
   flex-direction: column;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   background: var(--td-bg-color-container);
   overflow: hidden;
 }
@@ -2292,7 +2292,7 @@ onBeforeUnmount(stopPlayground)
     label {
       display: block;
       color: var(--td-text-color-primary);
-      font-size: 13px;
+      font-size: var(--app-text-md);
       font-weight: 600;
       line-height: 1.4;
     }
@@ -2300,7 +2300,7 @@ onBeforeUnmount(stopPlayground)
     p {
       margin: 5px 0 0;
       color: var(--td-text-color-placeholder);
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       line-height: 1.5;
     }
   }
@@ -2353,7 +2353,7 @@ onBeforeUnmount(stopPlayground)
 
 .secret-saved-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
   color: var(--td-warning-color);
 }
@@ -2386,7 +2386,7 @@ onBeforeUnmount(stopPlayground)
   }
 
   :deep(.t-tabs__nav-item) {
-    font-size: 13px;
+    font-size: var(--app-text-md);
     height: 36px;
     line-height: 36px;
     color: var(--td-text-color-secondary);
@@ -2404,7 +2404,7 @@ onBeforeUnmount(stopPlayground)
 
 .code-panel {
   border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   background: var(--td-bg-color-secondarycontainer);
   overflow: hidden;
 
@@ -2419,7 +2419,7 @@ onBeforeUnmount(stopPlayground)
   }
 
   &__label {
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     font-weight: 500;
     color: var(--td-text-color-secondary);
   }
@@ -2443,7 +2443,7 @@ onBeforeUnmount(stopPlayground)
     padding: 10px 12px;
     overflow: auto;
     font-family: var(--app-font-family-mono);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     line-height: 1.5;
     color: var(--td-text-color-primary);
     background: transparent;
@@ -2452,7 +2452,7 @@ onBeforeUnmount(stopPlayground)
 
 .mono-input :deep(input) {
   font-family: var(--app-font-family-mono);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
 }
 
 .fixed-header-name {
@@ -2460,18 +2460,18 @@ onBeforeUnmount(stopPlayground)
   max-width: 100%;
   padding: 7px 10px;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-primary);
   font-family: var(--app-font-family-mono);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 18px;
   overflow-wrap: anywhere;
 }
 
 .mono-textarea :deep(.t-textarea__inner) {
   font-family: var(--app-font-family-mono);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
 }
 
 .playground-entry {
@@ -2481,7 +2481,7 @@ onBeforeUnmount(stopPlayground)
   gap: 16px;
   padding: 12px 14px;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   background: var(--td-bg-color-secondarycontainer);
 
   &__info {
@@ -2491,14 +2491,14 @@ onBeforeUnmount(stopPlayground)
       display: block;
       margin-bottom: 4px;
       color: var(--td-text-color-primary);
-      font-size: 13px;
+      font-size: var(--app-text-md);
       font-weight: 500;
     }
 
     p {
       margin: 0;
       color: var(--td-text-color-secondary);
-      font-size: 12px;
+      font-size: var(--app-text-sm);
       line-height: 1.5;
     }
   }
@@ -2518,7 +2518,7 @@ onBeforeUnmount(stopPlayground)
 .drawer-form-label {
   display: block;
   color: var(--td-text-color-primary);
-  font-size: 13px;
+  font-size: var(--app-text-md);
   font-weight: 500;
   line-height: 1.4;
 }
@@ -2526,7 +2526,7 @@ onBeforeUnmount(stopPlayground)
 .drawer-form-desc {
   margin: 0;
   color: var(--td-text-color-placeholder);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
 
   &--error {
@@ -2537,14 +2537,14 @@ onBeforeUnmount(stopPlayground)
 .footer-test-message {
   min-width: 0;
   color: var(--td-text-color-placeholder);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.4;
 }
 
 .playground-empty {
   margin: 0;
   color: var(--td-text-color-placeholder);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.6;
 }
 
@@ -2556,7 +2556,7 @@ onBeforeUnmount(stopPlayground)
 
 .playground-step {
   border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
   background: var(--td-bg-color-secondarycontainer);
   overflow: hidden;
 
@@ -2569,7 +2569,7 @@ onBeforeUnmount(stopPlayground)
     border-bottom: 1px solid var(--td-component-stroke);
     background: var(--td-bg-color-container);
     color: var(--td-text-color-secondary);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     font-weight: 500;
   }
 
@@ -2580,7 +2580,7 @@ onBeforeUnmount(stopPlayground)
     overflow: auto;
     color: var(--td-text-color-primary);
     font-family: var(--app-font-family-mono);
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
@@ -2621,14 +2621,14 @@ onBeforeUnmount(stopPlayground)
     display: block;
     margin-bottom: 4px;
     color: var(--td-text-color-primary);
-    font-size: 15px;
+    font-size: var(--app-text-lg);
     font-weight: 600;
   }
 
   p {
     margin: 0;
     color: var(--td-text-color-secondary);
-    font-size: 13px;
+    font-size: var(--app-text-md);
     line-height: 1.5;
   }
 }

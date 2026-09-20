@@ -21,10 +21,10 @@ import (
 const jwksDefaultTTL = 5 * time.Minute
 
 type oidcJWKSet struct {
-	Keys []oidcJWK `json:"keys"`
+	Keys []oidcCachedJWK `json:"keys"`
 }
 
-type oidcJWK struct {
+type oidcCachedJWK struct {
 	Kid string `json:"kid"`
 	Kty string `json:"kty"`
 	Alg string `json:"alg"`
@@ -146,6 +146,22 @@ func jwksCacheTTL(cacheControl string) time.Duration {
 	return ttl
 }
 
+func decodeJWTClaims(token string) (map[string]interface{}, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, errors.New("invalid JWT format")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
 func jwtHeaderString(raw, field string) string {
 	parts := strings.Split(raw, ".")
 	if len(parts) < 1 {
@@ -214,7 +230,7 @@ func (v *oidcJWTVerifier) verifyRS256(ctx context.Context, cfg *config.OIDCAuthC
 	if expectedIss == "" {
 		return nil, errors.New("OIDC issuer_url is required")
 	}
-	jwksURI := strings.TrimSpace(cfg.JWKSURI)
+	jwksURI := strings.TrimSpace(cfg.JwksURI)
 	if jwksURI == "" {
 		return nil, errors.New("OIDC jwks_uri is required")
 	}

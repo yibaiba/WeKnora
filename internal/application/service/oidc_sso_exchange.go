@@ -18,7 +18,7 @@ func (s *userService) ExchangeSSOAccess(
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(cfg.JWKSURI) == "" && strings.TrimSpace(cfg.DiscoveryURL) == "" && strings.TrimSpace(cfg.IssuerURL) == "" {
+	if strings.TrimSpace(cfg.JwksURI) == "" && strings.TrimSpace(cfg.DiscoveryURL) == "" && strings.TrimSpace(cfg.IssuerURL) == "" {
 		return nil, errors.New("OIDC jwks_uri is required")
 	}
 

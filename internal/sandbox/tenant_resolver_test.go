@@ -78,9 +78,9 @@ func TestResolveRefusesMissingConfig(t *testing.T) {
 	require.ErrorIs(t, err, ErrSandboxConfigNotFound)
 }
 
-// Construction must not perform a Health round-trip (it happens per request),
-// and skipping it must also skip the silent fallback to LocalSandbox: a tenant
-// that chose E2B should never have scripts quietly run as a local process.
+// Construction must not perform a Health round-trip (it happens per request).
+// A tenant that chose E2B must fail at first use if that backend is unreachable,
+// rather than substituting a different execution environment.
 func TestResolveBuildsRemoteManagerWithoutHealthProbe(t *testing.T) {
 	resolver, fallback := newTestResolver(t, &stubTenantConfigLoader{
 		result: ResolvedTenantSandboxConfig{
@@ -109,6 +109,8 @@ func TestResolveBuildsSessionBoundManagerForDocker(t *testing.T) {
 	// machine running the tests points its docker CLI at: a developer on a
 	// tcp:// daemon would otherwise trip the TLS requirement.
 	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+	isolateDockerEnabled(t)
+	t.Setenv(DockerBackendEnabledEnv, "true")
 
 	resolver, fallback := newTestResolver(t, &stubTenantConfigLoader{
 		result: ResolvedTenantSandboxConfig{
@@ -134,6 +136,29 @@ func TestResolveBuildsSessionBoundManagerForDocker(t *testing.T) {
 	require.NotNil(t, capabilities.SessionFileStore())
 }
 
+func TestResolveRefusesDockerWhenDisabled(t *testing.T) {
+	isolateDockerEnabled(t)
+	t.Setenv(DockerBackendEnabledEnv, "false")
+	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+
+	resolver, _ := newTestResolver(t, &stubTenantConfigLoader{
+		result: ResolvedTenantSandboxConfig{
+			Config: &types.TenantSandboxConfig{
+				SandboxType: "docker",
+				Docker: &types.DockerSandboxConfig{
+					Image: "wechatopenai/weknora-sandbox:test",
+				},
+			},
+			Found: true,
+		},
+	})
+
+	mgr, err := resolver.Resolve(context.Background(), 42, "cfg-docker")
+
+	require.Nil(t, mgr)
+	require.ErrorIs(t, err, ErrDockerBackendDisabled)
+}
+
 // The image is this backend's template. Without it there is nothing to create a
 // sandbox from, so the config must be refused up front rather than at the first
 // execution.
@@ -151,13 +176,12 @@ func TestResolveRefusesDockerConfigWithoutImage(t *testing.T) {
 	require.ErrorIs(t, err, ErrSandboxConfigIncomplete)
 }
 
-func TestResolveBuildsLocalManagerFromWorkspaceConfig(t *testing.T) {
-	resolver, fallback := newTestResolver(t, &stubTenantConfigLoader{
+func TestResolveRefusesStoredLocalConfig(t *testing.T) {
+	resolver, _ := newTestResolver(t, &stubTenantConfigLoader{
 		result: ResolvedTenantSandboxConfig{
 			Config: &types.TenantSandboxConfig{
 				SandboxType:       "local",
 				DefaultTimeoutSec: 17,
-				EnvVars:           map[string]string{"WORKSPACE_FLAG": "enabled"},
 			},
 			Found: true,
 		},
@@ -165,9 +189,8 @@ func TestResolveBuildsLocalManagerFromWorkspaceConfig(t *testing.T) {
 
 	mgr, err := resolver.Resolve(context.Background(), 42, "cfg-local")
 
-	require.NoError(t, err)
-	require.NotSame(t, fallback, mgr)
-	require.Equal(t, SandboxTypeLocal, mgr.GetType())
+	require.Nil(t, mgr)
+	require.ErrorIs(t, err, ErrUnsupportedSandboxType)
 }
 
 // No caching: the loader is consulted on every Resolve, which is what makes a

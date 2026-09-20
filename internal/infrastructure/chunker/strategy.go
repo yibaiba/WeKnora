@@ -148,21 +148,6 @@ func SplitParentChildWithDiagnostics(text string, parentCfg, childCfg SplitterCo
 func splitParentChild(text string, parentCfg, childCfg SplitterConfig, withDiagnostics bool) (ParentChildResult, *Diagnostics) {
 	parentCfg = ensureDefaults(parentCfg)
 	childCfg = ensureDefaults(childCfg)
-	if parentCfg.Strategy == StrategyAuto || childCfg.Strategy == StrategyAuto {
-		document, err := AnalyzeSemanticDocument(text, SemanticAnalysisOptions{})
-		if err != nil {
-			logger.Errorf(context.Background(), "chunker: semantic parent-child analysis failed: %v", err)
-			return ParentChildResult{}, nil
-		}
-		result, splitErr := SplitParentChildSemanticDocument(SemanticParentChildRequest{
-			Content: text, ParentConfig: parentCfg, ChildConfig: childCfg, Document: document,
-		})
-		if splitErr != nil {
-			logger.Errorf(context.Background(), "chunker: semantic parent-child packing failed: %v", splitErr)
-			return ParentChildResult{}, nil
-		}
-		return result, nil
-	}
 
 	var (
 		parents []Chunk
@@ -257,9 +242,11 @@ func DeriveParentChildConfigs(base SplitterConfig, parentSize, childSize int) (p
 	return
 }
 
-// mergeBreadcrumbs combines parent and child context into one ContextHeader.
-// Child context can include a repeated table header from the legacy splitter.
-// Matching heading boundary lines are de-duplicated.
+// mergeBreadcrumbs combines the parent and child heading breadcrumbs into a
+// single ContextHeader. When the child re-runs heading detection on parent
+// content, its first breadcrumb line typically duplicates the parent's last
+// line (the parent's leading heading sits at the top of the child's input);
+// drop that duplicate so the embedding context isn't redundant.
 func mergeBreadcrumbs(parent, child string) string {
 	if parent == "" {
 		return child
@@ -301,8 +288,7 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 		fallthrough
 	default:
 		profile := ProfileDocument(text)
-		chain := append([]StrategyTier{TierSemantic}, SelectStrategy(profile)...)
-		return chain, profile
+		return SelectStrategy(profile), profile
 	}
 }
 
@@ -317,16 +303,6 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 // profile compute one on demand.
 func runTier(tier StrategyTier, text string, cfg SplitterConfig, profile *DocProfile) []Chunk {
 	switch tier {
-	case TierSemantic:
-		document, err := AnalyzeSemanticDocument(text, SemanticAnalysisOptions{})
-		if err != nil {
-			return nil
-		}
-		chunks, err := SplitSemanticDocument(text, cfg, document)
-		if err != nil {
-			return nil
-		}
-		return chunks
 	case TierHeading:
 		return splitByHeadings(text, cfg, profile)
 	case TierHeuristic:
@@ -337,18 +313,18 @@ func runTier(tier StrategyTier, text string, cfg SplitterConfig, profile *DocPro
 	return SplitText(text, cfg)
 }
 
-// NormalizeConfig fills in zero-value config fields with sane defaults.
-// Mirrors buildSplitterConfig in internal/application/service/knowledge.go
-// so direct callers of this package get the same numbers.
+// ensureDefaults fills in zero-value config fields with sane defaults.
+// NormalizeSplitterConfig also uses these defaults so service callers and
+// direct callers of this package get the same numbers.
 //
 // When cfg.TokenLimit is set, ChunkSize is clamped to the character budget
 // that fits within that token limit (with a 10% safety factor). This makes
 // chunks safe for embedding APIs that have hard token caps.
-func NormalizeConfig(cfg SplitterConfig) SplitterConfig {
+func ensureDefaults(cfg SplitterConfig) SplitterConfig {
 	if cfg.ChunkSize <= 0 {
 		cfg.ChunkSize = DefaultChunkSize
 	}
-	if cfg.ChunkOverlap < 0 || (cfg.ChunkOverlap == 0 && !cfg.AllowZeroOverlap) {
+	if cfg.ChunkOverlap <= 0 {
 		cfg.ChunkOverlap = DefaultChunkOverlap
 	}
 	if len(cfg.Separators) == 0 {
@@ -372,10 +348,6 @@ func NormalizeConfig(cfg SplitterConfig) SplitterConfig {
 		cfg.ChunkOverlap = cfg.ChunkSize / 2
 	}
 	return cfg
-}
-
-func ensureDefaults(cfg SplitterConfig) SplitterConfig {
-	return NormalizeConfig(cfg)
 }
 
 // splitByHeadings is overridden by heading_splitter.go. The default no-op

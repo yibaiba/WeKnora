@@ -187,7 +187,7 @@ func ingestionDocumentAnalysisOptions() *chat.ChatOptions {
 	return &chat.ChatOptions{
 		// Provider adapters translate MaxTokens for models that require max_completion_tokens.
 		// Setting both here sends conflicting fields to generic OpenAI-compatible endpoints.
-		Temperature: 0, TemperatureSet: true, MaxTokens: ingestionDocumentAnalysisCompletionTokens,
+		Temperature: 0, MaxTokens: ingestionDocumentAnalysisCompletionTokens,
 		Thinking: &thinking, Format: ingestionDocumentEvidenceSchema,
 	}
 }

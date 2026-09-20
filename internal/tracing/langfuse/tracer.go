@@ -3,17 +3,13 @@ package langfuse
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
-	"github.com/Tencent/WeKnora/internal/types"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
-
-var errRedactedObservation = errors.New("operation failed; error details redacted")
 
 // Trace represents an active root observation. A Trace is conceptually one
 // "request" (e.g. a chat turn). Generations and spans attached to it roll up
@@ -36,8 +32,6 @@ type Generation struct {
 	manager *Manager
 	model   string
 	name    string
-	// Finish has no context, so preserve the start-time privacy decision here.
-	redactErrorDetails bool
 	// autoTrace is a non-nil root trace this generation implicitly opened
 	// because ctx carried none; Finish must End it so the root is exported.
 	autoTrace *Trace
@@ -52,8 +46,6 @@ type Span struct {
 	span    trace.Span
 	manager *Manager
 	name    string
-	// Finish has no context, so preserve the start-time privacy decision here.
-	redactErrorDetails bool
 	// metadata holds the metadata set at StartSpan so Finish can merge (not
 	// overwrite) the finish-time metadata into it before serializing.
 	metadata map[string]interface{}
@@ -208,13 +200,27 @@ func (m *Manager) reestablishParentSpan(ctx context.Context) context.Context {
 // trace is present, OTel creates a fresh root (mirroring StartGeneration's
 // auto-trace behaviour). Returns a ctx whose active span is this span.
 func (m *Manager) StartSpan(ctx context.Context, opts SpanOptions) (context.Context, *Span) {
-	redactErrorDetails := types.LLMTracePayloadsRedacted(ctx)
+	return m.startSpan(ctx, opts, true)
+}
+
+// StartChildSpan records a low-level operation only when its caller is already
+// traced. Polling and housekeeping must not create a new trace for every RPC;
+// their operation-level caller owns the trace boundary instead.
+func (m *Manager) StartChildSpan(ctx context.Context, opts SpanOptions) (context.Context, *Span) {
+	ctx = m.reestablishParentSpan(ctx)
+	if !trace.SpanContextFromContext(ctx).IsValid() {
+		return ctx, &Span{manager: m}
+	}
+	return m.startSpan(ctx, opts, false)
+}
+
+func (m *Manager) startSpan(ctx context.Context, opts SpanOptions, createTrace bool) (context.Context, *Span) {
 	if !m.Enabled() {
-		return ctx, &Span{manager: m, redactErrorDetails: redactErrorDetails}
+		return ctx, &Span{manager: m}
 	}
 	ctx = m.reestablishParentSpan(ctx)
 	var autoTrace *Trace
-	if _, ok := traceFromCtx(ctx); !ok {
+	if _, ok := traceFromCtx(ctx); !ok && createTrace {
 		// No active trace: open a shallow root so the span isn't orphaned.
 		// Hold the handle so Finish can End it — otherwise the root span is
 		// never exported and this span's parent points at a missing span.
@@ -227,13 +233,12 @@ func (m *Manager) StartSpan(ctx context.Context, opts SpanOptions) (context.Cont
 	}
 	ctx, span := m.tracer.Start(ctx, opts.Name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
 	return ctx, &Span{
-		ID:                 span.SpanContext().SpanID().String(),
-		span:               span,
-		manager:            m,
-		name:               opts.Name,
-		redactErrorDetails: redactErrorDetails,
-		metadata:           opts.Metadata,
-		autoTrace:          autoTrace,
+		ID:        span.SpanContext().SpanID().String(),
+		span:      span,
+		manager:   m,
+		name:      opts.Name,
+		metadata:  opts.Metadata,
+		autoTrace: autoTrace,
 	}
 }
 
@@ -253,9 +258,8 @@ func (s *Span) Finish(output interface{}, metadata map[string]interface{}, err e
 	}
 	s.span.SetAttributes(attrs...)
 	if err != nil {
-		traceErr := observationTraceError(s.redactErrorDetails, err)
-		s.span.RecordError(traceErr)
-		s.span.SetStatus(codes.Error, traceErr.Error())
+		s.span.RecordError(err)
+		s.span.SetStatus(codes.Error, err.Error())
 	}
 	s.span.End()
 	if s.autoTrace != nil {
@@ -267,12 +271,8 @@ func (s *Span) Finish(output interface{}, metadata map[string]interface{}, err e
 // ctx (or a newly auto-created trace). If a parent span is present on ctx,
 // the generation attaches under it via the OTel span context.
 func (m *Manager) StartGeneration(ctx context.Context, opts GenerationOptions) (context.Context, *Generation) {
-	redactErrorDetails := types.LLMTracePayloadsRedacted(ctx)
 	if !m.Enabled() {
-		return ctx, &Generation{
-			manager: m, model: opts.Model, name: opts.Name,
-			redactErrorDetails: redactErrorDetails,
-		}
+		return ctx, &Generation{manager: m, model: opts.Model, name: opts.Name}
 	}
 	ctx = m.reestablishParentSpan(ctx)
 	var autoTrace *Trace
@@ -291,13 +291,12 @@ func (m *Manager) StartGeneration(ctx context.Context, opts GenerationOptions) (
 	}
 	ctx, span := m.tracer.Start(ctx, opts.Name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
 	g := &Generation{
-		ID:                 span.SpanContext().SpanID().String(),
-		span:               span,
-		manager:            m,
-		model:              opts.Model,
-		name:               opts.Name,
-		redactErrorDetails: redactErrorDetails,
-		autoTrace:          autoTrace,
+		ID:        span.SpanContext().SpanID().String(),
+		span:      span,
+		manager:   m,
+		model:     opts.Model,
+		name:      opts.Name,
+		autoTrace: autoTrace,
 	}
 	return ctx, g
 }
@@ -314,28 +313,13 @@ func (g *Generation) Finish(output interface{}, usage *TokenUsage, err error) {
 	}
 	g.span.SetAttributes(attrs...)
 	if err != nil {
-		traceErr := observationTraceError(g.redactErrorDetails, err)
-		g.span.RecordError(traceErr)
-		g.span.SetStatus(codes.Error, traceErr.Error())
+		g.span.RecordError(err)
+		g.span.SetStatus(codes.Error, err.Error())
 	}
 	g.span.End()
 	if g.autoTrace != nil {
 		g.autoTrace.Finish(nil, nil)
 	}
-}
-
-func observationTraceError(redactDetails bool, err error) error {
-	if err == nil || !redactDetails {
-		return err
-	}
-	var safe interface {
-		error
-		SafeForObservability() bool
-	}
-	if errors.As(err, &safe) && safe.SafeForObservability() {
-		return safe
-	}
-	return errRedactedObservation
 }
 
 // MarkCompletionStart records the time at which the first token was received

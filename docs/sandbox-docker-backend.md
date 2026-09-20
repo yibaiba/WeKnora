@@ -13,6 +13,7 @@ CubeSandbox / E2B 的集群与模板见 [沙箱集群与标准模板](./sandbox-
   这正是当初把 provider 抽象成 `RemoteSandboxClient` 的收益。
 - 它适合单机 / 私有化部署。跨主机调度、内核级隔离、内存态快照仍然要用 E2B 协议后端，
   原因见「边界」一节。
+- **默认关闭。** 本机 `docker.sock` 等同宿主机 root。系统管理员可在「设置 → 系统设置 → 网络安全」打开，立即生效；也可用环境变量 `WEKNORA_SANDBOX_DOCKER_ENABLED=true` 作为未落库时的回退。设置页始终保留 Docker 标签：未打开时没有「添加」入口，只说明如何启用。已有配置仍可查看/删除，但不会再创建容器。
 - Docker 官方的 Docker Sandboxes（`sbx`）不能当后端：那是开发者本机 CLI，要 Docker 账号登录、
   工作区是宿主机目录直挂、没有多租户服务端 API。
 
@@ -32,7 +33,7 @@ CubeSandbox / E2B 的集群与模板见 [沙箱集群与标准模板](./sandbox-
 
 ## 现在的形态
 
-一个沙箱就是一个容器。标准镜像以 `USER user` 结尾，创建时覆盖为 uid 0，这样入口才能在 `/var/lib` 写下活跃标记；脚本仍以 `user` 执行。PID 1 是 `sleep infinity`，所有工作都通过 exec 进去做。
+一个沙箱就是一个容器。标准镜像以 `USER root` 结尾，创建时仍显式指定 uid 0，这样即便换成以非 root 结尾的自定义镜像，入口也能在 `/var/lib` 写下活跃标记；脚本按每次调用指定的账号执行，默认是 root（见 `DefaultSandboxExecUser`）。一个会话独占一个沙箱，容器内没有第二个账号需要用文件权限隔开，隔离边界在容器本身。PID 1 是 `sleep infinity`，所有工作都通过 exec 进去做。
 
 这层 wrapper 是通过 `Entrypoint` 下发并把 `Cmd` 显式清空的：daemon 会把镜像自带的
 ENTRYPOINT 拼到 Cmd 前面，所以只设 Cmd 时，任何声明了 ENTRYPOINT 的镜像（本文件的
@@ -74,32 +75,29 @@ ENTRYPOINT 拼到 Cmd 前面，所以只设 Cmd 时，任何声明了 ENTRYPOINT
 执行命令的东西——包括普通技能脚本，不需要 root——都可以起一个后台循环持续 `touch` 标记，
 把自己维持成「一直活跃」。当前没有硬寿命上限，需要的话应由部署方在 daemon 侧限制。
 
-**所有 exec 都以 `user`(uid 1000) 运行，没有例外。** 脚本执行、`shell_exec`、全部文件操作、
-以及 manager 自己的产物目录 bootstrap 都跑在沙箱账号下；`RemoteExecRequest.User` 留空时
-适配器解析成 `DefaultSandboxExecUser` 而不是 root，漏传账号只会失去权限、不会拿到权限。
+**所有 exec 都显式指定账号，默认是 root。** 脚本执行、`shell_exec`、全部文件操作、以及
+manager 自己的产物目录 bootstrap 都跑在 `DefaultSandboxExecUser` 下；`RemoteExecRequest.User`
+留空时适配器解析成这个常量而不是镜像声明的账号，因此一次调用落到哪个账号，不取决于空间选了
+哪个后端。
 
-bootstrap 尤其不能以 root 跑：产物目录位于会话自己可写的 `/workspace` 下，而 `chown`/`chmod`
-会跟随符号链接。会话只要把产物目录换成指向 `/etc` 的链接，一次 root bootstrap 就会把 `/etc`
-的属主交给沙箱账号，接着改写 `passwd` 即可让该账号在下一次 exec 时变成 uid 0（真机验证过）。
-以沙箱账号执行时这条链直接断在内核：`chown` 对不属于自己的目标一律失败。
+默认 root 的前提是一个会话独占一个沙箱：容器内没有第二个租户的文件需要用 mode bit 隔开，跨
+租户与宿主机的隔离都落在容器边界上。镜像里仍然保留 uid 1000 的 `user` 账号，供 E2B/Cube 侧
+按名字寻址的工具以及 `sudo` 使用。
 
 容器 `CapDrop: ALL` 之后额外补回 CHOWN/DAC_OVERRIDE/FOWNER/FSETID/SETGID/SETUID/KILL，
-Docker 默认给的 NET_RAW、MKNOD、SYS_CHROOT 等一律不给。注意这批 capability 是给容器内
-**root** 用的（装包、修属主），而目前没有任何 exec 以 root 运行，因此它们对现有路径是冗余的；
-保留是为了自定义镜像里用 `sudo` 装包的场景，收紧它们是可以独立推进的加固项。
+Docker 默认给的 NET_RAW、MKNOD、SYS_CHROOT 等一律不给。exec 以 root 运行之后这批 capability
+就是实际在用的（装包、修属主都要）；收紧它们需要先确认技能安装路径不依赖，是可以独立推进的
+加固项。
 
-**文件操作走 exec，不走 archive 接口。** archive 接口（`PUT`/`GET`/`HEAD /archive`）由 daemon
-执行，这意味着两件事同时成立：它忽略 exec user 一律以 root 操作，并且会在路径解析时跟随符号
-链接。沙箱账号对 `/workspace` 有写权限，而调用侧的路径守卫都是字符串前缀比较，于是
-`ln -s /root /workspace/output/esc` 之后，`/workspace/output/esc/secret.txt` 既能通过守卫，
-又会被 daemon 以 root 读出来（真机验证过，不是推演）。改成以沙箱账号 exec 之后，能不能读写
-由内核判定，符号链接指向哪里都不再重要，也不存在「先校验后使用」之间被换掉链接的窗口。
-`Stat` 用 `find`，它不跟随**最后一段**路径，因此路径本身是链接时会如实报告为 `other` 类型，
-要求正规文件的调用方在尝试读取之前就会拒绝。
+**文件操作走 exec，不走 archive 接口。** exec 为文件操作统一提供显式账号、超时控制和活跃标记更新；
+archive 接口由 daemon 执行，不遵循这些逐次 exec 设置。默认账号已经是 root，因此这两条路径都不能
+靠容器内的属主和 mode bit 把文件访问限制在 `/workspace`。路径前缀检查也不是符号链接隔离：
+`/workspace/output/esc` 指向 `/root` 时，经它访问的文件仍可能由 root exec 读写。
 
-这个保证到最后一段为止：中间层的链接由内核在路径解析时展开，`/workspace/output/链接/passwd`
-仍会 stat 成普通文件（真机验证过）。因此「只读产物目录」是一个约定而非权限边界——绕过它读到的
-东西，沙箱账号本来就能用 `shell_exec` 读到，真正的边界始终是内核的权限检查。
+`Stat` 用 `find`，不跟随**最后一段**链接，会将该链接报告为 `other`；中间层链接仍由路径解析展开，
+所以 `/workspace/output/链接/passwd` 可能被报告为普通文件。单独的 Stat 检查也不能防止检查后替换链接。
+产物目录约定不构成文件系统权限边界。宿主机和跨会话隔离依赖容器及挂载配置，真正的只读挂载仍限制 root。
+若后续文件 API 需要严格的路径隔离，应在路径解析和实际访问时实施，不能沿用「exec 的内核账号检查会挡住链接」的前提。
 
 archive 接口里只剩 `HEAD` 还在用，且仅用于读固定路径的活跃标记。
 
@@ -115,6 +113,8 @@ archive 接口里只剩 `HEAD` 还在用，且仅用于读固定路径的活跃�
 
 在「设置 → 沙箱后端」中新建配置并选择 Docker：
 
+系统管理员可在「设置 → 系统设置 → 网络安全」打开 Docker 沙箱（立即生效）。未落库时回退到 `WEKNORA_SANDBOX_DOCKER_ENABLED`。默认关闭，因为能保存 Docker 配置的空间管理员可以在本进程够得到的 Engine API 上创建容器，而本机 `docker.sock` 等同宿主机 root。设置页始终有 Docker 标签；未打开时没有添加按钮，只提示如何启用。
+
 | 字段 | 说明 |
 | --- | --- |
 | 镜像 | 必填。会话容器都从它创建，等价于其它后端的 template ID |
@@ -128,8 +128,9 @@ archive 接口里只剩 `HEAD` 还在用，且仅用于读固定路径的活跃�
 「允许访问私网地址」开关过一遍 `SafeDialControl`，这样保存校验解析到公网、连接时被
 重解析到 169.254.169.254 的情况也拦得住。unix socket 不经过这一层。
 
-镜像要求：uid 1000 的 `user` 账号、`/workspace/{input,output}` 归该账号所有、
-GNU `find`（`-printf`）与 coreutils `timeout`。`docker/Dockerfile.sandbox` 产出的标准镜像满足这些，
+镜像要求：可按名执行的 `root` 账号、可写的 `/workspace`、
+GNU `find`（`-printf`）与 coreutils `timeout`。标准镜像另保留 uid 1000 的 `user` 账号，
+并将工作区属主设为该账号以兼容显式选择 `user` 的工具；默认 root 执行不依赖这个属主。`docker/Dockerfile.sandbox` 产出的标准镜像满足这些，
 Debian 系基础镜像天然带 find 和 timeout。
 
 部署形态：
@@ -142,7 +143,10 @@ Debian 系基础镜像天然带 find 和 timeout。
 
 WeKnora 自己跑在容器里时，要把 **实际的** docker socket 挂进 app 容器（并接受它等同宿主机 root 的事实），
 或者改用远程 daemon。Linux 上通常是 `/var/run/docker.sock`；macOS 上 Colima / Docker Desktop / OrbStack
-各自有 `$HOME` 下的 socket，以 `docker context show` 为准。
+各自有 `$HOME` 下的 socket，以 `docker context show` 为准。入口脚本在 `gosu` 降权前会按
+socket 的 GID 把 `appuser` 加入对应组；不要依赖 compose `group_add`，也不要 `chmod 666`
+宿主机 socket。若 socket 是 `root:root` 且仅所有者可写，容器内无法安全补权，需在宿主机把
+socket 改成非 root 组的 `660`。
 
 ## 边界
 
@@ -156,13 +160,44 @@ WeKnora 自己跑在容器里时，要把 **实际的** docker socket 挂进 app
 - **域名级出网策略**：Docker 只有 L3/L4。`RemoteNetworkPolicy` 里的域名 allow/deny 在这个后端
   只能表达成「全开」或「全关」，要按域名放行得在部署侧加 egress proxy。
 - **卷挂载**：`SupportsVolumes` 目前是 false，租户级共享卷还没有映射到 Docker named volume。
+- **图形桌面**：`desktop` 镜像变体尚未接到 Docker 后端。对话侧栏在 Docker 配置上不显示「桌面」tab；Cube / E2B 见 [沙箱图形桌面](./sandbox-desktop.md)。
 
 ## 快照
 
-「空间级管理沙箱装 skill → commit 成快照 → 会话从快照起容器 → 增量出下一版」这套流程在 Docker 上
-是原生形态（容器 → 镜像），[PoC](./poc/docker-sandbox) 已经验证：commit 一个 140 MB 镜像约
-0.5–1.0 秒，从快照冷启一个容器约 0.2 秒，v1→v2 增量正常。两个要注意的约束：镜像层上限 127，
-长期增量要定期压平；快照是本机资产，多机部署必须推到 registry。这部分按计划在单独分支实现。
+「空间级管理沙箱装 skill → commit 成快照 → 会话从快照起容器 → 增量出下一版」这套流程已经接入：
+`DockerRemoteClient` 实现 `RemoteSnapshotManager`，`docker commit` 打出带
+`com.weknora.sandbox.skill-snapshot` 标签的本地镜像（命名空间 `weknora-skill/`），
+会话启动时用该镜像覆盖配置里的基础 image。安装器用 root `shell_exec` 写
+`/opt/weknora/tenant/skills`，与 Cube / E2B 同一条技能安装链路。
+
+两个要注意的约束：镜像层上限 127，长期增量要定期压平；快照是本机资产，多机部署必须推到 registry。
+压平和跨 daemon 分发还不在这条路径里。
+
+磁盘占用的实际形态和 Cube / E2B 不一样，值得单独说清楚：
+
+- 第 N+1 代是从第 N 代起的容器 commit 出来的，**N 的层完整包含在 N+1 里**。所以两代镜像并存
+  时，旧的那个 tag 不额外占盘；反过来说，`PruneSupersededSnapshots` 到期删掉旧 tag 也几乎
+  回收不了空间。真正回收发生在整条链的 tag 全部退役之后，因此 `DeleteSnapshot` 必须带
+  `PruneChildren`（即 `noprune=0`），否则无 tag 的祖先层会永久留下。
+- **卸载一个 skill 会让镜像变大**：`rm -rf` 在 overlay 上是新增一层 whiteout，被删的文件仍
+  留在父层。也就是说装和卸都只增不减，Cube / E2B 是每代一张独立模板、到期真删，只有 Docker
+  是单调累积。要把空间还回来，只能从基础模板重建整条链——`SkillSnapshotTriggerRebuild` 为此
+  预留了，但重建流程尚未实现。
+- 快照的 owner fingerprint 只在 host 是**显式配置**时才把 host 计入。留空的配置一律记成
+  `local-daemon`，不能采用 `DetectLocalDockerHost()` 的结果：那个值来自 `DOCKER_HOST` 或当前
+  docker context，切一次 Colima / Docker Desktop / OrbStack 就会变，而它一变就等价于「凭据
+  轮换」——会话静默退回基础模板（skill 全部消失）、安装被拒、快照清理被永久跳过。本机 daemon
+  换个 host 字符串通常还是同一块盘上的同一批镜像，跨账号那套推理在这里不成立。
+
+回收路径依赖 ledger 能给每张快照命名，而 `snapshot_id` 只有在 provider 应答之后才写得下来。
+进程死在 commit 与那次写入之间，就会留下一张谁都叫不出名字的快照：`PruneSupersededSnapshots`
+因为状态是 `building` 而跳过它，`ReconcileSnapshots` 只告警不删，配置删除时空 `snapshot_id`
+被当成「无需释放」。因此 `planned_name` 在 commit **之前**就落库（迁移 000088），之后靠
+provider 的 `ListSnapshots` 按名字认领：Cube / E2B 会把请求的名字回显在 `Names` 里，Docker 的
+ID 本身就是这个名字加上 `weknora-skill/` 前缀。两条路径会用它——周期清理里的
+`reapAbandonedBuilds`，以及配置删除时的 `resolveAbandonedBuildIDs`（配置一删，周期清理就再也
+遍历不到这张快照，那是最后一次机会）。只有**认领成功**才会删；名字对不上时不动，因为无法区分
+「commit 从未发生」和「该 provider 不回显名字」，猜错就等于丢掉一张仍然存在的快照的唯一记录。
 
 ## 测试
 

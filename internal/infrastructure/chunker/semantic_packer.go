@@ -25,7 +25,7 @@ func SplitSemanticDocument(
 	config SplitterConfig,
 	document SemanticDocument,
 ) ([]Chunk, error) {
-	config = NormalizeConfig(config)
+	config = NormalizeSplitterConfig(config)
 	if document.ContentLength != len([]rune(content)) {
 		return nil, fmt.Errorf("semantic document length does not match content")
 	}
