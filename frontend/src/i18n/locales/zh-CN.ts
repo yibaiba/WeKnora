@@ -6585,6 +6585,7 @@ export default {
     },
     stage: {
       docreader: '文档解析',
+      document_analysis: '文档分析',
       chunking: '分块',
       embedding: '向量化',
       multimodal: '多模态识别',
@@ -6632,6 +6633,94 @@ export default {
       title: '本次解析配置',
       kbDefault: '使用知识库默认配置',
       graph: '知识图谱'
+    },
+    analysis: {
+      title: '智能分析结果',
+      fallbackTitle: '已回退到知识库切分配置',
+      fallbackDescription: '候选切分未通过结构校验，本篇按知识库配置切分。',
+      fallbackReasonCodesLabel: '回退原因',
+      documentKindLabel: '文档类型',
+      confidenceLabel: '置信度',
+      contentModeLabel: '内容模式',
+      modelLabel: '分析模型',
+      reasonCodesLabel: '判断依据',
+      chunkingComparison: '切分参数对比',
+      parameter: '参数',
+      recommended: '建议',
+      applied: '实际应用',
+      agentRunTitle: 'Agent 过程',
+      rounds: '{actual} / {max} 轮',
+      candidatesTitle: '切分候选',
+      selectionReasonCodesLabel: '选择原因',
+      candidateSelected: '候选 {n}（已选）',
+      candidateNumber: '候选 {n}',
+      candidateInvalid: '结构无效',
+      totalScore: '总分',
+      chunkCount: '块数',
+      lengthP50P95: '长度 P50 / P95',
+      selectedTier: '选中层级',
+      chunkConfigShort: '切分配置',
+      scoreBreakdown: '得分明细',
+      toolStepsTitle: '工具步骤',
+      warningsTitle: '警告',
+      probeQuestionsTitle: '试探问题',
+      probeQuestionsDescription: '用已配置的分析模型从正文抽出的普通问题，用来看切完后能不能问到原文。生成失败不影响入库。',
+      probeExcerptLabel: '对应原文',
+      probeFailed: '试探问题生成失败，切分结果仍已保存。',
+      probeSkipped: '本次未生成试探问题。',
+      chunking: {
+        strategy: '策略',
+        chunk_size: '块大小',
+        chunk_overlap: '重叠',
+        enable_parent_child: '父子分块',
+        parent_chunk_size: '父块大小',
+        child_chunk_size: '子块大小',
+        separators: '分隔符'
+      },
+      documentKind: {
+        policy_manual: '制度手册',
+        faq: 'FAQ',
+        tabular_data: '表格数据',
+        report: '报告',
+        meeting_notes: '会议记录',
+        presentation: '演示文稿',
+        short_article: '短文',
+        mixed_document: '混排文档'
+      },
+      contentMode: {
+        document: '文档',
+        faq_candidate: 'FAQ 候选',
+        wiki_candidate: 'Wiki 候选'
+      },
+      strategy: {
+        auto: '自动',
+        heading: '标题',
+        heuristic: '启发式',
+        legacy: '递归'
+      },
+      phase: {
+        analyze_document: '分析文档',
+        map_document: '分段提取',
+        reduce_document: '汇总证据',
+        readonly_tools: '只读工具',
+        preview_candidates: '预览候选',
+        evaluate_and_refine: '评估与调整',
+        submit_decision: '提交决策'
+      },
+      structureQuality: {
+        orphan_table_rows: '无表头行',
+        headerless_continuations: '缺表头续块',
+        split_atomic_blocks: '原子块被切开',
+        mixed_sections: '跨节混排',
+        oversize_atomic_blocks: '超限原子块'
+      },
+      score: {
+        semantic_integrity: '语义完整',
+        boundary_quality: '边界质量',
+        size_fit: '尺寸匹配',
+        context_efficiency: '上下文效率',
+        parent_child: '父子映射'
+      }
     }
   },
   uploadConfirm: {

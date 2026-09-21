@@ -66,6 +66,7 @@ test('renders every persisted ingestion analysis field and compares chunking val
     'selected_candidate_id',
     'selection_reason_codes',
     'agent_run',
+    'probe_questions',
   ]) {
     assert.match(`${analysisDetail}\n${agentRunDetail}`, new RegExp(`analysis\\.${field}`))
   }
@@ -147,6 +148,8 @@ test('renders fallback analysis as a warning state with redacted structural stat
       'split_atomic_blocks',
       'mixed_sections',
       'oversize_atomic_blocks',
+      'probeQuestionsTitle',
+      'probeQuestionsDescription',
     ]) {
       assert.match(locale, new RegExp(`${key}:`))
     }

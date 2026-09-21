@@ -909,6 +909,94 @@ export default {
       kbDefault: 'Using knowledge base defaults',
       graph: 'Knowledge graph'
     },
+    analysis: {
+      title: 'Smart analysis',
+      fallbackTitle: 'Fell back to knowledge-base chunking',
+      fallbackDescription: 'No candidate passed structural checks, so this file used the knowledge-base settings.',
+      fallbackReasonCodesLabel: 'Fallback reasons',
+      documentKindLabel: 'Document kind',
+      confidenceLabel: 'Confidence',
+      contentModeLabel: 'Content mode',
+      modelLabel: 'Analysis model',
+      reasonCodesLabel: 'Reasons',
+      chunkingComparison: 'Chunking comparison',
+      parameter: 'Parameter',
+      recommended: 'Recommended',
+      applied: 'Applied',
+      agentRunTitle: 'Agent run',
+      rounds: '{actual} / {max} rounds',
+      candidatesTitle: 'Chunking candidates',
+      selectionReasonCodesLabel: 'Selection reasons',
+      candidateSelected: 'Candidate {n} (selected)',
+      candidateNumber: 'Candidate {n}',
+      candidateInvalid: 'Structurally invalid',
+      totalScore: 'Total score',
+      chunkCount: 'Chunks',
+      lengthP50P95: 'Length P50 / P95',
+      selectedTier: 'Selected tier',
+      chunkConfigShort: 'Chunking config',
+      scoreBreakdown: 'Score breakdown',
+      toolStepsTitle: 'Tool steps',
+      warningsTitle: 'Warnings',
+      probeQuestionsTitle: 'Probe questions',
+      probeQuestionsDescription: 'Ordinary questions extracted with the configured analysis model, so you can see whether the split still answers the source. Generation failure does not block ingest.',
+      probeExcerptLabel: 'Source excerpt',
+      probeFailed: 'Probe questions could not be generated. Chunking was still saved.',
+      probeSkipped: 'No probe questions were generated for this run.',
+      chunking: {
+        strategy: 'Strategy',
+        chunk_size: 'Chunk size',
+        chunk_overlap: 'Overlap',
+        enable_parent_child: 'Parent-child chunking',
+        parent_chunk_size: 'Parent size',
+        child_chunk_size: 'Child size',
+        separators: 'Separators'
+      },
+      documentKind: {
+        policy_manual: 'Policy manual',
+        faq: 'FAQ',
+        tabular_data: 'Tabular data',
+        report: 'Report',
+        meeting_notes: 'Meeting notes',
+        presentation: 'Presentation',
+        short_article: 'Short article',
+        mixed_document: 'Mixed document'
+      },
+      contentMode: {
+        document: 'Document',
+        faq_candidate: 'FAQ candidate',
+        wiki_candidate: 'Wiki candidate'
+      },
+      strategy: {
+        auto: 'Auto',
+        heading: 'Heading',
+        heuristic: 'Heuristic',
+        legacy: 'Recursive'
+      },
+      phase: {
+        analyze_document: 'Analyze document',
+        map_document: 'Map units',
+        reduce_document: 'Reduce evidence',
+        readonly_tools: 'Read-only tools',
+        preview_candidates: 'Preview candidates',
+        evaluate_and_refine: 'Evaluate and refine',
+        submit_decision: 'Submit decision'
+      },
+      structureQuality: {
+        orphan_table_rows: 'Orphan table rows',
+        headerless_continuations: 'Headerless continuations',
+        split_atomic_blocks: 'Split atomic blocks',
+        mixed_sections: 'Mixed sections',
+        oversize_atomic_blocks: 'Oversize atomic blocks'
+      },
+      score: {
+        semantic_integrity: 'Semantic integrity',
+        boundary_quality: 'Boundary quality',
+        size_fit: 'Size fit',
+        context_efficiency: 'Context efficiency',
+        parent_child: 'Parent-child'
+      }
+    },
     attempt: 'Attempt {n}',
     retry: 'Retry parsing',
     notRun: 'Not run',
@@ -979,6 +1067,7 @@ export default {
     },
     stage: {
       docreader: 'Document parsing',
+      document_analysis: 'Document analysis',
       chunking: 'Chunking',
       embedding: 'Vectorization',
       multimodal: 'Multimodal recognition',

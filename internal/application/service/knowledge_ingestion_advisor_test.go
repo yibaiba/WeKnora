@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -915,3 +916,100 @@ func TestApplyIngestionAdvisorKeepsBatchResultsIndependent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, secondAnalysis)
 }
+
+func TestApplyIngestionAdvisorPersistsProbeQuestionsWithoutFailingIngest(t *testing.T) {
+	excerpts := []string{
+		"The calibration interval remains thirty days for all regional sensors.",
+		"The archive verification job runs every Friday.",
+		"Regional owners confirm the checklist after deployment.",
+	}
+	advisor := &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{validIngestionAnalysis()}}
+	probeChat := &ingestionProbeChatStub{responses: []string{
+		`{"question":"How long is the calibration interval for regional sensors?","references":["` + excerpts[0] + `"]}`,
+		`{"question":"When does archive verification run?","references":["` + excerpts[1] + `"]}`,
+		`{"question":"Who confirms the checklist after deployment?","references":["` + excerpts[2] + `"]}`,
+	}}
+	service := &knowledgeService{
+		config:           ingestionAdvisorOnConfig(),
+		repo:             &ingestionKnowledgeRepoStub{},
+		ingestionAdvisor: advisor,
+		modelService:     &ingestionProbeModelServiceStub{chat: probeChat},
+	}
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "probe-doc"))
+	run.Content = strings.Join(excerpts, "\n")
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, types.IngestionAppliedModeSmart, effective.IngestionAppliedMode)
+	persisted, parseErr := run.Knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.NotNil(t, persisted.ProbeQuestions)
+	require.Equal(t, types.IngestionProbeStatusGenerated, persisted.ProbeQuestions.Status)
+	require.Len(t, persisted.ProbeQuestions.Questions, 3)
+	require.Equal(t, "How long is the calibration interval for regional sensors?", persisted.ProbeQuestions.Questions[0].Query)
+	require.Equal(t, excerpts[0], persisted.ProbeQuestions.Questions[0].Excerpt)
+	require.Contains(t, run.Content, persisted.ProbeQuestions.Questions[0].Marker)
+	require.Equal(t, 3, probeChat.calls)
+}
+
+func TestApplyIngestionAdvisorProbeChatErrorDoesNotFailIngest(t *testing.T) {
+	advisor := &ingestionAdvisorStub{responses: []*types.IngestionAnalysis{validIngestionAnalysis()}}
+	service := &knowledgeService{
+		config:           ingestionAdvisorOnConfig(),
+		repo:             &ingestionKnowledgeRepoStub{},
+		ingestionAdvisor: advisor,
+		modelService:     &ingestionProbeModelServiceStub{err: errors.New("summary model down")},
+	}
+	run := smartIngestionRun(newSmartIngestionKnowledge(t, "probe-fail"))
+
+	effective, err := service.applyIngestionAdvisor(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, types.IngestionAppliedModeSmart, effective.IngestionAppliedMode)
+	require.NotEqual(t, types.ParseStatusFailed, run.Knowledge.ParseStatus)
+	persisted, parseErr := run.Knowledge.IngestionAnalysis()
+	require.NoError(t, parseErr)
+	require.Equal(t, types.IngestionProbeStatusFailed, persisted.ProbeQuestions.Status)
+	require.Equal(t, "chat_error", persisted.ProbeQuestions.Reason)
+	require.Empty(t, persisted.ProbeQuestions.Questions)
+}
+
+type ingestionProbeModelServiceStub struct {
+	interfaces.ModelService
+	chat chat.Chat
+	err  error
+}
+
+func (s *ingestionProbeModelServiceStub) GetChatModel(context.Context, string) (chat.Chat, error) {
+	return s.chat, s.err
+}
+
+type ingestionProbeChatStub struct {
+	responses []string
+	calls     int
+}
+
+func (s *ingestionProbeChatStub) Chat(
+	_ context.Context,
+	_ []chat.Message,
+	_ *chat.ChatOptions,
+) (*types.ChatResponse, error) {
+	if s.calls >= len(s.responses) {
+		return &types.ChatResponse{Content: "not json"}, nil
+	}
+	content := s.responses[s.calls]
+	s.calls++
+	return &types.ChatResponse{Content: content}, nil
+}
+
+func (s *ingestionProbeChatStub) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
+	return nil, errors.New("probe stub does not stream")
+}
+
+func (s *ingestionProbeChatStub) GetModelName() string { return "probe-chat" }
+func (s *ingestionProbeChatStub) GetModelID() string   { return "probe-chat" }

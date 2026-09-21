@@ -6583,6 +6583,7 @@ export default {
     },
     stage: {
       docreader: 'Парсинг документа',
+      document_analysis: 'Анализ документа',
       chunking: 'Разбиение',
       embedding: 'Векторизация',
       multimodal: 'Мультимодальное распознавание',
@@ -6630,6 +6631,94 @@ export default {
       title: 'Конфигурация обработки',
       kbDefault: 'Используются настройки базы знаний по умолчанию',
       graph: 'Граф знаний'
+    },
+    analysis: {
+      title: 'Результат умного анализа',
+      fallbackTitle: 'Возврат к настройкам базы знаний',
+      fallbackDescription: 'Ни один кандидат не прошёл структурную проверку, файл разрезан по настройкам базы знаний.',
+      fallbackReasonCodesLabel: 'Причины отката',
+      documentKindLabel: 'Тип документа',
+      confidenceLabel: 'Уверенность',
+      contentModeLabel: 'Режим содержимого',
+      modelLabel: 'Модель анализа',
+      reasonCodesLabel: 'Основания',
+      chunkingComparison: 'Сравнение параметров нарезки',
+      parameter: 'Параметр',
+      recommended: 'Рекомендовано',
+      applied: 'Применено',
+      agentRunTitle: 'Ход агента',
+      rounds: '{actual} / {max} раундов',
+      candidatesTitle: 'Кандидаты нарезки',
+      selectionReasonCodesLabel: 'Причины выбора',
+      candidateSelected: 'Кандидат {n} (выбран)',
+      candidateNumber: 'Кандидат {n}',
+      candidateInvalid: 'Структурно недействителен',
+      totalScore: 'Итоговый балл',
+      chunkCount: 'Число блоков',
+      lengthP50P95: 'Длина P50 / P95',
+      selectedTier: 'Выбранный уровень',
+      chunkConfigShort: 'Конфиг нарезки',
+      scoreBreakdown: 'Разбор баллов',
+      toolStepsTitle: 'Шаги инструментов',
+      warningsTitle: 'Предупреждения',
+      probeQuestionsTitle: 'Пробные вопросы',
+      probeQuestionsDescription: 'Обычные вопросы, извлечённые настроенной моделью анализа, чтобы проверить, можно ли после нарезки попасть в исходный текст. Сбой генерации не останавливает загрузку.',
+      probeExcerptLabel: 'Соответствующий фрагмент',
+      probeFailed: 'Не удалось сгенерировать пробные вопросы. Результат нарезки сохранён.',
+      probeSkipped: 'В этом запуске пробные вопросы не создавались.',
+      chunking: {
+        strategy: 'Стратегия',
+        chunk_size: 'Размер блока',
+        chunk_overlap: 'Перекрытие',
+        enable_parent_child: 'Родитель-потомок',
+        parent_chunk_size: 'Размер родителя',
+        child_chunk_size: 'Размер потомка',
+        separators: 'Разделители'
+      },
+      documentKind: {
+        policy_manual: 'Регламент',
+        faq: 'FAQ',
+        tabular_data: 'Табличные данные',
+        report: 'Отчёт',
+        meeting_notes: 'Протокол встречи',
+        presentation: 'Презентация',
+        short_article: 'Короткая статья',
+        mixed_document: 'Смешанный документ'
+      },
+      contentMode: {
+        document: 'Документ',
+        faq_candidate: 'Кандидат FAQ',
+        wiki_candidate: 'Кандидат Wiki'
+      },
+      strategy: {
+        auto: 'Авто',
+        heading: 'Заголовки',
+        heuristic: 'Эвристика',
+        legacy: 'Рекурсия'
+      },
+      phase: {
+        analyze_document: 'Анализ документа',
+        map_document: 'Извлечение единиц',
+        reduce_document: 'Сводка доказательств',
+        readonly_tools: 'Инструменты только для чтения',
+        preview_candidates: 'Предпросмотр кандидатов',
+        evaluate_and_refine: 'Оценка и уточнение',
+        submit_decision: 'Отправка решения'
+      },
+      structureQuality: {
+        orphan_table_rows: 'Строки таблицы без заголовка',
+        headerless_continuations: 'Продолжения без заголовка',
+        split_atomic_blocks: 'Разрезанные атомарные блоки',
+        mixed_sections: 'Смешанные разделы',
+        oversize_atomic_blocks: 'Слишком большие атомарные блоки'
+      },
+      score: {
+        semantic_integrity: 'Семантика',
+        boundary_quality: 'Границы',
+        size_fit: 'Размер',
+        context_efficiency: 'Эффективность контекста',
+        parent_child: 'Родитель-потомок'
+      }
     }
   },
   uploadConfirm: {

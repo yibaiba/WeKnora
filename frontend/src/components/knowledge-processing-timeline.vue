@@ -12,7 +12,9 @@ import {
 } from '@/utils/knowledgeTrace'
 import { resolveTimelineHeaderStatus } from '@/utils/knowledgeProcessingStatus'
 import { axisGridStepPct, buildAxisTicks, computeTraceAxis } from '@/utils/traceAxis'
-import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
+import { asIngestionAnalysis } from '@/utils/ingestionAnalysis'
+import type { IngestionAnalysis, KnowledgeProcessOverrides } from '@/types/knowledgeProcess'
+import KnowledgeIngestionAnalysisDetail from './knowledge-ingestion-analysis-detail.vue'
 
 type SpanNode = KnowledgeTraceNode
 
@@ -82,7 +84,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const STAGES = ['docreader', 'chunking', 'embedding', 'multimodal', 'postprocess'] as const
+const STAGES = ['docreader', 'document_analysis', 'chunking', 'embedding', 'multimodal', 'postprocess'] as const
 const POLL_INTERVAL_MS = 2000
 
 const data = ref<SpansResponse | null>(null)
@@ -160,8 +162,31 @@ const stages = computed<SpanNode[]>(() => {
       byName.set(c.name, c.name === 'postprocess' ? groupPostprocessGraphSpans(c) : c)
     }
   }
-  return STAGES.map((n) => byName.get(n) || ({ name: n, kind: 'stage', status: 'pending' } as SpanNode))
+  return STAGES.map((n) => {
+    const existing = byName.get(n)
+    if (existing) return existing
+    const placeholder = { name: n, kind: 'stage', status: 'pending' } as SpanNode
+    if (shouldShowAnalysisAsSkipped(placeholder, byName, data.value?.parse_status)) {
+      placeholder.status = 'skipped'
+    }
+    return placeholder
+  })
 })
+
+function shouldShowAnalysisAsSkipped(
+  stage: SpanNode,
+  siblings: Map<string, SpanNode>,
+  parseStatus?: string,
+): boolean {
+  if (stage.name !== 'document_analysis') return false
+  const downstream = ['chunking', 'embedding', 'multimodal', 'postprocess']
+  const downstreamStarted = downstream.some((name) => {
+    const node = siblings.get(name)
+    return !!node && node.status !== 'pending'
+  })
+  const isHardTerminal = parseStatus === 'completed' || parseStatus === 'failed' || parseStatus === 'cancelled'
+  return downstreamStarted || isHardTerminal
+}
 
 const currentStageLabel = computed(() => {
   const running = stages.value.find((s) => s.status === 'running')
@@ -988,6 +1013,8 @@ function localizedStatus(status: string): string {
 function rowLabel(row: FlatRow): string {
   if (row.isRoot) return t('knowledgeStages.root')
   if (row.isStage) return t(`knowledgeStages.stage.${row.node.name}`)
+  const phase = documentAnalysisPhase(row.node.name)
+  if (phase) return t(`knowledgeStages.analysis.phase.${phase}`)
   if (row.node.name === 'postprocess.graph') return t('knowledgeStages.processConfig.graph')
   const graphChunk = /^postprocess\.graph\.chunk\[(\d+)\]$/.exec(row.node.name)
   if (graphChunk) return `${t('knowledgeStages.processConfig.graph')} #${Number(graphChunk[1]) + 1}`
@@ -1375,6 +1402,54 @@ const traceMetadata = computed(() => {
   return hasContent(m) ? m : null
 })
 
+const viewingLatestAttempt = computed(() => {
+  if (!data.value) return true
+  return data.value.attempt === (data.value.latest_attempt || data.value.attempt)
+})
+
+const ingestionAnalysis = computed(() => {
+  const node = stages.value.find(stage => stage.name === 'document_analysis')
+  return asIngestionAnalysis(node?.output)
+})
+
+function ingestionAnalysisForNode(node: SpanNode): IngestionAnalysis | null {
+  if (node.status === 'skipped') {
+    return viewingLatestAttempt.value ? ingestionAnalysis.value : null
+  }
+  return asIngestionAnalysis(node.output)
+}
+
+function displayStatus(node: SpanNode): string {
+  const analysis = node.name === 'document_analysis' ? ingestionAnalysisForNode(node) : null
+  if (analysis?.applied_mode === 'fallback') return 'fallback'
+  return node.status
+}
+
+function documentAnalysisPhase(name: string): string {
+  const phaseMatch = /^document_analysis(?:\.(.+))?$/.exec(name)
+  if (phaseMatch?.[1]) return phaseMatch[1]
+  switch (name) {
+    case 'analyze_document':
+    case 'map_document':
+    case 'reduce_document':
+    case 'readonly_tools':
+    case 'preview_candidates':
+    case 'evaluate_and_refine':
+    case 'submit_decision':
+      return name
+    default:
+      return ''
+  }
+}
+
+const selectedIngestionAnalysis = computed(() => {
+  const node = selectedRow.value?.node
+  if (!node || (node.name !== 'document_analysis' && !node.name.startsWith('document_analysis'))) {
+    return null
+  }
+  return ingestionAnalysisForNode(node)
+})
+
 watch([selectedSpanId, detailTab], () => {
   if (detailTab.value === 'metadata' && !tabHasContent('metadata')) {
     detailTab.value = 'overview'
@@ -1510,7 +1585,7 @@ const processConfigLines = computed<string[]>(() => {
          ========================================================= -->
     <template v-if="compact">
       <div class="kp-compact-row">
-        <span v-for="s in stages" :key="s.name" class="kp-dot" :class="['kp-dot-' + s.status]"
+        <span v-for="s in stages" :key="s.name" class="kp-dot" :class="['kp-dot-' + displayStatus(s)]"
           :title="t(`knowledgeStages.stage.${s.name}`) + ' · ' + t(`knowledgeStages.status.${s.status}`)" />
       </div>
       <div class="kp-compact-caption">
@@ -1685,7 +1760,7 @@ const processConfigLines = computed<string[]>(() => {
                     </button>
                     <span v-else class="kp-tree-toggle-spacer" />
                     <span class="kp-status-dot"
-                      :class="['kp-dot-' + row.node.status, { 'kp-dot-placeholder': isPlaceholder(row.node) }]" />
+                      :class="['kp-dot-' + displayStatus(row.node), { 'kp-dot-placeholder': isPlaceholder(row.node) }]" />
                     <span class="kp-name-text" :title="rowLabel(row)"
                       :class="{ 'kp-name-root': row.isRoot, 'kp-name-mono': !row.isRoot && !row.isStage }">{{
                         rowLabel(row) }}</span>
@@ -1714,7 +1789,7 @@ const processConfigLines = computed<string[]>(() => {
                          span's own end (e.g. async postprocess subspans
                          under a closed stage). Renders behind the solid
                          self-bar so both are visible. -->
-                    <div v-if="wrapStyle(row.node)" class="kp-bar-wrap" :class="['kp-bar-wrap-' + row.node.status]"
+                    <div v-if="wrapStyle(row.node)" class="kp-bar-wrap" :class="['kp-bar-wrap-' + displayStatus(row.node)]"
                       :style="wrapStyle(row.node) || {}">
                       <span class="kp-bar-tip">
                         <span class="kp-bar-tip-name">{{ rowLabel(row) }}</span>
@@ -1725,7 +1800,7 @@ const processConfigLines = computed<string[]>(() => {
                       </span>
                     </div>
                     <div class="kp-bar"
-                      :class="['kp-bar-' + row.node.status, { 'kp-bar-running-anim': row.node.status === 'running' }]"
+                      :class="['kp-bar-' + displayStatus(row.node), { 'kp-bar-running-anim': row.node.status === 'running' }]"
                       :style="barStyle(row.node)">
                       <span class="kp-bar-tip">
                         <span class="kp-bar-tip-name">{{ rowLabel(row) }}</span>
@@ -1829,6 +1904,10 @@ const processConfigLines = computed<string[]>(() => {
                       <span class="kp-kv-val kp-mono">+{{ formatDuration(barOffsetMs(selectedRow.node)) }}</span>
                     </div>
                   </div>
+                </div>
+
+                <div v-if="selectedIngestionAnalysis" class="kp-section">
+                  <KnowledgeIngestionAnalysisDetail :analysis="selectedIngestionAnalysis" />
                 </div>
 
                 <!-- Identity / lineage -->
@@ -2672,6 +2751,10 @@ const processConfigLines = computed<string[]>(() => {
   background: var(--td-error-color);
 }
 
+.kp-bar-fallback {
+  background: var(--td-warning-color);
+}
+
 .kp-bar-cancelled {
   background: transparent;
   border: 1px dashed var(--td-error-color);
@@ -2828,6 +2911,10 @@ const processConfigLines = computed<string[]>(() => {
 
 .kp-dot-failed {
   background: var(--td-error-color);
+}
+
+.kp-dot-fallback {
+  background: var(--td-warning-color);
 }
 
 .kp-dot-cancelled {

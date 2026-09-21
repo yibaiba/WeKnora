@@ -909,6 +909,94 @@ export default {
       kbDefault: 'ナレッジベースのデフォルト設定を使用',
       graph: 'ナレッジグラフ'
     },
+    analysis: {
+      title: 'スマート分析結果',
+      fallbackTitle: 'ナレッジベースの分割設定にフォールバックしました',
+      fallbackDescription: '候補が構造チェックを通らなかったため、このファイルはナレッジベース設定で分割されました。',
+      fallbackReasonCodesLabel: 'フォールバック理由',
+      documentKindLabel: '文書種別',
+      confidenceLabel: '信頼度',
+      contentModeLabel: 'コンテンツモード',
+      modelLabel: '分析モデル',
+      reasonCodesLabel: '判断根拠',
+      chunkingComparison: '分割パラメータ比較',
+      parameter: 'パラメータ',
+      recommended: '推奨',
+      applied: '適用',
+      agentRunTitle: 'Agent の経過',
+      rounds: '{actual} / {max} ラウンド',
+      candidatesTitle: '分割候補',
+      selectionReasonCodesLabel: '選択理由',
+      candidateSelected: '候補 {n}（選択済み）',
+      candidateNumber: '候補 {n}',
+      candidateInvalid: '構造が無効',
+      totalScore: '合計スコア',
+      chunkCount: 'チャンク数',
+      lengthP50P95: '長さ P50 / P95',
+      selectedTier: '選択ティア',
+      chunkConfigShort: '分割設定',
+      scoreBreakdown: 'スコア内訳',
+      toolStepsTitle: 'ツール手順',
+      warningsTitle: '警告',
+      probeQuestionsTitle: '試探質問',
+      probeQuestionsDescription: '設定済みの分析モデルが本文から抽出した通常の質問です。分割後に原文へたどり着けるかを確認します。生成失敗は取り込みを止めません。',
+      probeExcerptLabel: '対応する原文',
+      probeFailed: '試探質問を生成できませんでした。分割結果は保存済みです。',
+      probeSkipped: '今回は試探質問を生成しませんでした。',
+      chunking: {
+        strategy: '戦略',
+        chunk_size: 'チャンクサイズ',
+        chunk_overlap: 'オーバーラップ',
+        enable_parent_child: '親子分割',
+        parent_chunk_size: '親サイズ',
+        child_chunk_size: '子サイズ',
+        separators: '区切り'
+      },
+      documentKind: {
+        policy_manual: '規程マニュアル',
+        faq: 'FAQ',
+        tabular_data: '表形式データ',
+        report: 'レポート',
+        meeting_notes: '議事録',
+        presentation: 'プレゼンテーション',
+        short_article: '短文',
+        mixed_document: '混在文書'
+      },
+      contentMode: {
+        document: 'ドキュメント',
+        faq_candidate: 'FAQ 候補',
+        wiki_candidate: 'Wiki 候補'
+      },
+      strategy: {
+        auto: '自動',
+        heading: '見出し',
+        heuristic: 'ヒューリスティック',
+        legacy: '再帰'
+      },
+      phase: {
+        analyze_document: '文書分析',
+        map_document: '単位抽出',
+        reduce_document: '根拠集約',
+        readonly_tools: '読み取り専用ツール',
+        preview_candidates: '候補プレビュー',
+        evaluate_and_refine: '評価と調整',
+        submit_decision: '決定を送信'
+      },
+      structureQuality: {
+        orphan_table_rows: '見出しのない表行',
+        headerless_continuations: '見出し欠落の続き',
+        split_atomic_blocks: '原子ブロック切断',
+        mixed_sections: '節の混在',
+        oversize_atomic_blocks: 'サイズ超過の原子ブロック'
+      },
+      score: {
+        semantic_integrity: '意味的完全性',
+        boundary_quality: '境界品質',
+        size_fit: 'サイズ適合',
+        context_efficiency: 'コンテキスト効率',
+        parent_child: '親子マッピング'
+      }
+    },
     attempt: '{n}回目の試行',
     retry: '再解析',
     notRun: '未実行',
@@ -979,6 +1067,7 @@ export default {
     },
     stage: {
       docreader: 'ドキュメント解析',
+      document_analysis: 'ドキュメント分析',
       chunking: 'チャンク分割',
       embedding: 'ベクトル化',
       multimodal: 'マルチモーダル認識',

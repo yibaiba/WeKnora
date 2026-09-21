@@ -34,6 +34,18 @@ func cloneIngestionAnalysis(analysis *types.IngestionAnalysis) *types.IngestionA
 	cloned.PackingPolicy = cloneSemanticPackingPolicy(analysis.PackingPolicy)
 	cloned.SemanticDiagnostics = cloneIngestionSemanticDiagnostics(analysis.SemanticDiagnostics)
 	cloned.ShadowComparison = cloneIngestionShadowComparison(analysis.ShadowComparison)
+	cloned.ProbeQuestions = cloneIngestionProbeQuestions(analysis.ProbeQuestions)
+	return &cloned
+}
+
+func cloneIngestionProbeQuestions(
+	probes *types.IngestionProbeQuestions,
+) *types.IngestionProbeQuestions {
+	if probes == nil {
+		return nil
+	}
+	cloned := *probes
+	cloned.Questions = append([]types.IngestionProbeQuestion(nil), probes.Questions...)
 	return &cloned
 }
 

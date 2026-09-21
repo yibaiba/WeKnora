@@ -48,6 +48,7 @@ func (s *knowledgeService) applyIngestionAdvisor(
 	}
 	analysis := ingestionAnalysisFromAdvisorResult(advisorResult)
 	enrichIngestionAnalysis(analysis, advisorResult, run)
+	s.attachIngestionProbeQuestions(ctx, run, analysis)
 
 	run.Effective = applyIngestionRolloutResult(run.Effective, analysis, rollout)
 	if rollout.applyV2 {
@@ -370,5 +371,6 @@ func ingestionAnalysisOutput(analysis *types.IngestionAnalysis) types.JSONMap {
 		"semantic_diagnostics":        analysis.SemanticDiagnostics,
 		"candidate_generator_version": analysis.CandidateGeneratorVersion,
 		"shadow_comparison":           analysis.ShadowComparison,
+		"probe_questions":             analysis.ProbeQuestions,
 	}
 }

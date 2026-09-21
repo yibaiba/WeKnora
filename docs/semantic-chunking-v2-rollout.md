@@ -47,6 +47,28 @@ go test -tags sqlite_fts5 -timeout=60s \
 
 vector、hybrid、rerank 三种模式分别执行同一门槛：结构查询按 kind 的 `Recall@5` 与 `context_completeness` 均 `>= 0.95`，普通查询 `Recall@5` 与 `token_iou` 不低于该模式的 recursive `SplitText` 基线。任一 kind 或模式失败都会使任务失败，不能由 overall 平均抵消。
 
+普通查询与结构查询必须分轨造集，不能混用同一套生成器：
+
+- **结构题**（table / faq / record / code / toc_body / cross_page）继续手写钉子：先定失败类型，再把唯一 ID 写进混排 Markdown，最后写 bag-of-words query 和 `required_context`。LLM 合成几乎打不中表头续块、FAQ 拆对、跨页这类失败。
+- **普通题**（`class=ordinary` / `kind=text`）用离线脚本按 Chroma extract-and-filter 生成：模型只出 `{oath, question, references}`，摘录必须是原文精确子串（任一无效则整题丢弃），再过滤并列题、结构块、query 去重、question↔excerpt 相关性，最后映射进现有 JSON schema（`excerpt` 取第一条精确子串，`marker` 取 excerpt 内唯一子串，`required_context` 为空）。
+
+生成器只许离线跑，不进默认 CI，也不当 LLM-as-judge。当前混排 fixture 太短，撑不出大约 20 道互不重复的普通题；需要更多题时用 `-source` 另给一篇正文，不要把结构钉子覆盖掉。
+
+```bash
+go run ./cmd/semantic-eval-gen \
+  -fixture internal/infrastructure/chunker/testdata/semantic_retrieval_eval.json \
+  -source /path/to/prose.md \
+  -count 20 \
+  -out /tmp/semantic_retrieval_eval.ordinary.json
+```
+
+环境变量：
+
+- `SEMANTIC_EVAL_CHAT_BASE_URL` / `SEMANTIC_EVAL_CHAT_API_KEY` / `SEMANTIC_EVAL_CHAT_MODEL`（必填）
+- `SEMANTIC_EVAL_EMBEDDING_BASE_URL` / `SEMANTIC_EVAL_EMBEDDING_API_KEY` / `SEMANTIC_EVAL_EMBEDDING_MODEL`（缺省则跳过 cosine 过滤，并在 stderr 打 warning）
+
+默认写到 stdout。只有显式传 `-out` 才落盘；没有成功生成时不会用空 ordinary 覆盖原 fixture。把生成结果写回 golden 之前，必须确认每条 `marker` / `excerpt` 仍是该 fixture `markdown` 的子串，结构题一条都不能丢。默认 CI 只读提交后的 JSON，不会调用这个命令。
+
 ## Shadow 准入门槛
 
 shadow 至少连续运行 7 天并覆盖 500 份文档，其中 PDF、DOCX、PPTX 各不少于 50 份。按 `knowledge.metadata.ingestion_analysis.semantic_diagnostics` 的 `source_format` × `kind` 聚合样本与指标（hint 接受率、表头违例、跨节、超限、回退）；该字段只包含计数、比例、枚举和 reason code。没有分类型报表时，7 天 500 篇不能作为放量依据。

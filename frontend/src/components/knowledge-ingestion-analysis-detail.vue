@@ -106,6 +106,23 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
         <code v-for="reason in analysis.reason_codes" :key="reason" class="analysis-reason">{{ reason }}</code>
       </div>
     </div>
+    <section v-if="analysis.probe_questions" class="analysis-probes" :aria-label="t('knowledgeStages.analysis.probeQuestionsTitle')">
+      <div class="analysis-subtitle">{{ t('knowledgeStages.analysis.probeQuestionsTitle') }}</div>
+      <p class="analysis-probe-desc">{{ t('knowledgeStages.analysis.probeQuestionsDescription') }}</p>
+      <p v-if="analysis.probe_questions.status === 'failed'" class="analysis-probe-note" role="status">
+        {{ t('knowledgeStages.analysis.probeFailed') }}
+      </p>
+      <p v-else-if="analysis.probe_questions.status === 'skipped' || !analysis.probe_questions.questions?.length" class="analysis-probe-note" role="status">
+        {{ t('knowledgeStages.analysis.probeSkipped') }}
+      </p>
+      <ol v-else class="analysis-probe-list">
+        <li v-for="question in analysis.probe_questions.questions" :key="question.marker || question.query">
+          <strong>{{ question.query }}</strong>
+          <span>{{ t('knowledgeStages.analysis.probeExcerptLabel') }}</span>
+          <code>{{ question.excerpt }}</code>
+        </li>
+      </ol>
+    </section>
     <div class="analysis-comparison-wrap">
       <table class="analysis-comparison">
         <caption>{{ t('knowledgeStages.analysis.chunkingComparison') }}</caption>
@@ -289,5 +306,51 @@ function comparisonRows(analysis: IngestionAnalysis): ComparisonRow[] {
 .analysis-comparison tbody th {
   color: var(--td-text-color-secondary);
   font-weight: 500;
+}
+
+.analysis-probes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.analysis-probe-desc,
+.analysis-probe-note {
+  margin: 0;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.analysis-probe-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analysis-probe-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.analysis-probe-list strong {
+  color: var(--td-text-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.analysis-probe-list span {
+  color: var(--td-text-color-placeholder);
+  font-size: 10px;
+}
+
+.analysis-probe-list code {
+  overflow-wrap: anywhere;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

@@ -296,4 +296,25 @@ type IngestionAnalysis struct {
 	SemanticDiagnostics       IngestionSemanticDiagnostics    `json:"semantic_diagnostics"`
 	CandidateGeneratorVersion string                          `json:"candidate_generator_version"`
 	ShadowComparison          *IngestionShadowComparison      `json:"shadow_comparison,omitempty"`
+	ProbeQuestions            *IngestionProbeQuestions        `json:"probe_questions,omitempty"`
+}
+
+const (
+	IngestionProbeStatusGenerated = "generated"
+	IngestionProbeStatusSkipped   = "skipped"
+	IngestionProbeStatusFailed    = "failed"
+)
+
+// IngestionProbeQuestions are ordinary retrieval probes generated after
+// smart analysis. They are display-only and must never fail ingest.
+type IngestionProbeQuestions struct {
+	Status    string                   `json:"status"`
+	Reason    string                   `json:"reason,omitempty"`
+	Questions []IngestionProbeQuestion `json:"questions,omitempty"`
+}
+
+type IngestionProbeQuestion struct {
+	Query   string `json:"query"`
+	Excerpt string `json:"excerpt"`
+	Marker  string `json:"marker"`
 }

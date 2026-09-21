@@ -6583,6 +6583,7 @@ export default {
     },
     stage: {
       docreader: '문서 파싱',
+      document_analysis: '문서 분석',
       chunking: '청킹',
       embedding: '벡터화',
       multimodal: '멀티모달 인식',
@@ -6630,6 +6631,94 @@ export default {
       title: '이번 파싱 설정',
       kbDefault: '지식 베이스 기본 설정 사용',
       graph: '지식 그래프'
+    },
+    analysis: {
+      title: '스마트 분석 결과',
+      fallbackTitle: '지식 베이스 청킹 설정으로 되돌렸습니다',
+      fallbackDescription: '후보가 구조 검증을 통과하지 못해 이 파일은 지식 베이스 설정으로 분할되었습니다.',
+      fallbackReasonCodesLabel: '되돌림 이유',
+      documentKindLabel: '문서 유형',
+      confidenceLabel: '신뢰도',
+      contentModeLabel: '콘텐츠 모드',
+      modelLabel: '분석 모델',
+      reasonCodesLabel: '판단 근거',
+      chunkingComparison: '청킹 파라미터 비교',
+      parameter: '파라미터',
+      recommended: '권장',
+      applied: '적용',
+      agentRunTitle: 'Agent 과정',
+      rounds: '{actual} / {max} 라운드',
+      candidatesTitle: '청킹 후보',
+      selectionReasonCodesLabel: '선택 이유',
+      candidateSelected: '후보 {n}(선택됨)',
+      candidateNumber: '후보 {n}',
+      candidateInvalid: '구조적으로 유효하지 않음',
+      totalScore: '총점',
+      chunkCount: '청크 수',
+      lengthP50P95: '길이 P50 / P95',
+      selectedTier: '선택된 계층',
+      chunkConfigShort: '청킹 설정',
+      scoreBreakdown: '점수 내역',
+      toolStepsTitle: '도구 단계',
+      warningsTitle: '경고',
+      probeQuestionsTitle: '탐색 질문',
+      probeQuestionsDescription: '구성된 분석 모델이 본문에서 뽑은 일반 질문입니다. 분할 후에도 원문에 닿는지 확인합니다. 생성 실패는 적재를 막지 않습니다.',
+      probeExcerptLabel: '대응 원문',
+      probeFailed: '탐색 질문을 생성하지 못했습니다. 청킹 결과는 저장되었습니다.',
+      probeSkipped: '이번에는 탐색 질문을 생성하지 않았습니다.',
+      chunking: {
+        strategy: '전략',
+        chunk_size: '청크 크기',
+        chunk_overlap: '겹침',
+        enable_parent_child: '부모-자식 청킹',
+        parent_chunk_size: '부모 크기',
+        child_chunk_size: '자식 크기',
+        separators: '구분자'
+      },
+      documentKind: {
+        policy_manual: '정책 매뉴얼',
+        faq: 'FAQ',
+        tabular_data: '표 데이터',
+        report: '보고서',
+        meeting_notes: '회의록',
+        presentation: '프레젠테이션',
+        short_article: '짧은 글',
+        mixed_document: '혼합 문서'
+      },
+      contentMode: {
+        document: '문서',
+        faq_candidate: 'FAQ 후보',
+        wiki_candidate: 'Wiki 후보'
+      },
+      strategy: {
+        auto: '자동',
+        heading: '제목',
+        heuristic: '휴리스틱',
+        legacy: '재귀'
+      },
+      phase: {
+        analyze_document: '문서 분석',
+        map_document: '단위 추출',
+        reduce_document: '근거 집계',
+        readonly_tools: '읽기 전용 도구',
+        preview_candidates: '후보 미리보기',
+        evaluate_and_refine: '평가 및 조정',
+        submit_decision: '결정 제출'
+      },
+      structureQuality: {
+        orphan_table_rows: '헤더 없는 표 행',
+        headerless_continuations: '헤더 없는 연속 블록',
+        split_atomic_blocks: '원자 블록 절단',
+        mixed_sections: '섹션 혼재',
+        oversize_atomic_blocks: '크기 초과 원자 블록'
+      },
+      score: {
+        semantic_integrity: '의미 완전성',
+        boundary_quality: '경계 품질',
+        size_fit: '크기 적합',
+        context_efficiency: '컨텍스트 효율',
+        parent_child: '부모-자식 매핑'
+      }
     }
   },
   uploadConfirm: {

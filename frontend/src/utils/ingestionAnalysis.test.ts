@@ -106,3 +106,38 @@ test('preserves fallback mode, reasons, and semantic candidate quality', () => {
   assert.equal(analysis.candidates[0].structure_quality.orphan_table_rows, 2)
   assert.equal(analysis.candidates[0].structure_quality.mixed_sections, 3)
 })
+
+test('normalizes probe questions generated after smart analysis', () => {
+  const analysis = asIngestionAnalysis({
+    ...analysisWithCandidate({
+      ...baseCandidate,
+      score: {
+        semantic_integrity: 0.9,
+        boundary_quality: 0.8,
+        size_fit: 0.7,
+        context_efficiency: 0.6,
+        parent_child: 1,
+        total: 0.82,
+      },
+    }),
+    probe_questions: {
+      status: 'generated',
+      questions: [
+        {
+          query: 'How long is the calibration interval?',
+          excerpt: 'The calibration interval remains thirty days.',
+          marker: 'calibration interval',
+        },
+        { query: 12 },
+      ],
+    },
+  })
+
+  assert.ok(analysis)
+  assert.equal(analysis.probe_questions?.status, 'generated')
+  assert.deepEqual(analysis.probe_questions?.questions, [{
+    query: 'How long is the calibration interval?',
+    excerpt: 'The calibration interval remains thirty days.',
+    marker: 'calibration interval',
+  }])
+})

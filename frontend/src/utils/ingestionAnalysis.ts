@@ -197,5 +197,30 @@ export function asIngestionAnalysis(value: unknown): IngestionAnalysis | null {
       ? analysis.selection_reason_codes
       : [],
     agent_run: normalizeAgentRun(analysis.agent_run),
+    probe_questions: normalizeProbeQuestions(analysis.probe_questions),
   } as unknown as IngestionAnalysis
+}
+
+function normalizeProbeQuestions(value: unknown): IngestionAnalysis['probe_questions'] {
+  if (!value || typeof value !== 'object') return undefined
+  const probes = value as Record<string, unknown>
+  const status = typeof probes.status === 'string' ? probes.status : ''
+  if (!status) return undefined
+  const questions = Array.isArray(probes.questions)
+    ? probes.questions.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const question = item as Record<string, unknown>
+        if (typeof question.query !== 'string' || typeof question.excerpt !== 'string') return []
+        return [{
+          query: question.query,
+          excerpt: question.excerpt,
+          marker: typeof question.marker === 'string' ? question.marker : '',
+        }]
+      })
+    : []
+  return {
+    status,
+    reason: typeof probes.reason === 'string' ? probes.reason : undefined,
+    questions,
+  }
 }
