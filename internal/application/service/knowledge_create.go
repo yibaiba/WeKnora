@@ -1236,10 +1236,10 @@ func (s *knowledgeService) bindContentResources(
 
 func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	kb *types.KnowledgeBase, knowledge *types.Knowledge, content string, doSync bool,
-) {
+) error {
 	clean := strings.TrimSpace(content)
 	if clean == "" {
-		return
+		return nil
 	}
 
 	// Resolve embedded data:base64 images and remote http(s) images → storage, replace URLs.
@@ -1287,13 +1287,16 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	})
 	if analyzeErr != nil {
 		logger.Errorf(ctx, "Failed to analyze manual knowledge %s: %v", knowledge.ID, analyzeErr)
-		return
+		return s.failClosedKnowledgeProcessing(
+			ctx, knowledge, true, types.StageDocumentAnalysis, werrors.ErrCodeDocumentAnalysisFailed,
+			"failed to analyze manual knowledge %s: %v", knowledge.ID, analyzeErr,
+		)
 	}
 	eff, advisorErr := s.applyIngestionAdvisor(ctx, ingestionAdvisorRun{
 		Knowledge: knowledge, KB: kb, Content: clean, Effective: eff, Document: semanticDocument,
 	})
 	if advisorErr != nil {
-		return
+		return advisorErr
 	}
 
 	var parsed []types.ParsedChunk
@@ -1314,7 +1317,10 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 		counter, counterErr := s.resolveIngestionTokenCounter(ctx, kb)
 		if counterErr != nil {
 			logger.Errorf(ctx, "Failed to resolve token counter for manual knowledge %s: %v", knowledge.ID, counterErr)
-			return
+			return s.failClosedKnowledgeProcessing(
+				ctx, knowledge, true, types.StageChunking, werrors.ErrCodeChunkingFailed,
+				"failed to resolve token counter for manual knowledge %s: %v", knowledge.ID, counterErr,
+			)
 		}
 		productionTokenCounter = counter
 	}
@@ -1324,16 +1330,20 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	})
 	if splitErr != nil {
 		logger.Errorf(ctx, "Failed to split manual knowledge %s: %v", knowledge.ID, splitErr)
-		return
+		return s.failClosedKnowledgeProcessing(
+			ctx, knowledge, true, types.StageChunking, werrors.ErrCodeChunkingFailed,
+			"failed to split manual knowledge %s: %v", knowledge.ID, splitErr,
+		)
 	}
 	parsed = splitResult.chunks
 	opts.ParentChunks = splitResult.parents
 
 	if doSync {
 		s.processChunks(ctx, kb, knowledge, parsed, opts)
-		return
+		return nil
 	}
 
 	newCtx := logger.CloneContext(ctx)
 	go s.processChunks(newCtx, kb, knowledge, parsed, opts)
+	return nil
 }

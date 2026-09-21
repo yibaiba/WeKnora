@@ -25,15 +25,20 @@ func TestSplitWithDiagnostics_LegacyStrategy_ReportsLegacyTier(t *testing.T) {
 	}
 }
 
-func TestSplitWithDiagnostics_AutoOnHeadingDoc_TriesSemanticFirst(t *testing.T) {
+func TestSplitWithDiagnostics_AutoOnHeadingDoc_TriesHeadingFirst(t *testing.T) {
 	doc := strings.Repeat("# Top\nintro paragraph here.\n\n## Section A\nbody A here.\n\n## Section B\nbody B here.\n\n## Section C\nbody C here.\n\n", 1)
 	cfg := SplitterConfig{ChunkSize: 300, ChunkOverlap: 30, Strategy: StrategyAuto}
 	_, diag := SplitWithDiagnostics(doc, cfg)
 	if len(diag.TierChain) == 0 {
 		t.Fatal("expected non-empty tier chain")
 	}
-	if diag.TierChain[0] != TierSemantic {
-		t.Errorf("expected semantic tier first, got chain %v", diag.TierChain)
+	if diag.TierChain[0] != TierHeading {
+		t.Errorf("expected heading tier first, got chain %v", diag.TierChain)
+	}
+	for _, tier := range diag.TierChain {
+		if tier == TierSemantic {
+			t.Errorf("auto strategy must not include semantic packing, got chain %v", diag.TierChain)
+		}
 	}
 }
 

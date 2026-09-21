@@ -82,11 +82,9 @@ func computeSemanticQueryMetrics(
 		results = results[:semanticRetrievalTopK]
 	}
 	retrievedIDs := make([]int, 0, len(results))
-	retrievedTexts := make([]string, 0, len(results))
 	retrievedSources := make([]string, 0, len(results))
 	for _, result := range results {
 		retrievedIDs = append(retrievedIDs, index.metricIDs[result.ChunkID])
-		retrievedTexts = append(retrievedTexts, index.contextByChunkID[result.ChunkID])
 		source := index.sourceByChunkID[result.ChunkID]
 		if strings.TrimSpace(source) == "" {
 			source = index.contextByChunkID[result.ChunkID]

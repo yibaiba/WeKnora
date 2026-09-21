@@ -1,10 +1,10 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -41,14 +41,8 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 		content: request.content, config: config, base: base, document: request.document,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "oversize_atomic") {
-			return types.IngestionChunkingCandidate{
-				ID: request.id, Archetype: request.archetype,
-				PackingPolicyVersion: request.policy.Version,
-				Config:               cloneChunkingRecommendation(request.config),
-				HardValid:            false,
-				Violations:           []string{ingestionViolationAtomicSplit},
-			}, nil
+		if errors.Is(err, chunker.ErrOversizeAtomic) || errors.Is(err, chunker.ErrSemanticPack) {
+			return invalidCandidateFromPackingError(request, err), nil
 		}
 		return types.IngestionChunkingCandidate{}, wrapIngestionToolError(
 			err, ingestionFailureCandidatePreview, "", "semantic_chunking", "语义候选生成失败",
@@ -91,6 +85,23 @@ func buildIngestionCandidate(request ingestionCandidateBuildRequest) (types.Inge
 		Violations:           validation.violations,
 		ContextTokenRatio:    ingestionContextTokenRatio(validation),
 	}, nil
+}
+
+func invalidCandidateFromPackingError(
+	request ingestionCandidateBuildRequest,
+	err error,
+) types.IngestionChunkingCandidate {
+	violation := ingestionViolationSemanticPacking
+	if errors.Is(err, chunker.ErrOversizeAtomic) {
+		violation = ingestionViolationAtomicSplit
+	}
+	return types.IngestionChunkingCandidate{
+		ID: request.id, Archetype: request.archetype,
+		PackingPolicyVersion: request.policy.Version,
+		Config:               cloneChunkingRecommendation(request.config),
+		HardValid:            false,
+		Violations:           []string{violation},
+	}
 }
 
 func ingestionContextTokenRatio(validation ingestionCandidateValidationResult) float64 {

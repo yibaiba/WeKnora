@@ -220,6 +220,7 @@ func packingPolicyForCandidate(
 	if config.ParentUnit != "" {
 		policy.ParentUnit = config.ParentUnit
 	}
+	policy.ForbidMixedSections = true
 	return policy
 }
 

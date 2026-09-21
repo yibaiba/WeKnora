@@ -60,6 +60,34 @@ func TestBalancedCandidateUsesHighConfidenceAtomicP90(t *testing.T) {
 	require.Equal(t, 1200, specs[2].config.ChunkSize)
 }
 
+func TestGenerateCandidatesPersistsPreviewForbidMixedSections(t *testing.T) {
+	session := newIngestionAgentSessionWithFallback(
+		"# Title\n\nSome paragraph body for packing.\n", types.IngestionChunkingConstraints{}, ingestionTestConfig(512),
+	)
+	evidence := ingestionDocumentEvidence{
+		DominantStructures: []string{"table"}, BoundaryPriorities: []string{"table_row"},
+	}
+
+	require.NoError(t, session.generateCandidates(evidence))
+
+	require.True(t, session.policy.ForbidMixedSections)
+	require.False(t, semanticPackingPolicyFromEvidence(evidence).ForbidMixedSections)
+	for _, candidate := range session.candidateSnapshot() {
+		policy := packingPolicyForCandidate(session.policy, candidate.Config)
+		require.True(t, policy.ForbidMixedSections)
+		require.Equal(t, candidate.Config.ParentUnit, policy.ParentUnit)
+	}
+}
+
+func TestPackingPolicyForCandidateKeepsPreviewForbidMixedSections(t *testing.T) {
+	policy := packingPolicyForCandidate(types.SemanticPackingPolicy{
+		ForbidMixedSections: false, ParentUnit: types.SemanticParentUnitSection,
+	}, types.IngestionChunkingRecommendation{ParentUnit: types.SemanticParentUnitPage})
+
+	require.True(t, policy.ForbidMixedSections)
+	require.Equal(t, types.SemanticParentUnitPage, policy.ParentUnit)
+}
+
 func TestSemanticPackingPolicyMapsOnlyValidatedEvidenceEnums(t *testing.T) {
 	evidence := ingestionDocumentEvidence{
 		DominantStructures: []string{"repeated_records", "table"},
@@ -98,6 +126,47 @@ func TestCandidateGenerationKeepsThreePolicyVariantsUnderTightTokenBudget(t *tes
 	require.NoError(t, err)
 	require.Len(t, specs, maxIngestionCandidates)
 	require.Equal(t, types.SemanticParentUnitNone, specs[2].config.ParentUnit)
+}
+
+func TestCandidateGenerationConvertsPackerFailuresToInvalidCandidates(t *testing.T) {
+	content := "hello world"
+	session := newIngestionAgentSessionWithDocument(content, types.IngestionChunkingConstraints{}, ingestionSessionDocument{
+		document: chunker.SemanticDocument{ContentLength: 5, Blocks: []chunker.SemanticBlock{{
+			ID: "p", Kind: chunker.SemanticKindParagraph, Start: 0, End: 5,
+		}}},
+		fallback: ingestionTestConfig(512),
+	})
+
+	err := session.generateCandidates(ingestionDocumentEvidence{
+		DominantStructures: []string{"section_body"}, BoundaryPriorities: []string{"section"},
+	})
+
+	require.NoError(t, err)
+	candidates := session.candidateSnapshot()
+	require.Len(t, candidates, maxIngestionCandidates)
+	for _, candidate := range candidates {
+		require.False(t, candidate.HardValid)
+		require.Contains(t, candidate.Violations, ingestionViolationSemanticPacking)
+	}
+}
+
+func TestBuildIngestionCandidateConvertsOversizeAtomicToInvalid(t *testing.T) {
+	header := "| Case | Result |\n| --- | --- |\n"
+	content := header + "| " + strings.Repeat("WIDE", 30) + " | overflow |\n"
+	session := newIngestionAgentSession(content, types.IngestionChunkingConstraints{})
+
+	candidate, err := session.buildCandidate(ingestionCandidateBuildRequest{
+		content: content, config: types.IngestionChunkingRecommendation{
+			Strategy: chunker.StrategyAuto, ChunkSize: 40, ChunkOverlap: 0,
+		},
+		constraints: session.constraints, id: "cand_oversize",
+		document: session.document, archetype: ingestionCandidateArchetypeNoParent,
+		policy: types.SemanticPackingPolicy{ForbidMixedSections: true},
+	})
+
+	require.NoError(t, err)
+	require.False(t, candidate.HardValid)
+	require.Contains(t, candidate.Violations, ingestionViolationAtomicSplit)
 }
 
 func TestCandidateGenerationSurfacesTokenCounterFailure(t *testing.T) {

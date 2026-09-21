@@ -70,7 +70,7 @@ func (packer semanticPacker) splitOversizeLineRange(
 	options semanticOversizeOptions,
 ) ([]semanticPackingUnit, error) {
 	if rangeEnd <= rangeStart {
-		return nil, fmt.Errorf("oversize_atomic: semantic block cannot fit chunk budget")
+		return nil, ErrOversizeAtomic
 	}
 	lines := semanticBlockLines(packer.runes[rangeStart:rangeEnd])
 	if len(lines) == 0 {
@@ -113,7 +113,7 @@ func (packer semanticPacker) splitOversizeLineRange(
 			}
 		}
 		if options.forbidRuneBackoff || lineEnd <= protectedEnd {
-			return nil, fmt.Errorf("oversize_atomic: semantic block cannot fit chunk budget")
+			return nil, ErrOversizeAtomic
 		}
 		parts, splitErr := packer.splitOversizeRunesRange(block, start, lineEnd)
 		if splitErr != nil {
@@ -130,7 +130,7 @@ func (packer semanticPacker) splitOversizeLineRange(
 		}
 	}
 	if len(units) == 0 {
-		return nil, fmt.Errorf("oversize_atomic: semantic block cannot fit chunk budget")
+		return nil, ErrOversizeAtomic
 	}
 	return units, nil
 }
@@ -157,7 +157,7 @@ func (packer semanticPacker) splitOversizeRunesRange(
 			return nil, err
 		}
 		if limit <= 0 {
-			return nil, fmt.Errorf("semantic context exceeds chunk budget")
+			return nil, fmt.Errorf("%w: semantic context exceeds chunk budget", ErrSemanticPack)
 		}
 		end := min(rangeEnd, start+limit)
 		if end < rangeEnd {
@@ -177,9 +177,9 @@ func (packer semanticPacker) splitOversizeRunesRange(
 		}
 		if end <= start {
 			if semanticForbidsRuneBackoff(block.Kind) {
-				return nil, fmt.Errorf("oversize_atomic: semantic block cannot fit chunk budget")
+				return nil, ErrOversizeAtomic
 			}
-			return nil, fmt.Errorf("semantic block cannot fit chunk budget")
+			return nil, fmt.Errorf("%w: semantic block cannot fit chunk budget", ErrSemanticPack)
 		}
 		result = append(result, packer.oversizeUnit(block, start, end, context))
 		start = end
@@ -212,7 +212,7 @@ func (packer semanticPacker) appendOversizeRange(
 		return nil, err
 	}
 	if !fits {
-		return nil, fmt.Errorf("oversize_atomic: semantic block cannot fit chunk budget")
+		return nil, ErrOversizeAtomic
 	}
 	context, err := packer.context.contextFor(block, semanticContextOptions{
 		continuation: continuation, tokenLimit: packer.config.TokenLimit,

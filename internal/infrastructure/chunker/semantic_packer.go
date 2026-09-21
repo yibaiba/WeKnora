@@ -26,7 +26,7 @@ func SplitSemanticDocument(
 ) ([]Chunk, error) {
 	config = NormalizeSplitterConfig(config)
 	if document.ContentLength != len([]rune(content)) {
-		return nil, fmt.Errorf("semantic document length does not match content")
+		return nil, fmt.Errorf("%w: semantic document length does not match content", ErrSemanticPack)
 	}
 	if err := ValidateSemanticDocument(document); err != nil {
 		return nil, err
@@ -88,9 +88,9 @@ func (packer semanticPacker) sourceBudget(header string) (int, error) {
 	remaining := packer.config.TokenLimit - headerCount.Count
 	if remaining <= 0 {
 		if strings.TrimSpace(packer.config.EmbeddingPrefix) != "" && strings.TrimSpace(header) == "" {
-			return 0, fmt.Errorf("embedding prefix exceeds chunk budget")
+			return 0, fmt.Errorf("%w: embedding prefix exceeds chunk budget", ErrSemanticPack)
 		}
-		return 0, fmt.Errorf("embedding prefix and context exceed chunk budget")
+		return 0, fmt.Errorf("%w: embedding prefix and context exceed chunk budget", ErrSemanticPack)
 	}
 	tokenChars := CharsForTokenLimit(remaining, lang)
 	if tokenChars > 0 && tokenChars < limit {

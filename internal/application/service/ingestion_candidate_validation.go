@@ -22,6 +22,7 @@ const (
 	ingestionViolationContextSource      = "context_source_invalid"
 	ingestionViolationContextBudget      = "context_budget_exceeded"
 	ingestionViolationRequiredContext    = "required_context_budget_exceeded"
+	ingestionViolationSemanticPacking    = "semantic_packing_failed"
 )
 
 type ingestionCandidateValidationRequest struct {

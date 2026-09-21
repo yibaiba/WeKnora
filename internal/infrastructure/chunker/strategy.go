@@ -287,8 +287,9 @@ func resolveChainWithProfile(text string, cfg SplitterConfig) ([]StrategyTier, *
 		fallthrough
 	default:
 		profile := ProfileDocument(text)
-		chain := append([]StrategyTier{TierSemantic}, SelectStrategy(profile)...)
-		return chain, profile
+		// Ordinary auto stays heading/heuristic/legacy. Semantic packing is
+		// fail-closed via SplitSemanticDocument, not this fallback chain.
+		return SelectStrategy(profile), profile
 	}
 }
 

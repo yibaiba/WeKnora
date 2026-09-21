@@ -32,6 +32,7 @@ func (s *ingestionAgentSession) generateCandidates(evidence ingestionDocumentEvi
 		return fmt.Errorf("文档结构校验失败: %w", err)
 	}
 	policy := semanticPackingPolicyFromEvidence(evidence)
+	policy.ForbidMixedSections = true
 	specs, err := generateIngestionCandidateSpecs(s)
 	if err != nil {
 		return err
@@ -44,7 +45,6 @@ func (s *ingestionAgentSession) generateCandidates(evidence ingestionDocumentEvi
 		}
 		candidatePolicy := cloneSemanticPackingPolicy(policy)
 		candidatePolicy.ParentUnit = spec.config.ParentUnit
-		candidatePolicy.ForbidMixedSections = true
 		candidate, buildErr := s.buildCandidate(ingestionCandidateBuildRequest{
 			content: s.content, config: spec.config, constraints: s.constraints,
 			id: id, document: s.document, archetype: spec.archetype, policy: candidatePolicy,

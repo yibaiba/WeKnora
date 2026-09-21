@@ -3378,7 +3378,9 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 	}
 
 	// Run manual processing (image resolution + chunking + embedding) synchronously within the worker
-	s.triggerManualProcessing(ctx, kb, knowledge, payload.Content, true)
+	if err := s.triggerManualProcessing(ctx, kb, knowledge, payload.Content, true); err != nil {
+		return fmt.Errorf("%w: %w", err, asynq.SkipRetry)
+	}
 	return nil
 }
 
@@ -3790,13 +3792,12 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		structure: convertResult.StructureBlocks,
 	})
 	if err != nil {
-		return err
+		return s.failClosedKnowledgeProcessing(
+			ctx, knowledge, isLastRetry, types.StageDocumentAnalysis, werrors.ErrCodeDocumentAnalysisFailed,
+			"failed to analyze semantic document: %v", err,
+		)
 	}
 
-	// Smart document analysis owns only the chunking fields it recommends.
-	// Parser, VLM, ASR, enrichment and language/token settings remain in the
-	// previously resolved effective config. Line endings, HTML tables and
-	// images were rewritten before this analysis so offsets match packer content.
 	eff, err = s.applyIngestionAdvisor(ctx, ingestionAdvisorRun{
 		Knowledge: knowledge,
 		KB:        kb,
@@ -3823,7 +3824,10 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 	if eff.IngestionAdvisorApplied {
 		productionTokenCounter, err = s.resolveIngestionTokenCounter(ctx, kb)
 		if err != nil {
-			return err
+			return s.failClosedKnowledgeProcessing(
+				ctx, knowledge, isLastRetry, types.StageChunking, werrors.ErrCodeChunkingFailed,
+				"failed to resolve ingestion token counter: %v", err,
+			)
 		}
 	}
 	splitResult, err := splitKnowledgeDocument(knowledgeDocumentSplitRequest{
@@ -3831,7 +3835,10 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		tokenCounter: productionTokenCounter, embeddingPrefix: knowledge.Title,
 	})
 	if err != nil {
-		return err
+		return s.failClosedKnowledgeProcessing(
+			ctx, knowledge, isLastRetry, types.StageChunking, werrors.ErrCodeChunkingFailed,
+			"failed to split knowledge document: %v", err,
+		)
 	}
 	chunks = splitResult.chunks
 	processOpts.ParentChunks = splitResult.parents
@@ -4084,6 +4091,22 @@ func (s *knowledgeService) resolveDocReader(
 		return nil
 	}
 	return reader
+}
+
+func (s *knowledgeService) failClosedKnowledgeProcessing(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	isLastRetry bool,
+	stage string,
+	code string,
+	format string,
+	args ...interface{},
+) error {
+	errMsg := fmt.Sprintf(format, args...)
+	s.beginStage(ctx, knowledge.ID, stage, nil)
+	s.failStage(ctx, knowledge.ID, stage, code, errMsg, fmt.Errorf("%s", errMsg))
+	_, err := s.failKnowledge(ctx, knowledge, isLastRetry, "%s", errMsg)
+	return err
 }
 
 // failKnowledge marks knowledge as failed (only on last retry) and returns an error.

@@ -9,15 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAutoStrategyUsesSemanticTierFirst(t *testing.T) {
+func TestAutoStrategyDoesNotUseSemanticTier(t *testing.T) {
 	content := strings.Repeat("A complete sentence ends here. Another sentence follows.\n\n", 8)
 	chunks, diagnostics := SplitWithDiagnostics(content, SplitterConfig{
 		Strategy: StrategyAuto, ChunkSize: 120, ChunkOverlap: 0, AllowZeroOverlap: true,
 	})
 
 	require.NotEmpty(t, chunks)
-	require.Equal(t, TierSemantic, diagnostics.SelectedTier)
-	require.Equal(t, TierSemantic, diagnostics.TierChain[0])
+	require.NotEqual(t, TierSemantic, diagnostics.SelectedTier)
+	require.NotContains(t, diagnostics.TierChain, TierSemantic)
 	requireChunksRestoreSource(t, content, chunks)
 }
 
@@ -426,7 +426,7 @@ func TestSemanticOversizeTableRowDoesNotCutCells(t *testing.T) {
 		ChunkSize: 40, ChunkOverlap: 0, AllowZeroOverlap: true,
 	}, document)
 
-	require.ErrorContains(t, err, "oversize_atomic")
+	require.ErrorIs(t, err, ErrOversizeAtomic)
 }
 
 func TestSemanticParentChildUsesSectionTree(t *testing.T) {
