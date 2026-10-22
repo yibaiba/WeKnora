@@ -118,7 +118,7 @@ func (c *Client) Chat(ctx context.Context, messages []api.Message, opts *api.Opt
 		}
 	}
 	defer func() { _ = resp.body.Close() }()
-	raw, err := io.ReadAll(resp.body)
+	raw, err := api.ReadResponseCapped(resp.body, 0)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -154,7 +154,7 @@ func (c *Client) ChatStream(
 		}
 	}
 	ch := make(chan types.StreamResponse)
-	dumper := api.NewStreamPacketDumper(c.cfg.Endpoint.Model, json.RawMessage(resp.data))
+	dumper := api.NewStreamPacketDumperContext(ctx, c.cfg.Endpoint.Model, json.RawMessage(resp.data))
 	go func() {
 		defer cancel()
 		defer close(ch)

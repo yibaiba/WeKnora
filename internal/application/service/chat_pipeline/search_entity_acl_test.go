@@ -81,8 +81,8 @@ func TestPluginSearchEntitySkipsMissingKnowledgeAfterACL(t *testing.T) {
 		"missing": {},
 	}
 	chunks := []*types.Chunk{
-		{ID: "chunk-1", KnowledgeID: "allowed"},
-		{ID: "chunk-2", KnowledgeID: "missing"},
+		{ID: "chunk-1", KnowledgeID: "allowed", IsEnabled: true},
+		{ID: "chunk-2", KnowledgeID: "missing", IsEnabled: true},
 	}
 	entityResults := buildEntitySearchResults(context.Background(), chunks, knowledgeMap, allowedKnowledgeIDs)
 	if len(entityResults) != 1 {

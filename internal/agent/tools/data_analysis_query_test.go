@@ -178,6 +178,7 @@ func TestDataAnalysisExecuteEndToEndUsesDatasetTable(t *testing.T) {
 		&csvFileService{files: map[string]string{"doc-a.csv": "id,amount\n1,10\n2,20\n3,30\n"}},
 		db,
 		"test-e2e",
+		nil,
 	)
 	ctx := context.Background()
 	t.Cleanup(func() { tool.Cleanup(ctx) })

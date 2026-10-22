@@ -81,7 +81,8 @@ func TestAttachPersonalAPIKeyRejectsInactiveOwnerOrMembership(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ginContext, recorder := gin.CreateTestContext(httptest.NewRecorder())
+			w := httptest.NewRecorder()
+			ginContext, _ := gin.CreateTestContext(w)
 			ginContext.Request = httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 			ownerID := "member-1"
 			attachAPIKeyAuthContext(
@@ -95,8 +96,8 @@ func TestAttachPersonalAPIKeyRejectsInactiveOwnerOrMembership(t *testing.T) {
 					KnowledgeBaseIDs: types.StringArray{"kb-1"},
 				},
 			)
-			if !ginContext.IsAborted() || recorder.Code != http.StatusUnauthorized {
-				t.Fatalf("expected 401 rejection, aborted=%v status=%d", ginContext.IsAborted(), recorder.Code)
+			if !ginContext.IsAborted() || w.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401 rejection, aborted=%v status=%d", ginContext.IsAborted(), w.Code)
 			}
 		})
 	}

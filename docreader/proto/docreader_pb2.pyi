@@ -6,6 +6,32 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class PreprocessImageRequest(_message.Message):
+    __slots__ = ("image",)
+    IMAGE_FIELD_NUMBER: _ClassVar[int]
+    image: bytes
+    def __init__(self, image: _Optional[bytes] = ...) -> None: ...
+
+class PreprocessImageResponse(_message.Message):
+    __slots__ = ("image", "fallback_needed", "theta", "residual", "flip", "n_boxes", "n_kept", "status")
+    IMAGE_FIELD_NUMBER: _ClassVar[int]
+    FALLBACK_NEEDED_FIELD_NUMBER: _ClassVar[int]
+    THETA_FIELD_NUMBER: _ClassVar[int]
+    RESIDUAL_FIELD_NUMBER: _ClassVar[int]
+    FLIP_FIELD_NUMBER: _ClassVar[int]
+    N_BOXES_FIELD_NUMBER: _ClassVar[int]
+    N_KEPT_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    image: bytes
+    fallback_needed: bool
+    theta: float
+    residual: float
+    flip: bool
+    n_boxes: int
+    n_kept: int
+    status: str
+    def __init__(self, image: _Optional[bytes] = ..., fallback_needed: bool = ..., theta: _Optional[float] = ..., residual: _Optional[float] = ..., flip: bool = ..., n_boxes: _Optional[int] = ..., n_kept: _Optional[int] = ..., status: _Optional[str] = ...) -> None: ...
+
 class ReadConfig(_message.Message):
     __slots__ = ("parser_engine", "parser_engine_overrides")
     class ParserEngineOverridesEntry(_message.Message):
@@ -79,8 +105,18 @@ class StructureBlock(_message.Message):
     id: str
     def __init__(self, kind: _Optional[str] = ..., start: _Optional[int] = ..., end: _Optional[int] = ..., parent_id: _Optional[str] = ..., section_depth: _Optional[int] = ..., table_id: _Optional[str] = ..., record_id: _Optional[str] = ..., atomic: bool = ..., confidence: _Optional[str] = ..., context_kinds: _Optional[_Iterable[str]] = ..., id: _Optional[str] = ...) -> None: ...
 
+class SourceBlock(_message.Message):
+    __slots__ = ("start", "end", "locator_json")
+    START_FIELD_NUMBER: _ClassVar[int]
+    END_FIELD_NUMBER: _ClassVar[int]
+    LOCATOR_JSON_FIELD_NUMBER: _ClassVar[int]
+    start: int
+    end: int
+    locator_json: str
+    def __init__(self, start: _Optional[int] = ..., end: _Optional[int] = ..., locator_json: _Optional[str] = ...) -> None: ...
+
 class ReadResponse(_message.Message):
-    __slots__ = ("markdown_content", "image_refs", "image_dir_path", "metadata", "error", "structure_blocks")
+    __slots__ = ("markdown_content", "image_refs", "image_dir_path", "metadata", "error", "structure_blocks", "source_blocks")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -94,16 +130,18 @@ class ReadResponse(_message.Message):
     METADATA_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     STRUCTURE_BLOCKS_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_BLOCKS_FIELD_NUMBER: _ClassVar[int]
     markdown_content: str
     image_refs: _containers.RepeatedCompositeFieldContainer[ImageRef]
     image_dir_path: str
     metadata: _containers.ScalarMap[str, str]
     error: str
     structure_blocks: _containers.RepeatedCompositeFieldContainer[StructureBlock]
-    def __init__(self, markdown_content: _Optional[str] = ..., image_refs: _Optional[_Iterable[_Union[ImageRef, _Mapping]]] = ..., image_dir_path: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., error: _Optional[str] = ..., structure_blocks: _Optional[_Iterable[_Union[StructureBlock, _Mapping]]] = ...) -> None: ...
+    source_blocks: _containers.RepeatedCompositeFieldContainer[SourceBlock]
+    def __init__(self, markdown_content: _Optional[str] = ..., image_refs: _Optional[_Iterable[_Union[ImageRef, _Mapping]]] = ..., image_dir_path: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., error: _Optional[str] = ..., structure_blocks: _Optional[_Iterable[_Union[StructureBlock, _Mapping]]] = ..., source_blocks: _Optional[_Iterable[_Union[SourceBlock, _Mapping]]] = ...) -> None: ...
 
 class ReadStreamMeta(_message.Message):
-    __slots__ = ("markdown_content", "image_dir_path", "metadata", "error", "image_count", "structure_blocks")
+    __slots__ = ("markdown_content", "image_dir_path", "metadata", "error", "image_count", "structure_blocks", "source_blocks")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -117,13 +155,15 @@ class ReadStreamMeta(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     IMAGE_COUNT_FIELD_NUMBER: _ClassVar[int]
     STRUCTURE_BLOCKS_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_BLOCKS_FIELD_NUMBER: _ClassVar[int]
     markdown_content: str
     image_dir_path: str
     metadata: _containers.ScalarMap[str, str]
     error: str
     image_count: int
     structure_blocks: _containers.RepeatedCompositeFieldContainer[StructureBlock]
-    def __init__(self, markdown_content: _Optional[str] = ..., image_dir_path: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., error: _Optional[str] = ..., image_count: _Optional[int] = ..., structure_blocks: _Optional[_Iterable[_Union[StructureBlock, _Mapping]]] = ...) -> None: ...
+    source_blocks: _containers.RepeatedCompositeFieldContainer[SourceBlock]
+    def __init__(self, markdown_content: _Optional[str] = ..., image_dir_path: _Optional[str] = ..., metadata: _Optional[_Mapping[str, str]] = ..., error: _Optional[str] = ..., image_count: _Optional[int] = ..., structure_blocks: _Optional[_Iterable[_Union[StructureBlock, _Mapping]]] = ..., source_blocks: _Optional[_Iterable[_Union[SourceBlock, _Mapping]]] = ...) -> None: ...
 
 class ReadStreamResponse(_message.Message):
     __slots__ = ("meta", "image")

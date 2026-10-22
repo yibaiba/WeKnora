@@ -2,7 +2,7 @@
 // (https://docs.anthropic.com/en/api/messages). MiniMax, Zhipu, Moonshot and
 // Volcengine expose the same protocol on an ".../anthropic" base URL, so the
 // package contains no vendor names: every deviation is a
-// catalog.AnthropicMessagesSettings field.
+// api.AnthropicMessagesSettings field.
 package anthropicmessages
 
 import (
@@ -12,14 +12,13 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/api"
-	"github.com/Tencent/WeKnora/internal/models/catalog"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// Config is everything the client needs, already resolved by the catalog.
+// Config is everything the client needs, already resolved by the api.
 type Config struct {
 	Endpoint       api.Endpoint
-	Settings       catalog.AnthropicMessagesSettings
+	Settings       api.AnthropicMessagesSettings
 	ThinkingLevels api.ThinkingLevelMap
 	Reasoning      bool
 }
@@ -142,15 +141,19 @@ func (c *Client) planThinking(opts *api.Options) thinkingPlan {
 		level = levels.Clamp(level)
 	}
 	if !level.Enabled() {
-		if levels.Supports(api.ReasoningOff) && s.ThinkingMode == catalog.AnthropicThinkingAdaptive {
-			return thinkingPlan{body: map[string]any{"type": "disabled"}}
+		if levels.Supports(api.ReasoningOff) && s.ThinkingMode == api.AnthropicThinkingAdaptive {
+			offType := s.ThinkingOffType
+			if offType == "" {
+				offType = "disabled"
+			}
+			return thinkingPlan{body: map[string]any{"type": offType}}
 		}
 		// Budget mode: omitting the thinking object disables it.
 		return thinkingPlan{}
 	}
 	plan := thinkingPlan{enabled: true}
 	switch s.ThinkingMode {
-	case catalog.AnthropicThinkingAdaptive:
+	case api.AnthropicThinkingAdaptive:
 		plan.body = map[string]any{"type": "adaptive"}
 		if level.Graded() && s.SupportsEffort {
 			plan.effort = levels.Value(level)
@@ -276,6 +279,12 @@ func (c *Client) BuildRequestBody(messages []api.Message, opts *api.Options, str
 		// entries were system messages legitimately produces no turns.
 		converted = []message{}
 	}
+	// Anthropic has no in-sequence instruction role. Keep the marked runtime
+	// notice in a trailing input turn, after the existing cache breakpoint;
+	// never move transient recovery text into the stable system prefix.
+	if opts != nil && opts.RuntimeNotice != "" {
+		converted = append(converted, message{Role: "user", Content: opts.RuntimeNotice})
+	}
 	body["messages"] = converted
 
 	if plan.body != nil {
@@ -309,7 +318,7 @@ func (c *Client) betaHeader(plan thinkingPlan, opts *api.Options, userValue stri
 	for _, b := range s.BetaHeaders {
 		add(b)
 	}
-	if plan.enabled && s.ThinkingMode != catalog.AnthropicThinkingAdaptive && s.InterleavedThinkingBeta != "" &&
+	if plan.enabled && s.ThinkingMode != api.AnthropicThinkingAdaptive && s.InterleavedThinkingBeta != "" &&
 		opts != nil && len(opts.Tools) > 0 {
 		add(s.InterleavedThinkingBeta)
 	}

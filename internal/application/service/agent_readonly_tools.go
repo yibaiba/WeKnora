@@ -276,6 +276,14 @@ func (r *repositoryKnowledgeReader) GetKnowledgeBatchByIDsOnly(
 	return r.repository.GetKnowledgeBatchByIDsOnly(ctx, ids)
 }
 
+func (r *repositoryKnowledgeReader) GetKnowledgeBatchWithSharedAccess(
+	ctx context.Context,
+	_ uint64,
+	ids []string,
+) ([]*types.Knowledge, error) {
+	return r.GetKnowledgeBatchByIDsOnly(ctx, ids)
+}
+
 func (r *repositoryKnowledgeReader) GetKnowledgeTags(
 	ctx context.Context,
 	knowledgeIDs []string,

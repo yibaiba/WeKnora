@@ -3,10 +3,12 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/types"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/require"
@@ -51,6 +53,24 @@ func TestProviderCallErrorExtractsSDKMetadataWithoutMessage(t *testing.T) {
 	require.Equal(t, "max_completion_tokens", details.Parameter)
 	require.NotContains(t, err.Error(), "private provider message")
 	require.False(t, errors.Is(err, sdkErr))
+}
+
+func TestProviderCallErrorSanitizesOriginHTTPError(t *testing.T) {
+	httpErr := &api.HTTPError{
+		StatusCode: 400,
+		Body:       `{"error":{"type":"invalid_request_error","message":"private upstream response"}}`,
+	}
+	err := providerCallError(
+		types.WithRedactedLLMTracePayloads(context.Background()),
+		fmt.Errorf("create chat completion: %w", httpErr),
+	)
+
+	details, ok := ProviderErrorDetails(err)
+	require.True(t, ok)
+	require.Equal(t, ProviderFailureRequestInvalid, details.Kind)
+	require.Equal(t, 400, details.StatusCode)
+	require.NotContains(t, err.Error(), "private upstream response")
+	require.False(t, errors.Is(err, httpErr))
 }
 
 func TestNewProviderErrorRejectsUntrustedMetadata(t *testing.T) {

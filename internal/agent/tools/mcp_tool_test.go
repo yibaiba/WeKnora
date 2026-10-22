@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -11,35 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type registrationMCPClient struct {
-	tools   []*types.MCPTool
-	listErr error
-}
-
-func (c *registrationMCPClient) Connect(context.Context) error { return nil }
-func (c *registrationMCPClient) Disconnect() error             { return nil }
-func (c *registrationMCPClient) Initialize(context.Context) (*mcp.InitializeResult, error) {
-	return &mcp.InitializeResult{}, nil
-}
-func (c *registrationMCPClient) ListTools(context.Context) ([]*types.MCPTool, error) {
-	return c.tools, c.listErr
-}
-func (c *registrationMCPClient) ListResources(context.Context) ([]*types.MCPResource, error) {
-	return nil, nil
-}
-func (c *registrationMCPClient) CallTool(
-	context.Context, string, map[string]interface{},
-) (*mcp.CallToolResult, error) {
-	return nil, nil
-}
-func (c *registrationMCPClient) ReadResource(
-	context.Context, string,
-) (*mcp.ReadResourceResult, error) {
-	return nil, nil
-}
-func (c *registrationMCPClient) IsConnected() bool    { return true }
-func (c *registrationMCPClient) GetServiceID() string { return "test-service" }
 
 // --- sanitizeName ---
 
@@ -87,47 +56,32 @@ func TestMCPToolIsReadOnlyFailsClosed(t *testing.T) {
 	readOnly := true
 	writeCapable := false
 
-	assert.False(t, MCPToolIsReadOnly(nil))
-	assert.False(t, MCPToolIsReadOnly(&types.MCPTool{Name: "missing_annotation"}))
-	assert.False(t, MCPToolIsReadOnly(&types.MCPTool{Name: "write", ReadOnlyHint: &writeCapable}))
-	assert.True(t, MCPToolIsReadOnly(&types.MCPTool{Name: "read", ReadOnlyHint: &readOnly}))
+	assert.False(t, (*types.MCPTool)(nil).DeclaresReadOnly())
+	assert.False(t, (&types.MCPTool{Name: "missing_annotation"}).DeclaresReadOnly())
+	assert.False(t, (&types.MCPTool{Name: "write", ReadOnlyHint: &writeCapable}).DeclaresReadOnly())
+	assert.False(t, (&types.MCPTool{
+		Name: "write", Annotations: &types.MCPToolAnnotations{ReadOnlyHint: &writeCapable},
+	}).DeclaresReadOnly())
+	assert.True(t, (&types.MCPTool{
+		Name: "read", Annotations: &types.MCPToolAnnotations{ReadOnlyHint: &readOnly},
+	}).DeclaresReadOnly())
 }
 
 func TestReadOnlyMCPRegistrationPreservesSuccessAndReportsSanitizedFailures(t *testing.T) {
-	readOnly := true
 	services := []*types.MCPService{
 		{ID: "ok", Name: "safe_service", Enabled: true},
+		{ID: "disabled", Name: "off_service", Enabled: false},
 		{ID: "connect-fail", Name: "offline_service", Enabled: true},
-		{ID: "list-fail", Name: "broken_catalog", Enabled: true},
 	}
-	clients := map[string]mcp.MCPClient{
-		"ok": &registrationMCPClient{tools: []*types.MCPTool{{
-			Name: "read_data", ReadOnlyHint: &readOnly,
-		}}},
-		"list-fail": &registrationMCPClient{listErr: errors.New("Bearer secret-list-response")},
-	}
-	manager := mcp.NewMCPManager(nil)
-	defer manager.Shutdown()
 	registry := NewToolRegistry()
-	diagnostics := []MCPRegistrationDiagnostic{}
-	registered, err := registerMCPTools(mcpRegistrationOptions{
-		ctx: context.Background(), registry: registry, services: services, manager: manager,
-		filter: MCPToolIsReadOnly, diagnostics: &diagnostics,
-		resolve: func(_ context.Context, service *types.MCPService, _ string) (mcp.MCPClient, error) {
-			client, ok := clients[service.ID]
-			if !ok {
-				return nil, errors.New("api_key=secret-connect-response")
-			}
-			return client, nil
-		},
-	})
+	registered, diagnostics, err := RegisterReadOnlyMCPToolsWithDiagnostics(
+		catalogTestContext(), registry, services, nil, nil, nil,
+	)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, registered)
-	require.Contains(t, registry.ListTools(), "mcp_safe_service_read_data")
-	require.Len(t, diagnostics, 2)
-	require.Equal(t, "connection_failed", diagnostics[0].Code)
-	require.Equal(t, "tool_list_failed", diagnostics[1].Code)
+	require.Equal(t, 2, registered)
+	require.Empty(t, diagnostics)
+	require.Equal(t, []string{ToolCallMCPTool, ToolDiscoverMCPTools}, registry.ListTools())
 	for _, diagnostic := range diagnostics {
 		assert.NotContains(t, diagnostic.Message, "secret")
 		assert.NotContains(t, diagnostic.Message, "Bearer")

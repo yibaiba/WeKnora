@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DocReader_Read_FullMethodName        = "/docreader.DocReader/Read"
-	DocReader_ReadStream_FullMethodName  = "/docreader.DocReader/ReadStream"
-	DocReader_ListEngines_FullMethodName = "/docreader.DocReader/ListEngines"
+	DocReader_Read_FullMethodName            = "/docreader.DocReader/Read"
+	DocReader_ReadStream_FullMethodName      = "/docreader.DocReader/ReadStream"
+	DocReader_ListEngines_FullMethodName     = "/docreader.DocReader/ListEngines"
+	DocReader_PreprocessImage_FullMethodName = "/docreader.DocReader/PreprocessImage"
 )
 
 // DocReaderClient is the client API for DocReader service.
@@ -37,6 +38,13 @@ type DocReaderClient interface {
 	// with bounded memory on both ends.
 	ReadStream(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadStreamResponse], error)
 	ListEngines(ctx context.Context, in *ListEnginesRequest, opts ...grpc.CallOption) (*ListEnginesResponse, error)
+	// PreprocessImage straightens and crops a photographed page so that OCR sees
+	// an upright, content-tight image. The caller sends the raw photograph and
+	// receives either the corrected page or a verdict that this input is not a
+	// page worth correcting — never an error for "not correctable", because the
+	// caller's fallback (use the original bytes) is a normal outcome rather than
+	// a failure to report.
+	PreprocessImage(ctx context.Context, in *PreprocessImageRequest, opts ...grpc.CallOption) (*PreprocessImageResponse, error)
 }
 
 type docReaderClient struct {
@@ -86,6 +94,16 @@ func (c *docReaderClient) ListEngines(ctx context.Context, in *ListEnginesReques
 	return out, nil
 }
 
+func (c *docReaderClient) PreprocessImage(ctx context.Context, in *PreprocessImageRequest, opts ...grpc.CallOption) (*PreprocessImageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreprocessImageResponse)
+	err := c.cc.Invoke(ctx, DocReader_PreprocessImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DocReaderServer is the server API for DocReader service.
 // All implementations must embed UnimplementedDocReaderServer
 // for forward compatibility.
@@ -99,6 +117,13 @@ type DocReaderServer interface {
 	// with bounded memory on both ends.
 	ReadStream(*ReadRequest, grpc.ServerStreamingServer[ReadStreamResponse]) error
 	ListEngines(context.Context, *ListEnginesRequest) (*ListEnginesResponse, error)
+	// PreprocessImage straightens and crops a photographed page so that OCR sees
+	// an upright, content-tight image. The caller sends the raw photograph and
+	// receives either the corrected page or a verdict that this input is not a
+	// page worth correcting — never an error for "not correctable", because the
+	// caller's fallback (use the original bytes) is a normal outcome rather than
+	// a failure to report.
+	PreprocessImage(context.Context, *PreprocessImageRequest) (*PreprocessImageResponse, error)
 	mustEmbedUnimplementedDocReaderServer()
 }
 
@@ -117,6 +142,9 @@ func (UnimplementedDocReaderServer) ReadStream(*ReadRequest, grpc.ServerStreamin
 }
 func (UnimplementedDocReaderServer) ListEngines(context.Context, *ListEnginesRequest) (*ListEnginesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListEngines not implemented")
+}
+func (UnimplementedDocReaderServer) PreprocessImage(context.Context, *PreprocessImageRequest) (*PreprocessImageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PreprocessImage not implemented")
 }
 func (UnimplementedDocReaderServer) mustEmbedUnimplementedDocReaderServer() {}
 func (UnimplementedDocReaderServer) testEmbeddedByValue()                   {}
@@ -186,6 +214,24 @@ func _DocReader_ListEngines_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DocReader_PreprocessImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreprocessImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DocReaderServer).PreprocessImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DocReader_PreprocessImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DocReaderServer).PreprocessImage(ctx, req.(*PreprocessImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DocReader_ServiceDesc is the grpc.ServiceDesc for DocReader service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -200,6 +246,10 @@ var DocReader_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListEngines",
 			Handler:    _DocReader_ListEngines_Handler,
+		},
+		{
+			MethodName: "PreprocessImage",
+			Handler:    _DocReader_PreprocessImage_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

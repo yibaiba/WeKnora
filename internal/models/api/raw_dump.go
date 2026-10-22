@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // streamRawDumpDir returns the directory for per-stream raw packet dumps.
@@ -36,6 +39,15 @@ type StreamPacketDumper struct {
 	path  string
 	model string
 	seq   int
+}
+
+// NewStreamPacketDumperContext opens a dump file unless tracing payloads are
+// redacted for this call. Tests can still call NewStreamPacketDumper directly.
+func NewStreamPacketDumperContext(ctx context.Context, modelName string, request any) *StreamPacketDumper {
+	if types.LLMTracePayloadsRedacted(ctx) {
+		return nil
+	}
+	return NewStreamPacketDumper(modelName, request)
 }
 
 // NewStreamPacketDumper opens a dump file for one stream, or returns nil when

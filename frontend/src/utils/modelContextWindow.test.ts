@@ -22,11 +22,11 @@ test('validates default and configured context window boundaries', () => {
 })
 
 test('serializes context window only for chat-style model types and configured values', () => {
-  assert.deepEqual(contextWindowParameters('chat', 32768), { context_window_tokens: 32768 })
-  assert.deepEqual(contextWindowParameters('vllm', 65536), { context_window_tokens: 65536 })
+  assert.deepEqual(contextWindowParameters('chat', 32768), { context_window: 32768 })
+  assert.deepEqual(contextWindowParameters('vllm', 65536), { context_window: 65536 })
   assert.deepEqual(contextWindowParameters('embedding', 32768), {})
   assert.deepEqual(contextWindowParameters('chat', 0), {})
-  assert.throws(() => contextWindowParameters('chat', 4095), /Invalid context_window_tokens/)
+  assert.throws(() => contextWindowParameters('chat', 4095), /Invalid context_window/)
 })
 
 test('round-trips configured context windows through API parameters', () => {
@@ -34,8 +34,8 @@ test('round-trips configured context windows through API parameters', () => {
   assert.equal(contextWindowTokensFromParameters(parameters), 32768)
   assert.equal(contextWindowTokensFromParameters(undefined), 0)
   assert.throws(
-    () => contextWindowTokensFromParameters({ context_window_tokens: 2_000_001 }),
-    /Invalid context_window_tokens/,
+    () => contextWindowTokensFromParameters({ context_window: 2_000_001 }),
+    /Invalid context_window/,
   )
 })
 

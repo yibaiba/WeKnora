@@ -391,6 +391,7 @@ func searchScopesFromTargets(searchTargets types.SearchTargets) []utils.SearchSc
 		}
 		scopes = append(scopes, utils.SearchScope{
 			KnowledgeBaseID: target.KnowledgeBaseID,
+			TenantID:        target.TenantID,
 			KnowledgeIDs:    knowledgeIDs,
 			TagIDs:          tagIDs,
 		})

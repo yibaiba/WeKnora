@@ -82,6 +82,7 @@ export interface Resource {
   url: string
   parent_id?: string
   has_children?: boolean
+  /** Connector-specific hints, e.g. Confluence Cloud's top-level-container limitation. */
   metadata?: Record<string, any>
 }
 

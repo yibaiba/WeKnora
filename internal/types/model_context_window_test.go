@@ -23,10 +23,10 @@ func TestModelParametersContextWindowTokens(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			params := ModelParameters{ContextWindowTokens: test.value}
+			params := ModelParameters{ContextWindow: test.value}
 			err := params.ValidateContextWindowTokens()
 			if !test.valid {
-				require.ErrorContains(t, err, "context_window_tokens")
+				require.ErrorContains(t, err, "context_window")
 				return
 			}
 			require.NoError(t, err)

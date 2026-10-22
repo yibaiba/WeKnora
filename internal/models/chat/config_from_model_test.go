@@ -17,7 +17,7 @@ func TestConfigFromModel(t *testing.T) {
 			BaseURL:             "https://api.example.com/v1",
 			APIKey:              "sk-xxx",
 			Provider:            "openai",
-			ContextWindowTokens: 32768,
+			ContextWindow: 32768,
 			ExtraConfig: map[string]string{
 				"deployment": "prod",
 			},

@@ -8,7 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/models/catalog"
+	"github.com/Tencent/WeKnora/internal/models/providers"
+	modelruntime "github.com/Tencent/WeKnora/internal/models/runtime"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -43,7 +44,7 @@ func newModelHandlerTestContext(method, path, body string) *gin.Context {
 
 func TestModelHandlersRejectInvalidContextWindowBeforeServiceCall(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	invalidParameters := `"parameters":{"context_window_tokens":4095}`
+	invalidParameters := `"parameters":{"context_window":4095}`
 
 	t.Run("create", func(t *testing.T) {
 		service := &contextWindowModelServiceStub{}
@@ -52,7 +53,7 @@ func TestModelHandlersRejectInvalidContextWindowBeforeServiceCall(t *testing.T) 
 		NewModelHandler(service).CreateModel(ctx)
 
 		require.NotEmpty(t, ctx.Errors)
-		assert.ErrorContains(t, ctx.Errors.Last().Err, "context_window_tokens")
+		assert.ErrorContains(t, ctx.Errors.Last().Err, "context_window")
 		assert.Zero(t, service.createCalls)
 	})
 
@@ -63,7 +64,7 @@ func TestModelHandlersRejectInvalidContextWindowBeforeServiceCall(t *testing.T) 
 		NewModelHandler(service).UpdateModel(ctx)
 
 		require.NotEmpty(t, ctx.Errors)
-		assert.ErrorContains(t, ctx.Errors.Last().Err, "context_window_tokens")
+		assert.ErrorContains(t, ctx.Errors.Last().Err, "context_window")
 		assert.Zero(t, service.getCalls)
 	})
 }
@@ -110,11 +111,11 @@ func TestRedactedDebugConfig(t *testing.T) {
 // credential field is called something the name heuristic cannot guess is
 // still redacted, because the vendor declared it Secret.
 func TestRedactedDebugConfigUsesVendorDeclaration(t *testing.T) {
-	catalog.Register(&catalog.Vendor{
+	modelruntime.Register(&providers.Definition{
 		ID:         "handler-debug-redaction-vendor",
 		Name:       "Debug Redaction Vendor",
 		ModelTypes: []types.ModelType{types.ModelTypeRerank},
-		ExtraFields: []catalog.ExtraField{
+		ExtraFields: []providers.ExtraField{
 			{Key: "signing_material", Label: "Signing Material", Secret: true},
 		},
 	})

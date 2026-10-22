@@ -67,6 +67,18 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 		}
 	}
 
+	// GORM substitutes default:true for a zero bool even with Select("*").
+	// A non-nil pointer makes both true and false explicit on insert, while
+	// embedding the original chunk keeps generated seq_ids and timestamps on it.
+	type chunkInsert struct {
+		*types.Chunk
+		IsEnabled *bool
+	}
+	rows := make([]chunkInsert, len(chunks))
+	for i, chunk := range chunks {
+		rows[i] = chunkInsert{Chunk: chunk, IsEnabled: &chunk.IsEnabled}
+	}
+
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// SQLite doesn't support autoIncrement on non-PK columns, so SeqIDs are
 		// pre-assigned from MAX(seq_id). Doing it inside the write transaction
@@ -78,10 +90,8 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 			}
 		}
 
-		// Select("*") ensures zero-value fields (IsEnabled=false, Flags=0) are
-		// explicitly inserted, bypassing GORM's default value behavior.
 		// SeqID=0 is skipped by GORM automatically (autoIncrement tag).
-		return tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error
+		return tx.Table("chunks").Select("*").CreateInBatches(rows, createChunksBatchSize).Error
 	})
 }
 
@@ -224,11 +234,11 @@ func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 			db = db.Where("is_enabled = ?", *isEnabled)
 		}
 		if keyword != "" {
-			like := "%" + keyword + "%"
+			like := "%" + escapeLikeKeyword(keyword) + "%"
 
 			// Document type: search content only
 			if knowledgeType != types.KnowledgeTypeFAQ {
-				db = db.Where("content LIKE ?", like)
+				db = db.Where("content LIKE ? ESCAPE ?", like, likeEscapeChar)
 				return db
 			}
 
@@ -240,32 +250,35 @@ func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 			case "standard_question":
 				// Search only in standard_question field of metadata
 				if isPostgres {
-					db = db.Where("metadata->>'standard_question' ILIKE ?", like)
+					db = db.Where("metadata->>'standard_question' ILIKE ? ESCAPE ?", like, likeEscapeChar)
 				} else {
 					// MySQL: metadata->>'$.standard_question' (MySQL 5.7.13+)
 					// 也可以用 JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.standard_question'))
-					db = db.Where("metadata->>'$.standard_question' LIKE ?", like)
+					db = db.Where("metadata->>'$.standard_question' LIKE ? ESCAPE ?", like, likeEscapeChar)
 				}
 			case "similar_questions":
 				// Search in similar_questions array of metadata
 				if isPostgres {
-					db = db.Where("(metadata->'similar_questions')::text ILIKE ?", like)
+					db = db.Where("(metadata->'similar_questions')::text ILIKE ? ESCAPE ?", like, likeEscapeChar)
 				} else {
-					db = db.Where("JSON_EXTRACT(metadata, '$.similar_questions') LIKE ?", like)
+					db = db.Where("JSON_EXTRACT(metadata, '$.similar_questions') LIKE ? ESCAPE ?",
+						like, likeEscapeChar)
 				}
 			case "answers":
 				// Search in answers array of metadata
 				if isPostgres {
-					db = db.Where("(metadata->'answers')::text ILIKE ?", like)
+					db = db.Where("(metadata->'answers')::text ILIKE ? ESCAPE ?", like, likeEscapeChar)
 				} else {
-					db = db.Where("JSON_EXTRACT(metadata, '$.answers') LIKE ?", like)
+					db = db.Where("JSON_EXTRACT(metadata, '$.answers') LIKE ? ESCAPE ?", like, likeEscapeChar)
 				}
 			default:
 				// Search in all fields (content and metadata)
 				if isPostgres {
-					db = db.Where("(content ILIKE ? OR metadata::text ILIKE ?)", like, like)
+					db = db.Where("(content ILIKE ? ESCAPE ? OR metadata::text ILIKE ? ESCAPE ?)",
+						like, likeEscapeChar, like, likeEscapeChar)
 				} else {
-					db = db.Where("(content LIKE ? OR CAST(metadata AS CHAR) LIKE ?)", like, like)
+					db = db.Where("(content LIKE ? ESCAPE ? OR CAST(metadata AS CHAR) LIKE ? ESCAPE ?)",
+						like, likeEscapeChar, like, likeEscapeChar)
 				}
 			}
 		}
@@ -376,6 +389,24 @@ func (r *chunkRepository) ListChunksByParentIDs(
 	return chunks, nil
 }
 
+// ListChunksByParentIDsOnly retrieves chunks by parent IDs without tenant
+// filter, for expansions whose parent IDs come from org-shared KB retrieval
+// results owned by another workspace (#3342).
+func (r *chunkRepository) ListChunksByParentIDsOnly(
+	ctx context.Context, parentIDs []string,
+) ([]*types.Chunk, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	var chunks []*types.Chunk
+	if err := r.db.WithContext(ctx).
+		Where("parent_chunk_id IN ?", parentIDs).
+		Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
 // UpdateChunk updates a chunk using GORM Save, which updates ALL fields
 // except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
@@ -396,6 +427,7 @@ func (r *chunkRepository) SaveChunkRevision(
 			Updates(map[string]interface{}{
 				"content":          common.CleanInvalidUTF8(chunk.Content),
 				"source_content":   common.CleanInvalidUTF8(chunk.SourceContent),
+				"source_locators":  chunk.SourceLocators,
 				"content_revision": chunk.ContentRevision,
 				"is_enabled":       chunk.IsEnabled,
 				"metadata":         chunk.Metadata,

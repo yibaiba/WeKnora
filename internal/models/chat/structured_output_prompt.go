@@ -13,6 +13,26 @@ import (
 
 const structuredOutputExampleMaxDepth = 8
 
+func injectStructuredOutputPrompt(messages []Message, schema json.RawMessage) ([]Message, error) {
+	prompt, err := buildStructuredOutputPrompt(schema)
+	if err != nil {
+		return nil, err
+	}
+	result := append([]Message(nil), messages...)
+	for index := range result {
+		if result[index].Role != "system" {
+			continue
+		}
+		content := strings.TrimSpace(result[index].Content)
+		if content != "" {
+			content += "\n\n"
+		}
+		result[index].Content = content + prompt
+		return result, nil
+	}
+	return append([]Message{{Role: "system", Content: prompt}}, result...), nil
+}
+
 func withStructuredOutputPrompt(
 	messages []openai.ChatCompletionMessage,
 	schema json.RawMessage,

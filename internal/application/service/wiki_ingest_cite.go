@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"golang.org/x/sync/errgroup"
 )
@@ -408,11 +409,49 @@ func (s *wikiIngestService) resolveCitedChunks(
 			logger.Warnf(ctx, "wiki ingest: failed to resolve cited chunks: %v", err)
 			continue
 		}
+
+		// Pull image captions / OCR from the image child chunks of the cited
+		// text chunks and inline them into the content, the same way the wiki
+		// summary path does via reconstructEnrichedContent. Without this the
+		// Reduce phase sees bare Markdown image links with no caption/OCR
+		// context, so image-heavy documents degrade to "copy verbatim" or
+		// "drop entirely" behavior on concept/entity pages.
+		imageInfoByID := searchutil.CollectImageInfoByChunkIDs(ctx, s.chunkRepo, tenantID, ids)
+
+		// Citation enrichment is an in-memory copy. Reload OCR Content for the
+		// same image-only parents here so Reduce does not lose that evidence
+		// when image_info is missing. Keep ordinary prose on its existing path.
+		var scannedIDs []string
 		for _, c := range chunks {
-			if c == nil || c.Content == "" {
+			if c != nil && c.IsEnabled && !chunkHasExtractableText(c.Content) {
+				scannedIDs = append(scannedIDs, c.ID)
+			}
+		}
+		ocrByParent := make(map[string][]*types.Chunk)
+		if len(scannedIDs) > 0 {
+			children, childErr := s.chunkRepo.ListChunksByParentIDs(ctx, tenantID, scannedIDs)
+			if childErr != nil {
+				logger.Warnf(ctx, "wiki ingest: failed to resolve cited OCR: %v", childErr)
+			} else {
+				inputs := append(append([]*types.Chunk(nil), chunks...), children...)
+				for _, child := range scannedOCRForWiki(inputs) {
+					ocrByParent[child.ParentChunkID] = append(ocrByParent[child.ParentChunkID], child)
+				}
+			}
+		}
+
+		for _, c := range chunks {
+			if c == nil || !c.IsEnabled || c.Content == "" {
 				continue
 			}
-			out[c.ID] = c.Content
+			content := c.Content
+			if info := imageInfoByID[c.ID]; info != "" {
+				content = searchutil.EnrichContentWithImageInfo(content, info)
+			}
+			if ocr := ocrByParent[c.ID]; len(ocr) > 0 {
+				content = appendScannedPageText(content, append([]*types.Chunk{c}, ocr...))
+			}
+			out[c.ID] = content
 		}
 	}
 	return out

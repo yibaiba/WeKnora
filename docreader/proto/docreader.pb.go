@@ -21,6 +21,156 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// PreprocessImageRequest carries one photographed page.
+type PreprocessImageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Image         []byte                 `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreprocessImageRequest) Reset() {
+	*x = PreprocessImageRequest{}
+	mi := &file_docreader_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreprocessImageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreprocessImageRequest) ProtoMessage() {}
+
+func (x *PreprocessImageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_docreader_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreprocessImageRequest.ProtoReflect.Descriptor instead.
+func (*PreprocessImageRequest) Descriptor() ([]byte, []int) {
+	return file_docreader_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *PreprocessImageRequest) GetImage() []byte {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+type PreprocessImageResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// image is the corrected page, JPEG-encoded. Empty when fallback_needed.
+	Image []byte `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
+	// fallback_needed tells the caller to keep its original bytes: the input is
+	// not a correctable page, or correcting it would not be an improvement.
+	FallbackNeeded bool `protobuf:"varint,2,opt,name=fallback_needed,json=fallbackNeeded,proto3" json:"fallback_needed,omitempty"`
+	// Diagnostics for the run's trace and for tuning the thresholds.
+	Theta    float32 `protobuf:"fixed32,3,opt,name=theta,proto3" json:"theta,omitempty"`                // dominant text-line angle (degrees)
+	Residual float32 `protobuf:"fixed32,4,opt,name=residual,proto3" json:"residual,omitempty"`          // residual skew after alignment; > 2 means low quality
+	Flip     bool    `protobuf:"varint,5,opt,name=flip,proto3" json:"flip,omitempty"`                   // whether a 180-degree flip was applied
+	NBoxes   int32   `protobuf:"varint,6,opt,name=n_boxes,json=nBoxes,proto3" json:"n_boxes,omitempty"` // text boxes detected
+	NKept    int32   `protobuf:"varint,7,opt,name=n_kept,json=nKept,proto3" json:"n_kept,omitempty"`    // text boxes kept after filtering
+	// status is "ok" | "no_text" | "low_quality", for logs and metrics.
+	Status        string `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreprocessImageResponse) Reset() {
+	*x = PreprocessImageResponse{}
+	mi := &file_docreader_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreprocessImageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreprocessImageResponse) ProtoMessage() {}
+
+func (x *PreprocessImageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_docreader_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreprocessImageResponse.ProtoReflect.Descriptor instead.
+func (*PreprocessImageResponse) Descriptor() ([]byte, []int) {
+	return file_docreader_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *PreprocessImageResponse) GetImage() []byte {
+	if x != nil {
+		return x.Image
+	}
+	return nil
+}
+
+func (x *PreprocessImageResponse) GetFallbackNeeded() bool {
+	if x != nil {
+		return x.FallbackNeeded
+	}
+	return false
+}
+
+func (x *PreprocessImageResponse) GetTheta() float32 {
+	if x != nil {
+		return x.Theta
+	}
+	return 0
+}
+
+func (x *PreprocessImageResponse) GetResidual() float32 {
+	if x != nil {
+		return x.Residual
+	}
+	return 0
+}
+
+func (x *PreprocessImageResponse) GetFlip() bool {
+	if x != nil {
+		return x.Flip
+	}
+	return false
+}
+
+func (x *PreprocessImageResponse) GetNBoxes() int32 {
+	if x != nil {
+		return x.NBoxes
+	}
+	return 0
+}
+
+func (x *PreprocessImageResponse) GetNKept() int32 {
+	if x != nil {
+		return x.NKept
+	}
+	return 0
+}
+
+func (x *PreprocessImageResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
 type ReadConfig struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	ParserEngine          string                 `protobuf:"bytes,1,opt,name=parser_engine,json=parserEngine,proto3" json:"parser_engine,omitempty"`
@@ -31,7 +181,7 @@ type ReadConfig struct {
 
 func (x *ReadConfig) Reset() {
 	*x = ReadConfig{}
-	mi := &file_docreader_proto_msgTypes[0]
+	mi := &file_docreader_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -43,7 +193,7 @@ func (x *ReadConfig) String() string {
 func (*ReadConfig) ProtoMessage() {}
 
 func (x *ReadConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[0]
+	mi := &file_docreader_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -56,7 +206,7 @@ func (x *ReadConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadConfig.ProtoReflect.Descriptor instead.
 func (*ReadConfig) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{0}
+	return file_docreader_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ReadConfig) GetParserEngine() string {
@@ -89,7 +239,7 @@ type ReadRequest struct {
 
 func (x *ReadRequest) Reset() {
 	*x = ReadRequest{}
-	mi := &file_docreader_proto_msgTypes[1]
+	mi := &file_docreader_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -101,7 +251,7 @@ func (x *ReadRequest) String() string {
 func (*ReadRequest) ProtoMessage() {}
 
 func (x *ReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[1]
+	mi := &file_docreader_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -114,7 +264,7 @@ func (x *ReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadRequest.ProtoReflect.Descriptor instead.
 func (*ReadRequest) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{1}
+	return file_docreader_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ReadRequest) GetFileContent() []byte {
@@ -179,7 +329,7 @@ type ImageRef struct {
 
 func (x *ImageRef) Reset() {
 	*x = ImageRef{}
-	mi := &file_docreader_proto_msgTypes[2]
+	mi := &file_docreader_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -191,7 +341,7 @@ func (x *ImageRef) String() string {
 func (*ImageRef) ProtoMessage() {}
 
 func (x *ImageRef) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[2]
+	mi := &file_docreader_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -204,7 +354,7 @@ func (x *ImageRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageRef.ProtoReflect.Descriptor instead.
 func (*ImageRef) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{2}
+	return file_docreader_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ImageRef) GetFilename() string {
@@ -262,7 +412,7 @@ type StructureBlock struct {
 
 func (x *StructureBlock) Reset() {
 	*x = StructureBlock{}
-	mi := &file_docreader_proto_msgTypes[3]
+	mi := &file_docreader_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -274,7 +424,7 @@ func (x *StructureBlock) String() string {
 func (*StructureBlock) ProtoMessage() {}
 
 func (x *StructureBlock) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[3]
+	mi := &file_docreader_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -287,7 +437,7 @@ func (x *StructureBlock) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructureBlock.ProtoReflect.Descriptor instead.
 func (*StructureBlock) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{3}
+	return file_docreader_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StructureBlock) GetKind() string {
@@ -367,6 +517,71 @@ func (x *StructureBlock) GetId() string {
 	return ""
 }
 
+// SourceBlock ties a range of markdown_content to the place in the original
+// file it was parsed from, so a citation can open the file there.
+type SourceBlock struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Unicode code point offsets into markdown_content, end exclusive.
+	Start uint32 `protobuf:"varint,1,opt,name=start,proto3" json:"start,omitempty"`
+	End   uint32 `protobuf:"varint,2,opt,name=end,proto3" json:"end,omitempty"`
+	// JSON-encoded locator: {"type":"pdf","page":3,"bbox":[x0,y0,x1,y1]}
+	// with ordinals 1-based and bbox as fractions of the page, origin top-left.
+	LocatorJson   string `protobuf:"bytes,3,opt,name=locator_json,json=locatorJson,proto3" json:"locator_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceBlock) Reset() {
+	*x = SourceBlock{}
+	mi := &file_docreader_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceBlock) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceBlock) ProtoMessage() {}
+
+func (x *SourceBlock) ProtoReflect() protoreflect.Message {
+	mi := &file_docreader_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceBlock.ProtoReflect.Descriptor instead.
+func (*SourceBlock) Descriptor() ([]byte, []int) {
+	return file_docreader_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SourceBlock) GetStart() uint32 {
+	if x != nil {
+		return x.Start
+	}
+	return 0
+}
+
+func (x *SourceBlock) GetEnd() uint32 {
+	if x != nil {
+		return x.End
+	}
+	return 0
+}
+
+func (x *SourceBlock) GetLocatorJson() string {
+	if x != nil {
+		return x.LocatorJson
+	}
+	return ""
+}
+
 type ReadResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	MarkdownContent string                 `protobuf:"bytes,1,opt,name=markdown_content,json=markdownContent,proto3" json:"markdown_content,omitempty"`
@@ -375,13 +590,14 @@ type ReadResponse struct {
 	Metadata        map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Error           string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
 	StructureBlocks []*StructureBlock      `protobuf:"bytes,6,rep,name=structure_blocks,json=structureBlocks,proto3" json:"structure_blocks,omitempty"`
+	SourceBlocks    []*SourceBlock         `protobuf:"bytes,7,rep,name=source_blocks,json=sourceBlocks,proto3" json:"source_blocks,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ReadResponse) Reset() {
 	*x = ReadResponse{}
-	mi := &file_docreader_proto_msgTypes[4]
+	mi := &file_docreader_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -393,7 +609,7 @@ func (x *ReadResponse) String() string {
 func (*ReadResponse) ProtoMessage() {}
 
 func (x *ReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[4]
+	mi := &file_docreader_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -406,7 +622,7 @@ func (x *ReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadResponse.ProtoReflect.Descriptor instead.
 func (*ReadResponse) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{4}
+	return file_docreader_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ReadResponse) GetMarkdownContent() string {
@@ -451,6 +667,13 @@ func (x *ReadResponse) GetStructureBlocks() []*StructureBlock {
 	return nil
 }
 
+func (x *ReadResponse) GetSourceBlocks() []*SourceBlock {
+	if x != nil {
+		return x.SourceBlocks
+	}
+	return nil
+}
+
 // Metadata header for a streamed read. Sent exactly once, before any image.
 type ReadStreamMeta struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -460,13 +683,14 @@ type ReadStreamMeta struct {
 	Error           string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	ImageCount      uint32                 `protobuf:"varint,5,opt,name=image_count,json=imageCount,proto3" json:"image_count,omitempty"` // best-effort total image count (0 if unknown)
 	StructureBlocks []*StructureBlock      `protobuf:"bytes,6,rep,name=structure_blocks,json=structureBlocks,proto3" json:"structure_blocks,omitempty"`
+	SourceBlocks    []*SourceBlock         `protobuf:"bytes,7,rep,name=source_blocks,json=sourceBlocks,proto3" json:"source_blocks,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ReadStreamMeta) Reset() {
 	*x = ReadStreamMeta{}
-	mi := &file_docreader_proto_msgTypes[5]
+	mi := &file_docreader_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -478,7 +702,7 @@ func (x *ReadStreamMeta) String() string {
 func (*ReadStreamMeta) ProtoMessage() {}
 
 func (x *ReadStreamMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[5]
+	mi := &file_docreader_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -491,7 +715,7 @@ func (x *ReadStreamMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadStreamMeta.ProtoReflect.Descriptor instead.
 func (*ReadStreamMeta) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{5}
+	return file_docreader_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ReadStreamMeta) GetMarkdownContent() string {
@@ -536,6 +760,13 @@ func (x *ReadStreamMeta) GetStructureBlocks() []*StructureBlock {
 	return nil
 }
 
+func (x *ReadStreamMeta) GetSourceBlocks() []*SourceBlock {
+	if x != nil {
+		return x.SourceBlocks
+	}
+	return nil
+}
+
 // One frame of a ReadStream. The first frame carries `meta`; every subsequent
 // frame carries a single `image`.
 type ReadStreamResponse struct {
@@ -551,7 +782,7 @@ type ReadStreamResponse struct {
 
 func (x *ReadStreamResponse) Reset() {
 	*x = ReadStreamResponse{}
-	mi := &file_docreader_proto_msgTypes[6]
+	mi := &file_docreader_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -563,7 +794,7 @@ func (x *ReadStreamResponse) String() string {
 func (*ReadStreamResponse) ProtoMessage() {}
 
 func (x *ReadStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[6]
+	mi := &file_docreader_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -576,7 +807,7 @@ func (x *ReadStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadStreamResponse.ProtoReflect.Descriptor instead.
 func (*ReadStreamResponse) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{6}
+	return file_docreader_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ReadStreamResponse) GetPayload() isReadStreamResponse_Payload {
@@ -629,7 +860,7 @@ type ListEnginesRequest struct {
 
 func (x *ListEnginesRequest) Reset() {
 	*x = ListEnginesRequest{}
-	mi := &file_docreader_proto_msgTypes[7]
+	mi := &file_docreader_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -641,7 +872,7 @@ func (x *ListEnginesRequest) String() string {
 func (*ListEnginesRequest) ProtoMessage() {}
 
 func (x *ListEnginesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[7]
+	mi := &file_docreader_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -654,7 +885,7 @@ func (x *ListEnginesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnginesRequest.ProtoReflect.Descriptor instead.
 func (*ListEnginesRequest) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{7}
+	return file_docreader_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListEnginesRequest) GetConfigOverrides() map[string]string {
@@ -677,7 +908,7 @@ type ParserEngineInfo struct {
 
 func (x *ParserEngineInfo) Reset() {
 	*x = ParserEngineInfo{}
-	mi := &file_docreader_proto_msgTypes[8]
+	mi := &file_docreader_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -689,7 +920,7 @@ func (x *ParserEngineInfo) String() string {
 func (*ParserEngineInfo) ProtoMessage() {}
 
 func (x *ParserEngineInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[8]
+	mi := &file_docreader_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -702,7 +933,7 @@ func (x *ParserEngineInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParserEngineInfo.ProtoReflect.Descriptor instead.
 func (*ParserEngineInfo) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{8}
+	return file_docreader_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ParserEngineInfo) GetName() string {
@@ -749,7 +980,7 @@ type ListEnginesResponse struct {
 
 func (x *ListEnginesResponse) Reset() {
 	*x = ListEnginesResponse{}
-	mi := &file_docreader_proto_msgTypes[9]
+	mi := &file_docreader_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -761,7 +992,7 @@ func (x *ListEnginesResponse) String() string {
 func (*ListEnginesResponse) ProtoMessage() {}
 
 func (x *ListEnginesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_docreader_proto_msgTypes[9]
+	mi := &file_docreader_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -774,7 +1005,7 @@ func (x *ListEnginesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnginesResponse.ProtoReflect.Descriptor instead.
 func (*ListEnginesResponse) Descriptor() ([]byte, []int) {
-	return file_docreader_proto_rawDescGZIP(), []int{9}
+	return file_docreader_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListEnginesResponse) GetEngines() []*ParserEngineInfo {
@@ -788,7 +1019,18 @@ var File_docreader_proto protoreflect.FileDescriptor
 
 const file_docreader_proto_rawDesc = "" +
 	"\n" +
-	"\x0fdocreader.proto\x12\tdocreader\"\xeb\x01\n" +
+	"\x0fdocreader.proto\x12\tdocreader\".\n" +
+	"\x16PreprocessImageRequest\x12\x14\n" +
+	"\x05image\x18\x01 \x01(\fR\x05image\"\xe6\x01\n" +
+	"\x17PreprocessImageResponse\x12\x14\n" +
+	"\x05image\x18\x01 \x01(\fR\x05image\x12'\n" +
+	"\x0ffallback_needed\x18\x02 \x01(\bR\x0efallbackNeeded\x12\x14\n" +
+	"\x05theta\x18\x03 \x01(\x02R\x05theta\x12\x1a\n" +
+	"\bresidual\x18\x04 \x01(\x02R\bresidual\x12\x12\n" +
+	"\x04flip\x18\x05 \x01(\bR\x04flip\x12\x17\n" +
+	"\an_boxes\x18\x06 \x01(\x05R\x06nBoxes\x12\x15\n" +
+	"\x06n_kept\x18\a \x01(\x05R\x05nKept\x12\x16\n" +
+	"\x06status\x18\b \x01(\tR\x06status\"\xeb\x01\n" +
 	"\n" +
 	"ReadConfig\x12#\n" +
 	"\rparser_engine\x18\x01 \x01(\tR\fparserEngine\x12h\n" +
@@ -827,7 +1069,11 @@ const file_docreader_proto_rawDesc = "" +
 	"confidence\x12#\n" +
 	"\rcontext_kinds\x18\n" +
 	" \x03(\tR\fcontextKinds\x12\x0e\n" +
-	"\x02id\x18\v \x01(\tR\x02id\"\xef\x02\n" +
+	"\x02id\x18\v \x01(\tR\x02id\"X\n" +
+	"\vSourceBlock\x12\x14\n" +
+	"\x05start\x18\x01 \x01(\rR\x05start\x12\x10\n" +
+	"\x03end\x18\x02 \x01(\rR\x03end\x12!\n" +
+	"\flocator_json\x18\x03 \x01(\tR\vlocatorJson\"\xac\x03\n" +
 	"\fReadResponse\x12)\n" +
 	"\x10markdown_content\x18\x01 \x01(\tR\x0fmarkdownContent\x122\n" +
 	"\n" +
@@ -835,10 +1081,11 @@ const file_docreader_proto_rawDesc = "" +
 	"\x0eimage_dir_path\x18\x03 \x01(\tR\fimageDirPath\x12A\n" +
 	"\bmetadata\x18\x04 \x03(\v2%.docreader.ReadResponse.MetadataEntryR\bmetadata\x12\x14\n" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12D\n" +
-	"\x10structure_blocks\x18\x06 \x03(\v2\x19.docreader.StructureBlockR\x0fstructureBlocks\x1a;\n" +
+	"\x10structure_blocks\x18\x06 \x03(\v2\x19.docreader.StructureBlockR\x0fstructureBlocks\x12;\n" +
+	"\rsource_blocks\x18\a \x03(\v2\x16.docreader.SourceBlockR\fsourceBlocks\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe0\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9d\x03\n" +
 	"\x0eReadStreamMeta\x12)\n" +
 	"\x10markdown_content\x18\x01 \x01(\tR\x0fmarkdownContent\x12$\n" +
 	"\x0eimage_dir_path\x18\x02 \x01(\tR\fimageDirPath\x12C\n" +
@@ -846,7 +1093,8 @@ const file_docreader_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1f\n" +
 	"\vimage_count\x18\x05 \x01(\rR\n" +
 	"imageCount\x12D\n" +
-	"\x10structure_blocks\x18\x06 \x03(\v2\x19.docreader.StructureBlockR\x0fstructureBlocks\x1a;\n" +
+	"\x10structure_blocks\x18\x06 \x03(\v2\x19.docreader.StructureBlockR\x0fstructureBlocks\x12;\n" +
+	"\rsource_blocks\x18\a \x03(\v2\x16.docreader.SourceBlockR\fsourceBlocks\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"}\n" +
@@ -867,12 +1115,13 @@ const file_docreader_proto_rawDesc = "" +
 	"\tavailable\x18\x04 \x01(\bR\tavailable\x12-\n" +
 	"\x12unavailable_reason\x18\x05 \x01(\tR\x11unavailableReason\"L\n" +
 	"\x13ListEnginesResponse\x125\n" +
-	"\aengines\x18\x01 \x03(\v2\x1b.docreader.ParserEngineInfoR\aengines2\xdf\x01\n" +
+	"\aengines\x18\x01 \x03(\v2\x1b.docreader.ParserEngineInfoR\aengines2\xbb\x02\n" +
 	"\tDocReader\x129\n" +
 	"\x04Read\x12\x16.docreader.ReadRequest\x1a\x17.docreader.ReadResponse\"\x00\x12G\n" +
 	"\n" +
 	"ReadStream\x12\x16.docreader.ReadRequest\x1a\x1d.docreader.ReadStreamResponse\"\x000\x01\x12N\n" +
-	"\vListEngines\x12\x1d.docreader.ListEnginesRequest\x1a\x1e.docreader.ListEnginesResponse\"\x00B5Z3github.com/Tencent/WeKnora/internal/docreader/protob\x06proto3"
+	"\vListEngines\x12\x1d.docreader.ListEnginesRequest\x1a\x1e.docreader.ListEnginesResponse\"\x00\x12Z\n" +
+	"\x0fPreprocessImage\x12!.docreader.PreprocessImageRequest\x1a\".docreader.PreprocessImageResponse\"\x00B5Z3github.com/Tencent/WeKnora/internal/docreader/protob\x06proto3"
 
 var (
 	file_docreader_proto_rawDescOnce sync.Once
@@ -886,46 +1135,53 @@ func file_docreader_proto_rawDescGZIP() []byte {
 	return file_docreader_proto_rawDescData
 }
 
-var file_docreader_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_docreader_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_docreader_proto_goTypes = []any{
-	(*ReadConfig)(nil),          // 0: docreader.ReadConfig
-	(*ReadRequest)(nil),         // 1: docreader.ReadRequest
-	(*ImageRef)(nil),            // 2: docreader.ImageRef
-	(*StructureBlock)(nil),      // 3: docreader.StructureBlock
-	(*ReadResponse)(nil),        // 4: docreader.ReadResponse
-	(*ReadStreamMeta)(nil),      // 5: docreader.ReadStreamMeta
-	(*ReadStreamResponse)(nil),  // 6: docreader.ReadStreamResponse
-	(*ListEnginesRequest)(nil),  // 7: docreader.ListEnginesRequest
-	(*ParserEngineInfo)(nil),    // 8: docreader.ParserEngineInfo
-	(*ListEnginesResponse)(nil), // 9: docreader.ListEnginesResponse
-	nil,                         // 10: docreader.ReadConfig.ParserEngineOverridesEntry
-	nil,                         // 11: docreader.ReadResponse.MetadataEntry
-	nil,                         // 12: docreader.ReadStreamMeta.MetadataEntry
-	nil,                         // 13: docreader.ListEnginesRequest.ConfigOverridesEntry
+	(*PreprocessImageRequest)(nil),  // 0: docreader.PreprocessImageRequest
+	(*PreprocessImageResponse)(nil), // 1: docreader.PreprocessImageResponse
+	(*ReadConfig)(nil),              // 2: docreader.ReadConfig
+	(*ReadRequest)(nil),             // 3: docreader.ReadRequest
+	(*ImageRef)(nil),                // 4: docreader.ImageRef
+	(*StructureBlock)(nil),          // 5: docreader.StructureBlock
+	(*SourceBlock)(nil),             // 6: docreader.SourceBlock
+	(*ReadResponse)(nil),            // 7: docreader.ReadResponse
+	(*ReadStreamMeta)(nil),          // 8: docreader.ReadStreamMeta
+	(*ReadStreamResponse)(nil),      // 9: docreader.ReadStreamResponse
+	(*ListEnginesRequest)(nil),      // 10: docreader.ListEnginesRequest
+	(*ParserEngineInfo)(nil),        // 11: docreader.ParserEngineInfo
+	(*ListEnginesResponse)(nil),     // 12: docreader.ListEnginesResponse
+	nil,                             // 13: docreader.ReadConfig.ParserEngineOverridesEntry
+	nil,                             // 14: docreader.ReadResponse.MetadataEntry
+	nil,                             // 15: docreader.ReadStreamMeta.MetadataEntry
+	nil,                             // 16: docreader.ListEnginesRequest.ConfigOverridesEntry
 }
 var file_docreader_proto_depIdxs = []int32{
-	10, // 0: docreader.ReadConfig.parser_engine_overrides:type_name -> docreader.ReadConfig.ParserEngineOverridesEntry
-	0,  // 1: docreader.ReadRequest.config:type_name -> docreader.ReadConfig
-	2,  // 2: docreader.ReadResponse.image_refs:type_name -> docreader.ImageRef
-	11, // 3: docreader.ReadResponse.metadata:type_name -> docreader.ReadResponse.MetadataEntry
-	3,  // 4: docreader.ReadResponse.structure_blocks:type_name -> docreader.StructureBlock
-	12, // 5: docreader.ReadStreamMeta.metadata:type_name -> docreader.ReadStreamMeta.MetadataEntry
-	3,  // 6: docreader.ReadStreamMeta.structure_blocks:type_name -> docreader.StructureBlock
-	5,  // 7: docreader.ReadStreamResponse.meta:type_name -> docreader.ReadStreamMeta
-	2,  // 8: docreader.ReadStreamResponse.image:type_name -> docreader.ImageRef
-	13, // 9: docreader.ListEnginesRequest.config_overrides:type_name -> docreader.ListEnginesRequest.ConfigOverridesEntry
-	8,  // 10: docreader.ListEnginesResponse.engines:type_name -> docreader.ParserEngineInfo
-	1,  // 11: docreader.DocReader.Read:input_type -> docreader.ReadRequest
-	1,  // 12: docreader.DocReader.ReadStream:input_type -> docreader.ReadRequest
-	7,  // 13: docreader.DocReader.ListEngines:input_type -> docreader.ListEnginesRequest
-	4,  // 14: docreader.DocReader.Read:output_type -> docreader.ReadResponse
-	6,  // 15: docreader.DocReader.ReadStream:output_type -> docreader.ReadStreamResponse
-	9,  // 16: docreader.DocReader.ListEngines:output_type -> docreader.ListEnginesResponse
-	14, // [14:17] is the sub-list for method output_type
-	11, // [11:14] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	13, // 0: docreader.ReadConfig.parser_engine_overrides:type_name -> docreader.ReadConfig.ParserEngineOverridesEntry
+	2,  // 1: docreader.ReadRequest.config:type_name -> docreader.ReadConfig
+	4,  // 2: docreader.ReadResponse.image_refs:type_name -> docreader.ImageRef
+	14, // 3: docreader.ReadResponse.metadata:type_name -> docreader.ReadResponse.MetadataEntry
+	5,  // 4: docreader.ReadResponse.structure_blocks:type_name -> docreader.StructureBlock
+	6,  // 5: docreader.ReadResponse.source_blocks:type_name -> docreader.SourceBlock
+	15, // 6: docreader.ReadStreamMeta.metadata:type_name -> docreader.ReadStreamMeta.MetadataEntry
+	5,  // 7: docreader.ReadStreamMeta.structure_blocks:type_name -> docreader.StructureBlock
+	6,  // 8: docreader.ReadStreamMeta.source_blocks:type_name -> docreader.SourceBlock
+	8,  // 9: docreader.ReadStreamResponse.meta:type_name -> docreader.ReadStreamMeta
+	4,  // 10: docreader.ReadStreamResponse.image:type_name -> docreader.ImageRef
+	16, // 11: docreader.ListEnginesRequest.config_overrides:type_name -> docreader.ListEnginesRequest.ConfigOverridesEntry
+	11, // 12: docreader.ListEnginesResponse.engines:type_name -> docreader.ParserEngineInfo
+	3,  // 13: docreader.DocReader.Read:input_type -> docreader.ReadRequest
+	3,  // 14: docreader.DocReader.ReadStream:input_type -> docreader.ReadRequest
+	10, // 15: docreader.DocReader.ListEngines:input_type -> docreader.ListEnginesRequest
+	0,  // 16: docreader.DocReader.PreprocessImage:input_type -> docreader.PreprocessImageRequest
+	7,  // 17: docreader.DocReader.Read:output_type -> docreader.ReadResponse
+	9,  // 18: docreader.DocReader.ReadStream:output_type -> docreader.ReadStreamResponse
+	12, // 19: docreader.DocReader.ListEngines:output_type -> docreader.ListEnginesResponse
+	1,  // 20: docreader.DocReader.PreprocessImage:output_type -> docreader.PreprocessImageResponse
+	17, // [17:21] is the sub-list for method output_type
+	13, // [13:17] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_docreader_proto_init() }
@@ -933,7 +1189,7 @@ func file_docreader_proto_init() {
 	if File_docreader_proto != nil {
 		return
 	}
-	file_docreader_proto_msgTypes[6].OneofWrappers = []any{
+	file_docreader_proto_msgTypes[9].OneofWrappers = []any{
 		(*ReadStreamResponse_Meta)(nil),
 		(*ReadStreamResponse_Image)(nil),
 	}
@@ -943,7 +1199,7 @@ func file_docreader_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_docreader_proto_rawDesc), len(file_docreader_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

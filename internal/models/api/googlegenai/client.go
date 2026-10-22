@@ -117,7 +117,7 @@ func (c *Client) Chat(ctx context.Context, messages []api.Message, opts *api.Opt
 		}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := api.ReadResponseCapped(resp.Body, 0)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -149,7 +149,7 @@ func (c *Client) ChatStream(
 	}
 
 	ch := make(chan types.StreamResponse)
-	dumper := api.NewStreamPacketDumper(c.cfg.Endpoint.Model, json.RawMessage(data))
+	dumper := api.NewStreamPacketDumperContext(ctx, c.cfg.Endpoint.Model, json.RawMessage(data))
 	if dumper != nil {
 		logger.Infof(ctx, "[LLM Stream Raw Dump] writing packets to %s", dumper.Path())
 	}
@@ -347,7 +347,7 @@ func (c *Client) processStream(
 		event, err := reader.ReadEvent()
 		if err != nil {
 			if err == io.EOF {
-				assembler.End(ch)
+				assembler.EndAtEOF(ch)
 			} else {
 				assembler.Fail(ch, err)
 			}

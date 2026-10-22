@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -15,6 +16,8 @@ import (
 
 // ToolRegistry manages the registration and retrieval of tools
 type ToolRegistry struct {
+	executionGuard    func(context.Context, types.Tool) error
+	mcpCallGuard      MCPCallGuard
 	tools             map[string]types.Tool
 	deferred          map[string]bool
 	mcpDirect         bool // Full exposure is an explicit compatibility path.
@@ -78,6 +81,22 @@ func (r *ToolRegistry) registerTool(tool types.Tool, deferred bool) {
 	r.deferred[name] = deferred
 }
 
+// RestrictTools intersects an already constructed registry with an authorized
+// snapshot. Used by inherited children so newly available integrations cannot
+// silently expand their parent's effective native tool set.
+func (r *ToolRegistry) RestrictTools(names []string) {
+	allowed := make(map[string]bool, len(names))
+	for _, name := range names {
+		allowed[name] = true
+	}
+	for name := range r.tools {
+		if !allowed[name] {
+			delete(r.tools, name)
+			delete(r.deferred, name)
+		}
+	}
+}
+
 // GetTool retrieves a tool by name
 func (r *ToolRegistry) GetTool(name string) (types.Tool, error) {
 	tool, exists := r.tools[name]
@@ -85,6 +104,24 @@ func (r *ToolRegistry) GetTool(name string) (types.Tool, error) {
 		return nil, fmt.Errorf("tool not found: %s", name)
 	}
 	return tool, nil
+}
+
+type sessionBinder interface {
+	BindSession(id string)
+}
+
+// BindSession tells sandbox tools which session's layout to advertise in
+// Description() and Parameters(). Host adapters refuse an empty session ID.
+func (r *ToolRegistry) BindSession(id string) {
+	if r == nil {
+		return
+	}
+	id = strings.TrimSpace(id)
+	for _, tool := range r.tools {
+		if binder, ok := tool.(sessionBinder); ok {
+			binder.BindSession(id)
+		}
+	}
 }
 
 // ListTools returns all registered tool names sorted alphabetically.
@@ -186,6 +223,11 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 	if err := ctx.Err(); err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
+	if r.executionGuard != nil {
+		if err := r.executionGuard(ctx, tool); err != nil {
+			return &types.ToolResult{Success: false, Error: err.Error()}, err
+		}
+	}
 	name := tool.Name()
 	// Cast parameters to match expected schema types before execution.
 	// This handles common LLM quirks like returning "true" instead of true.
@@ -233,11 +275,12 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 			maxOutput = toolLimit
 		}
 	}
+	ctx = withMCPCallGuard(ctx, r.mcpCallGuard)
 	executionCtx := WithOutputBudget(ctx, maxOutput)
 	if ToolPayloadsRedacted(ctx) {
 		executionCtx = logger.WithSuppressedOutput(executionCtx)
 	}
-	result, execErr := tool.Execute(executionCtx, args)
+	result, execErr := executeRecovered(executionCtx, tool, args)
 	if result == nil {
 		result = &types.ToolResult{Success: false, Error: "tool returned no result"}
 	}
@@ -302,6 +345,29 @@ func declaredValidationField(param string, rawSchema json.RawMessage) string {
 	return param
 }
 
+// executeRecovered runs one tool and turns a panic into a failed result. Tools
+// run on errgroup goroutines when a round executes in parallel, and errgroup
+// does not carry a panic back to Wait: an unrecovered one from any tool (MCP
+// clients, sandboxes, third-party SDKs) would take down the whole server.
+//
+// recover only covers the goroutine that calls it, so this guards the
+// tool.Execute call alone: a goroutine a tool starts for itself must install
+// its own barrier (GoRecovered / RecoverGoroutine in goroutine.go).
+func executeRecovered(
+	ctx context.Context, tool types.Tool, args json.RawMessage,
+) (result *types.ToolResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf(ctx, "[ToolRegistry] Tool %s panicked: %v\n%s", tool.Name(), r, debug.Stack())
+			// The panic value can carry internals (paths, addresses); the
+			// model and the user only need to know the call did not complete.
+			err = fmt.Errorf("tool %s failed with an internal error", tool.Name())
+			result = &types.ToolResult{Success: false, Error: err.Error()}
+		}
+	}()
+	return tool.Execute(ctx, args)
+}
+
 // Cleanup cleans up all registered tools that implement the types.Cleanable interface.
 // This is called at the end of agent sessions to release tool-specific resources.
 func (r *ToolRegistry) Cleanup(ctx context.Context) {
@@ -311,4 +377,9 @@ func (r *ToolRegistry) Cleanup(ctx context.Context) {
 			cleanable.Cleanup(ctx)
 		}
 	}
+}
+
+// SetExecutionGuard installs a runtime authority fence before any direct or deferred tool.
+func (r *ToolRegistry) SetExecutionGuard(guard func(context.Context, types.Tool) error) {
+	r.executionGuard = guard
 }

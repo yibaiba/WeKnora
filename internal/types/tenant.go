@@ -118,6 +118,8 @@ type Tenant struct {
 	RetrievalConfig *RetrievalConfig `yaml:"retrieval_config" json:"retrieval_config" gorm:"type:jsonb"`
 	// Memory config: workspace switch for cross-session long-term memory
 	MemoryConfig *MemoryConfig `yaml:"memory_config" json:"memory_config" gorm:"type:jsonb"`
+	// Assistant config: display name and access ceiling of the WeKnora assistant
+	AssistantConfig *AssistantConfig `yaml:"assistant_config" json:"assistant_config" gorm:"type:jsonb"`
 	// API principal config: controls how X-API-Key requests map to terminal principals.
 	APIPrincipalConfig *APIPrincipalConfig `yaml:"api_principal_config" json:"-" gorm:"type:jsonb"`
 	// Creation time
@@ -310,7 +312,10 @@ type ParserEngineConfig struct {
 	MinerUEndpoint        string             `json:"mineru_endpoint"` // MinerU 自建服务端点
 	MinerUAPIKey          string             `json:"mineru_api_key"`  // MinerU 云 API Key
 
-	// MinerU 自建解析参数
+	// MinerU 自建解析参数。协议按服务端自动识别：4.0+ 走 V1 API，更早版本走 /file_parse。
+	MinerUServerAPIKey string `json:"mineru_server_api_key,omitempty"` // 4.0+：服务端 --api-key
+	MinerUTier         string `json:"mineru_tier,omitempty"`           // 4.0+：flash/basic/standard/advanced，空为服务端默认
+	// 以下 backend、vLLM、公式/表格、语言参数仅对 3.x 及更早版本生效。
 	MinerUModel         string `json:"mineru_model,omitempty"`          // backend: pipeline, vlm-*, hybrid-*
 	MinerUVLMServerURL  string `json:"mineru_vlm_server_url,omitempty"` // vLLM 服务器地址 (vlm-http-client / hybrid-http-client)
 	MinerUEnableFormula *bool  `json:"mineru_enable_formula,omitempty"`
@@ -399,6 +404,12 @@ func (c *ParserEngineConfig) ToOverridesMap() map[string]string {
 	}
 	if c.MinerUAPIKey != "" {
 		m["mineru_api_key"] = c.MinerUAPIKey
+	}
+	if c.MinerUServerAPIKey != "" {
+		m["mineru_server_api_key"] = c.MinerUServerAPIKey
+	}
+	if c.MinerUTier != "" {
+		m["mineru_tier"] = c.MinerUTier
 	}
 	if c.MinerUModel != "" {
 		m["mineru_model"] = c.MinerUModel
@@ -678,6 +689,18 @@ type TenantSandboxConfig struct {
 	// afterwards boot the new snapshot.
 	SkillRollout string `json:"skill_rollout,omitempty"`
 
+	// AllocationMode decides how a session that has not yet used a sandbox
+	// of this config is placed: "session" (default) gives it a machine of its
+	// own, "user" lets one verified owner's sessions share a machine. A
+	// session never changes mode after its first use; see
+	// internal/sandbox/allocation.
+	AllocationMode string `json:"allocation_mode,omitempty"`
+
+	// UserSandboxEmptyRetentionDays is how long a user machine with no live
+	// session is kept before the reclaim job deletes it. 0 means the default
+	// (7); values above 90 are rejected.
+	UserSandboxEmptyRetentionDays int `json:"user_sandbox_empty_retention_days,omitempty"`
+
 	// Network is the outbound/inbound network policy applied to every sandbox
 	// created from this config — chat sessions, skill installs and deep
 	// connectivity probes alike. nil and the zero value mean the same thing:
@@ -827,6 +850,14 @@ const (
 	// SkillRolloutNewSession leaves live sandboxes on the previous image.
 	// Only a session that starts after the install or removal boots the new one.
 	SkillRolloutNewSession = "new_session"
+)
+
+const (
+	// SandboxAllocationSession is one sandbox per session.
+	SandboxAllocationSession = "session"
+	// SandboxAllocationUser shares one sandbox across a user's sessions.
+	// allocation.ParseMode reads the same strings.
+	SandboxAllocationUser = "user"
 )
 
 // RebuildsExistingOnSkillChange reports whether an install or removal should

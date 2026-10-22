@@ -25,6 +25,7 @@ type PluginDataAnalysis struct {
 	tenantService        interfaces.TenantService
 	db                   *sql.DB
 	sourceACLGuard       interfaces.SourceACLGuardService
+	storageResolver      interfaces.StorageBackendResolver
 }
 
 func NewPluginDataAnalysis(
@@ -37,6 +38,7 @@ func NewPluginDataAnalysis(
 	tenantService interfaces.TenantService,
 	db *sql.DB,
 	sourceACLGuard interfaces.SourceACLGuardService,
+	storageResolver interfaces.StorageBackendResolver,
 ) *PluginDataAnalysis {
 	p := &PluginDataAnalysis{
 		modelService:         modelService,
@@ -47,6 +49,7 @@ func NewPluginDataAnalysis(
 		tenantService:        tenantService,
 		db:                   db,
 		sourceACLGuard:       sourceACLGuard,
+		storageResolver:      storageResolver,
 	}
 	eventManager.Register(p)
 	return p
@@ -100,6 +103,7 @@ func (p *PluginDataAnalysis) OnEvent(
 		p.db,
 		chatManage.SessionID,
 		p.sourceACLGuard,
+		p.storageResolver,
 	)
 	defer tool.Cleanup(ctx)
 
@@ -110,7 +114,7 @@ func (p *PluginDataAnalysis) OnEvent(
 		return next()
 	}
 
-	chatModel, err := p.modelService.GetChatModel(ctx, chatManage.ChatModelID)
+	chatModel, err := p.modelService.GetChatModel(chatManage.ChatModelContext(ctx), chatManage.ChatModelID)
 	if err != nil {
 		return ErrGetChatModel.WithError(err)
 	}
@@ -136,14 +140,15 @@ func (p *PluginDataAnalysis) OnEvent(
 	// 5. Store result
 	// Create a new SearchResult for the analysis output
 	analysisResult := &types.SearchResult{
-		ID:                   "analysis_" + knowledge.ID,
-		Content:              toolResult.Output,
-		Score:                1.0,
-		MatchType:            types.MatchTypeDataAnalysis,
-		KnowledgeID:          knowledge.ID,
-		KnowledgeTitle:       knowledge.Title,
-		KnowledgeFilename:    knowledge.FileName,
-		KnowledgeDescription: knowledge.Description,
+		ID:                      "analysis_" + knowledge.ID,
+		Content:                 toolResult.Output,
+		Score:                   1.0,
+		MatchType:               types.MatchTypeDataAnalysis,
+		KnowledgeID:             knowledge.ID,
+		KnowledgeTitle:          knowledge.Title,
+		KnowledgeFilename:       knowledge.FileName,
+		KnowledgeDescription:    knowledge.Description,
+		KnowledgeCustomMetadata: knowledge.CustomMetadataText(),
 	}
 
 	chatManage.MergeResult = append(chatManage.MergeResult, analysisResult)

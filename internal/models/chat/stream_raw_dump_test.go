@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/stretchr/testify/require"
@@ -23,14 +24,14 @@ func TestRemoteStreamRawDumpSkipsRedactedSDKAndRawCalls(t *testing.T) {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	server := httptest.NewServer(http.HandlerFunc(writeTestOpenAIStream))
 	defer server.Close()
-	model, err := NewRemoteAPIChat(&ChatConfig{
+	model, err := NewRemoteChat(&ChatConfig{
 		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
 		ModelName: "gpt-4o", ModelID: "gpt-4o", APIKey: "test-key", Provider: "openai",
 	})
 	require.NoError(t, err)
 	ctx := types.WithRedactedLLMTracePayloads(context.Background())
 
-	for _, options := range []*ChatOptions{{Temperature: 0.7}, {Temperature: 0, TemperatureSet: true}} {
+	for _, options := range []*ChatOptions{{Temperature: 0.7}, {Temperature: 0}} {
 		directory := t.TempDir()
 		t.Setenv("WEKNORA_LLM_STREAM_RAW_DUMP_DIR", directory)
 		stream, err := model.ChatStream(ctx, []Message{{Role: "user", Content: streamDumpSecret}}, options)
@@ -46,8 +47,8 @@ func TestRemoteStreamRawDumpSkipsRedactedSDKAndRawCalls(t *testing.T) {
 func TestStreamRawDumpStillWritesOrdinaryDiagnostics(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("WEKNORA_LLM_STREAM_RAW_DUMP_DIR", directory)
-	dumper := newStreamPacketDumper(
-		context.Background(), "ordinary-model", map[string]any{"prompt": streamDumpSecret},
+	dumper := api.NewStreamPacketDumper(
+		"ordinary-model", map[string]any{"prompt": streamDumpSecret},
 	)
 	require.NotNil(t, dumper)
 	dumper.WritePacketRaw([]byte(`{"content":"ordinary packet"}`))

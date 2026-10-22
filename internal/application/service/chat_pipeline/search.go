@@ -185,7 +185,7 @@ func getSearchResultFromHistory(chatManage *types.ChatManage) []*types.SearchRes
 
 func removeDuplicateResults(results []*types.SearchResult) []*types.SearchResult {
 	seen := make(map[string]bool)
-	contentSig := make(map[string]string) // sig -> first chunk ID
+	contentSig := make(map[string]*types.SearchResult) // sig -> first chunk
 	var uniqueResults []*types.SearchResult
 	for _, r := range results {
 		// Only deduplicate by exact chunk ID — do NOT treat shared ParentChunkID
@@ -198,10 +198,13 @@ func removeDuplicateResults(results []*types.SearchResult) []*types.SearchResult
 		sig := buildContentSignature(r.Content)
 		if sig != "" {
 			if firstChunk, exists := contentSig[sig]; exists {
-				logger.Debugf(context.Background(), "Dedup: chunk %s removed due to content signature (dup of %s, sig prefix: %.50s...)", r.ID, firstChunk, sig)
+				logger.Debugf(context.Background(),
+					"Dedup: chunk %s removed due to content signature (dup of %s, sig prefix: %.50s...)",
+					r.ID, firstChunk.ID, sig)
+				searchutil.InheritImageEvidence(firstChunk, r)
 				continue
 			}
-			contentSig[sig] = r.ID
+			contentSig[sig] = r
 		}
 		seen[r.ID] = true
 		uniqueResults = append(uniqueResults, r)
@@ -221,13 +224,23 @@ func buildContentSignature(content string) string {
 //   - Substring containment: if the normalized short text is a literal substring
 //     of the normalized long text, the shorter chunk is removed.
 //   - Token overlap coefficient >= 0.85: if 85%+ of the smaller chunk's tokens
-//     appear in the larger chunk, the smaller one is redundant.
+//     appear in the larger chunk, the smaller one is redundant. Only applied
+//     when the two token sets are within maxOverlapSizeRatio of each other:
+//     near-duplicates are of similar size, while a long web page or parent
+//     chunk shares most words with any short chunk on its topic.
+//
+// Each text is tokenized once; tokenizing both sides of every pair ran jieba
+// O(n²) times over parent- and page-sized texts before the first token of
+// the answer.
 //
 // The input slice MUST already be deduplicated by ID/signature. Within each
 // pair the chunk with the lower score is the candidate for removal; ties are
 // broken by content length (longer wins).
 func removePartialOverlaps(ctx context.Context, results []*types.SearchResult) []*types.SearchResult {
-	const overlapThreshold = 0.85
+	const (
+		overlapThreshold    = 0.85
+		maxOverlapSizeRatio = 3
+	)
 
 	if len(results) <= 1 {
 		return results
@@ -236,6 +249,13 @@ func removePartialOverlaps(ctx context.Context, results []*types.SearchResult) [
 	type normEntry struct {
 		norm   string
 		result *types.SearchResult
+		tokens map[string]struct{} // built on first use
+	}
+	tokensOf := func(e *normEntry) map[string]struct{} {
+		if e.tokens == nil {
+			e.tokens = searchutil.TokenizeSimple(e.result.Content)
+		}
+		return e.tokens
 	}
 
 	entries := make([]normEntry, 0, len(results))
@@ -269,11 +289,10 @@ func removePartialOverlaps(ctx context.Context, results []*types.SearchResult) [
 			)
 
 			if !contained {
-				ratio := searchutil.ContentOverlapRatio(
-					entries[shortIdx].result.Content,
-					entries[longIdx].result.Content,
-				)
-				if ratio < overlapThreshold {
+				shortTokens, longTokens := tokensOf(&entries[shortIdx]), tokensOf(&entries[longIdx])
+				small, large := min(len(shortTokens), len(longTokens)), max(len(shortTokens), len(longTokens))
+				if small*maxOverlapSizeRatio < large ||
+					searchutil.TokenOverlapRatio(shortTokens, longTokens) < overlapThreshold {
 					continue
 				}
 			}
@@ -288,6 +307,7 @@ func removePartialOverlaps(ctx context.Context, results []*types.SearchResult) [
 			if victim == i {
 				keptIdx = j
 			}
+			searchutil.InheritImageEvidence(entries[keptIdx].result, entries[victim].result)
 			pipelineInfo(ctx, "Merge", "partial_overlap_drop", map[string]interface{}{
 				"kept_id":    entries[keptIdx].result.ID,
 				"dropped_id": entries[victim].result.ID,
@@ -415,9 +435,9 @@ func (p *PluginSearch) searchByTargets(
 			// only targets that have a real keyword index; vector-only targets must
 			// propagate the embedding failure instead of looking like empty recall.
 			var queryEmbedding []float32
-			disableVector := false
+			disableVector := chatManage.DisableVectorMatch
 			searchableTargets := targets
-			if modelKey != "" {
+			if modelKey != "" && !disableVector {
 				emb, err := p.knowledgeBaseService.GetQueryEmbedding(ctx, targets[0].KnowledgeBaseID, queryText)
 				if err != nil {
 					searchableTargets = make([]*types.SearchTarget, 0, len(targets))
@@ -478,6 +498,7 @@ func (p *PluginSearch) searchByTargets(
 						MatchCount:            chatManage.EmbeddingTopK,
 						SkipContextEnrichment: true,
 						DisableVectorMatch:    disableVector,
+						DisableKeywordsMatch:  chatManage.DisableKeywordsMatch,
 					}
 					res, err := p.knowledgeBaseService.HybridSearch(ctx, fullKBIDs[0], params)
 					if err != nil {
@@ -590,6 +611,7 @@ func (p *PluginSearch) searchSingleTarget(
 		ScopeTagIDs:           t.ScopeTagIDs,
 		SkipContextEnrichment: true,
 		DisableVectorMatch:    disableVector,
+		DisableKeywordsMatch:  chatManage.DisableKeywordsMatch,
 	}
 	if t.Type == types.SearchTargetTypeKnowledge {
 		params.KnowledgeIDs = searchKnowledgeIDs

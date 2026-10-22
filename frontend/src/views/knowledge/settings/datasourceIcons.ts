@@ -8,6 +8,7 @@ import confluenceIcon from '@/assets/img/datasource-confluence.svg'
 import dingtalkIcon from '@/assets/img/im/dingtalk.svg'
 import imaIcon from '@/assets/img/datasource-ima.png'
 import integrationIcon from '@/assets/img/integration-green.svg'
+import seafileIcon from '@/assets/img/datasource-seafile.png'
 
 export const datasourceIconMap: Record<string, string> = {
   feishu: feishuIcon,
@@ -23,6 +24,7 @@ export const datasourceIconMap: Record<string, string> = {
   gitlab: gitlabIcon,
   ima: imaIcon,
   wecom_wedrive: integrationIcon,
+  seafile: seafileIcon,
 }
 
 export function getDatasourceIconUrl(type: string): string | undefined {

@@ -32,7 +32,7 @@ func TestOllamaCloudUsesSchemaPromptWithStableStrictRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := NewRemoteAPIChat(&ChatConfig{
+	model, err := NewRemoteChat(&ChatConfig{
 		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
 		ModelName: "deepseek-v4-flash:cloud", APIKey: "test-key",
 		Provider: string(provider.ProviderOllamaCloud),
@@ -45,7 +45,7 @@ func TestOllamaCloudUsesSchemaPromptWithStableStrictRequest(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string","minLength":1}},"required":["summary"],"additionalProperties":false}`)
 	thinking := false
 	opts := &ChatOptions{
-		Temperature: 0, TemperatureSet: true, MaxTokens: 1024,
+		Temperature: 0, MaxTokens: 1024,
 		Thinking: &thinking, Format: schema,
 	}
 
@@ -88,12 +88,24 @@ func assertOllamaCloudSchemaPromptRequest(
 }
 
 func TestOllamaCloudRejectsInvalidPromptSchemaBeforeRequest(t *testing.T) {
-	model := newOutboundChat(t, string(provider.ProviderOllamaCloud), "cloud-model", nil)
+	secutils.ResetSSRFWhitelistForTest()
+	t.Cleanup(secutils.ResetSSRFWhitelistForTest)
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("invalid schema must not produce a provider request")
+	}))
+	defer server.Close()
+	model, err := NewRemoteChat(&ChatConfig{
+		Source: types.ModelSourceRemote, BaseURL: server.URL + "/v1",
+		ModelName: "cloud-model", APIKey: "test-key",
+		Provider: string(provider.ProviderOllamaCloud),
+	})
+	require.NoError(t, err)
 
-	_, _, _, err := model.buildOutbound(
+	_, err = model.Chat(
+		context.Background(),
 		[]Message{{Role: "user", Content: "analyze"}},
 		&ChatOptions{Format: json.RawMessage(`{"type":"object"} trailing`)},
-		false,
 	)
 
 	require.Error(t, err)

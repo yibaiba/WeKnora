@@ -6,6 +6,8 @@ import KnowledgeTagPopover from './KnowledgeTagPopover.vue';
 import DocumentFileIcon from './DocumentFileIcon.vue';
 import DocumentActionMenu from './DocumentActionMenu.vue';
 import FolderPickerMenu, { type FolderOption } from './FolderPickerMenu.vue';
+import { shownStall } from '@/utils/knowledgeProcessingStall';
+import type { FolderEntry } from '../folderTree';
 
 interface Tag {
   id: string;
@@ -29,6 +31,8 @@ interface KnowledgeItem {
   description?: string;
   channel?: string;
   isMore?: boolean;
+  stalled_minutes?: number;
+  stall_state?: string;
 }
 
 const props = defineProps<{
@@ -42,6 +46,12 @@ const props = defineProps<{
   loading?: boolean;
   /** Every folder of the knowledge base, for the "move to folder" picker. */
   folderOptions?: FolderOption[];
+  /**
+   * Direct sub-folders of the folder being browsed. They are listed ahead of
+   * the documents, the way a file manager shows folders before files. Filtering
+   * searches the subtree for documents, so the caller passes an empty list.
+   */
+  subFolders?: FolderEntry[];
   /**
    * Show each row's folder under its name. Only useful when the list spans
    * several folders, i.e. while filtering; inside one folder the path would be
@@ -76,6 +86,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const tagEditorId = ref<string | null>(null);
+const subFolderRows = computed(() => props.subFolders || []);
+const openFolder = (folder: FolderEntry) => emit('open-folder', folder.path);
 
 const formatTime = (time?: string) => {
   if (!time) return '--';
@@ -100,6 +112,7 @@ const getSourceInfo = (item: KnowledgeItem): { icon: string; label: string } => 
   if (ch === 'yuque') return { icon: 'cloud-download', label: t('knowledgeBase.channelYuque') };
   if (ch === 'confluence') return { icon: 'cloud-download', label: t('knowledgeBase.channelConfluence') };
   if (ch === 'gitlab') return { icon: 'cloud-download', label: t('knowledgeBase.channelGitLab') };
+  if (ch === 'seafile') return { icon: 'cloud-download', label: t('knowledgeBase.channelSeafile') };
   if (ch === 'ima') return { icon: 'cloud-download', label: t('knowledgeBase.channelIma') };
   if (ch === 'wechat') return { icon: 'cloud-download', label: t('knowledgeBase.channelWechat') };
   if (ch === 'wecom') return { icon: 'cloud-download', label: t('knowledgeBase.channelWecom') };
@@ -116,8 +129,26 @@ interface StatusInfo {
   theme: 'success' | 'warning' | 'danger' | 'primary' | 'default';
   icon?: string;
   spin?: boolean;
+  hint?: string;
 }
 const computeStatus = (item: KnowledgeItem): StatusInfo => {
+  const stall = shownStall(item.stall_state, item.stalled_minutes);
+  if (stall === 'queued') {
+    return {
+      label: t('knowledgeBase.statusQueued'),
+      theme: 'default',
+      icon: 'time',
+      hint: t('knowledgeBase.queuedHint', { minutes: item.stalled_minutes }),
+    };
+  }
+  if (stall === 'stalled') {
+    return {
+      label: t('knowledgeBase.statusStalled'),
+      theme: 'warning',
+      icon: 'time',
+      hint: t('knowledgeBase.stalledHint', { minutes: item.stalled_minutes }),
+    };
+  }
   if (item.parse_status === 'pending' || item.parse_status === 'processing') {
     return { label: t('knowledgeBase.statusProcessing'), theme: 'primary', icon: 'loading', spin: true };
   }
@@ -256,6 +287,28 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
     </div>
 
     <div class="doc-list-body" role="rowgroup">
+      <div v-for="folder in subFolderRows" :key="`folder:${folder.path}`" class="doc-list-row folder-row"
+        :data-folder-path="folder.path" role="row" @click="openFolder(folder)">
+        <!-- Folders are navigation entries, not documents: no batch checkbox. -->
+        <div class="cell cell-check" role="cell"></div>
+
+        <div class="cell cell-name" role="cell">
+          <span class="folder-row-icon" aria-hidden="true">
+            <t-icon name="folder" size="26px" />
+          </span>
+          <div class="row-file-text">
+            <div class="row-title-line">
+              <button type="button" class="row-file-name" :title="folder.path"
+                @click.stop="openFolder(folder)">{{ folder.name }}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="cell cell-tags" role="cell"></div>
+        <div class="cell cell-status" role="cell"></div>
+        <div class="cell cell-actions" role="cell"></div>
+      </div>
+
       <div v-for="item in items" :key="item.id" class="doc-list-row"
         :class="{ selected: selectedIds.has(item.id), 'menu-open': moreOpen === item.id }" :data-select-id="item.id"
         role="row" @click="emit('open', item)">
@@ -312,7 +365,8 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
         <div class="cell cell-status" role="cell">
           <template v-if="statusByRow.get(item.id) as StatusInfo | undefined">
             <t-tag v-if="statusByRow.get(item.id)!.label !== '--'" size="small" :theme="statusByRow.get(item.id)!.theme"
-              variant="light" class="row-status-tag" :class="`status-${statusByRow.get(item.id)!.theme}`">
+              variant="light" class="row-status-tag" :class="`status-${statusByRow.get(item.id)!.theme}`"
+              :title="statusByRow.get(item.id)!.hint">
               <template v-if="statusByRow.get(item.id)!.icon" #icon>
                 <t-icon :name="statusByRow.get(item.id)!.icon!"
                   :class="{ 'icon-spin': statusByRow.get(item.id)!.spin }" />
@@ -520,6 +574,22 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
   &.selected .row-more-btn {
     opacity: 1;
   }
+}
+
+/* A folder is an entry in the same grid as a document, so every column stays
+   aligned; only the cells a folder has no value for stay empty. */
+.folder-row {
+  min-height: 56px;
+}
+
+.folder-row-icon {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--td-warning-color);
 }
 
 .cell {

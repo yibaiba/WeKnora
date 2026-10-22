@@ -1,11 +1,11 @@
-// Package provider is the legacy façade over internal/models/catalog. It keeps
+// Package provider is the legacy façade over internal/models/runtime. It keeps
 // the ProviderName constants and the two helpers older call sites still use
 // (DetectProvider and the base URL constants) so those sites keep compiling
-// while the catalog is the single source of vendor facts. New code should
-// import the catalog directly.
+// while the runtime catalog is the single source of vendor facts. New code
+// should import internal/models/providers and internal/models/runtime.
 package provider
 
-import "github.com/Tencent/WeKnora/internal/models/catalog"
+import modelruntime "github.com/Tencent/WeKnora/internal/models/runtime"
 
 // ProviderName 模型服务商名称（catalog vendor id）。
 //
@@ -55,5 +55,5 @@ const (
 // DetectProvider identifies a vendor from a base URL (legacy rows without a
 // stored provider id).
 func DetectProvider(baseURL string) ProviderName {
-	return ProviderName(catalog.DetectByURL(baseURL))
+	return ProviderName(modelruntime.DetectByURL(baseURL))
 }

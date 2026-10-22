@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/types"
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -159,6 +160,18 @@ func providerCallError(ctx context.Context, err error) error {
 	if errors.As(err, &requestErr) {
 		return providerHTTPError(providerHTTPFailure{
 			StatusCode: requestErr.HTTPStatusCode, Body: requestErr.Body,
+		})
+	}
+	var httpErr *api.HTTPError
+	if errors.As(err, &httpErr) {
+		retryAfter := ""
+		if httpErr.Header != nil {
+			retryAfter = httpErr.Header.Get("Retry-After")
+		}
+		return providerHTTPError(providerHTTPFailure{
+			StatusCode:       httpErr.StatusCode,
+			Body:             []byte(httpErr.Body),
+			RetryAfterHeader: retryAfter,
 		})
 	}
 	return &ProviderError{kind: ProviderFailureTransport}
